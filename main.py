@@ -116,10 +116,6 @@ class WithdrawRequest(BaseModel):
     number: str
     amount: float
 
-class DailyTaskClaim(BaseModel):
-    uid: int
-    task_type: str
-
 # ==========================================
 # 4. Telegram WebApp Validation Helper
 # ==========================================
@@ -194,7 +190,7 @@ async def auto_delete_worker():
         await asyncio.sleep(5)
 
 # ==========================================
-# 6. WebApp UI with New 5 Button Navigation
+# 6. WebApp UI (Cleaned 4 Button Navigation)
 # ==========================================
 index_html = """
 <!DOCTYPE html>
@@ -212,7 +208,7 @@ index_html = """
             --card-bg: #121824;
             --text-color: #a0aec0;
             --text-main: #ffffff;
-            --accent-color: #e50914; /* Netflix Red Premium Style */
+            --accent-color: #e50914;
             --success-color: #10b981;
             --border-color: #1e293b;
             --nav-bg: #121824;
@@ -432,31 +428,6 @@ index_html = """
             cursor: pointer;
         }
 
-        /* Missions UI */
-        .task-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border-color);
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .task-details h4 { color: var(--text-main); margin-bottom: 4px; }
-        .task-details p { font-size: 12px; color: #ffd700; }
-
-        .task-btn {
-            background-color: var(--success-color);
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-        }
-        .task-btn:disabled { background-color: #2d3748; color: #718096; }
-
         /* Profile & Withdrawal Form */
         .profile-card {
             background-color: var(--card-bg);
@@ -477,7 +448,7 @@ index_html = """
             border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;
         }
 
-        /* 🆕 PREMIUM BOTTOM NAVIGATION BAR (MATCHED WITH 2ND SCREENSHOT) */
+        /* PREMIUM BOTTOM NAVIGATION BAR (4 BUTTON CLEAN LAYOUT) */
         nav {
             position: fixed;
             bottom: 0;
@@ -575,11 +546,6 @@ index_html = """
         </div>
     </div>
 
-    <div id="missions-section" class="content-section">
-        <h3 style="margin-bottom: 15px; color: #fff;">🎯 দৈনিক মিশন সমুহ</h3>
-        <div id="tasks-container"></div>
-    </div>
-
     <div id="profile-section" class="content-section">
         <div class="profile-card">
             <div class="user-avatar" style="width:65px; height:65px; font-size:26px; margin: 0 auto 12px auto;" id="profile-big-avatar">U</div>
@@ -633,7 +599,6 @@ index_html = """
         <div class="nav-item active" onclick="switchTab('home', this)"><i class="fas fa-home"></i>Home</div>
         <div class="nav-item" onclick="switchTab('search', this)"><i class="fas fa-search"></i>Search</div>
         <div class="nav-item" onclick="switchTab('upcoming', this)"><i class="fas fa-film"></i>Upcoming</div>
-        <div class="nav-item" onclick="switchTab('missions', this)"><i class="fas fa-tasks"></i>Missions</div>
         <div class="nav-item" onclick="switchTab('profile', this)"><i class="fas fa-user"></i>Profile</div>
     </nav>
 
@@ -669,7 +634,6 @@ index_html = """
                     document.getElementById('profile-coins').innerText = userCoinsCount;
                     document.getElementById('profile-watched').innerText = data.user.watched_videos ? data.user.watched_videos.length : 0;
                     loadVideos();
-                    loadTasks();
                     loadWithdrawHistory();
                 }
             } catch(e) { console.error(e); }
@@ -782,51 +746,6 @@ index_html = """
             } catch(e) { console.error(e); }
         }
 
-        async function loadTasks() {
-            try {
-                let res = await fetch(`/api/tasks/${userData.id}`);
-                let data = await res.json();
-                let container = document.getElementById('tasks-container');
-                container.innerHTML = `
-                    <div class="task-card">
-                        <div class="task-details">
-                            <h4>৩টি ইনকাম বিজ্ঞাপন দেখুন</h4>
-                            <p>প্রোগ্রেস: ${data.ads}/3 (পুরস্কার: ১৫ কয়েন)</p>
-                        </div>
-                        <button class="task-btn" ${ (data.ads >= 3 && !data.ads_claimed) ? '' : 'disabled' } onclick="claimDailyMission('ads')">
-                            ${data.ads_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
-                        </button>
-                    </div>
-                    <div class="task-card">
-                        <div class="task-details">
-                            <h4>২টি অ্যাপ রিভিউ দিন</h4>
-                            <p>প্রোগ্রেস: ${data.reviews}/2 (পুরস্কার: ১০ কয়েন)</p>
-                        </div>
-                        <button class="task-btn" ${ (data.reviews >= 2 && !data.reviews_claimed) ? '' : 'disabled' } onclick="claimDailyMission('reviews')">
-                            ${data.reviews_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
-                        </button>
-                    </div>
-                `;
-            } catch(e) { console.error(e); }
-        }
-
-        async function claimDailyMission(type) {
-            try {
-                let res = await fetch('/api/tasks/claim', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({ uid: userData.id, task_type: type })
-                });
-                let data = await res.json();
-                if(data.ok) {
-                    Swal.fire('সফল!', 'মিশন বোনাস অ্যাড করা হয়েছে!', 'success');
-                    authUser();
-                } else {
-                    Swal.fire('ব্যর্থ', data.msg, 'error');
-                }
-            } catch(e) { console.error(e); }
-        }
-
         async function submitWithdrawal() {
             let method = document.getElementById('withdraw-method').value;
             let number = document.getElementById('withdraw-number').value;
@@ -883,7 +802,6 @@ index_html = """
             } catch(e) { console.error(e); }
         }
 
-        // 🆕 5 BUTTON NAVIGATION TAB SWITCHING HANDLER
         function switchTab(tabId, el) {
             let sections = document.querySelectorAll('.content-section');
             sections.forEach(s => s.classList.remove('active'));
@@ -893,7 +811,6 @@ index_html = """
             navs.forEach(n => n.classList.remove('active'));
             el.classList.add('active');
 
-            // Hide main header bar category selection for non-home pages to match UI layout cleanly
             let header = document.getElementById('categories-list');
             if (tabId === 'home') {
                 header.style.display = 'flex';
@@ -939,14 +856,10 @@ async def api_auth(payload: InitDataPayload):
             "username": user_info.get("username", ""),
             "coins": 0,
             "watched_videos": [],
-            "tasks": {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False},
             "joined_date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         await db.users.insert_one(user_doc)
     else:
-        if "tasks" not in user_doc:
-            await db.users.update_one({"user_id": uid}, {"$set": {"tasks": {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}}})
-            user_doc["tasks"] = {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
         user_doc["_id"] = str(user_doc["_id"])
         
     return {"ok": True, "user": user_doc}
@@ -1003,30 +916,14 @@ async def claim_reward(data: ClaimReward):
         return {"ok": False, "msg": "আপনি ইতিমধ্যে এই ভিডিওর পুরস্কার ক্লেইম করেছেন!"}
         
     pts = video.get("points", 5)
-    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    await db.daily_missions.update_one(
-        {"user_id": data.uid, "date": now_date},
-        {"$set": {"completed": True}},
-        upsert=True
+    await db.users.update_one(
+        {"user_id": data.uid},
+        {
+            "$inc": {"coins": pts},
+            "$push": {"watched_videos": data.vid}
+        }
     )
-    
-    if video.get("category") == "income" or video.get("category") == "offer":
-        await db.users.update_one(
-            {"user_id": data.uid},
-            {
-                "$inc": {"coins": pts, "tasks.ads": 1},
-                "$push": {"watched_videos": data.vid}
-            }
-        )
-    else:
-        await db.users.update_one(
-            {"user_id": data.uid},
-            {
-                "$inc": {"coins": pts},
-                "$push": {"watched_videos": data.vid}
-            }
-        )
         
     return {"ok": True, "points": pts}
 
@@ -1065,45 +962,6 @@ async def withdraw_history(uid: int):
         w["_id"] = str(w["_id"])
         items.append(w)
     return items
-
-@app.get("/api/tasks/{uid}")
-async def get_user_tasks(uid: int):
-    user = await db.users.find_one({"user_id": uid})
-    if not user:
-        return {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
-    tasks = user.get("tasks", {})
-    return {
-        "ads": tasks.get("ads", 0),
-        "reviews": tasks.get("reviews", 0),
-        "ads_claimed": tasks.get("ads_claimed", False),
-        "reviews_claimed": tasks.get("reviews_claimed", False)
-    }
-
-@app.post("/api/tasks/claim")
-async def claim_task_reward(data: DailyTaskClaim):
-    if data.uid in BANNED_USERS:
-        return {"ok": False, "msg": "Banned"}
-        
-    user = await db.users.find_one({"user_id": data.uid})
-    if not user:
-        return {"ok": False, "msg": "ইউজার পাওয়া যায়নি!"}
-        
-    tasks = user.get("tasks", {})
-    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    
-    mission = await db.daily_missions.find_one({"user_id": data.uid, "date": now_date})
-    if not mission:
-        return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
-        
-    if data.task_type == "ads" and tasks.get("ads", 0) >= 3 and not tasks.get("ads_claimed"):
-        await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.ads_claimed": True}, "$inc": {"coins": 15}})
-        return {"ok": True}
-        
-    if data.task_type == "reviews" and tasks.get("reviews", 0) >= 2 and not tasks.get("reviews_claimed"):
-        await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.reviews_claimed": True}, "$inc": {"coins": 10}})
-        return {"ok": True}
-        
-    return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
 
 # ==========================================
 # 8. Control Dashboard Sub-Pages (Admin View)
@@ -1223,259 +1081,4 @@ async def start_bot_routers():
 
     @dp.message(Command("start"))
     async def cmd_start(message: types.Message):
-        uid = message.from_user.id
-        if uid in BANNED_USERS:
-            await message.answer("🚫 দুঃখিত, আপনার অ্যাকাউন্টটি আমাদের সিস্টেমে ব্লক করা রয়েছে।")
-            return
-            
-        user_doc = await db.users.find_one({"user_id": uid})
-        if not user_doc:
-            user_doc = {
-                "user_id": uid,
-                "first_name": message.from_user.first_name,
-                "last_name": message.from_user.last_name,
-                "username": message.from_user.username,
-                "coins": 0,
-                "watched_videos": [],
-                "tasks": {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False},
-                "joined_date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            await db.users.insert_one(user_doc)
-
-        builder = InlineKeyboardBuilder()
-        builder.button(text="🚀 ওপেন আর্ন অ্যাপ", web_app=types.WebAppInfo(url=APP_URL))
-        builder.button(text="📢 আমাদের চ্যানেল", url=f"https://t.me/{CHANNEL_ID.replace('-100','')}")
-        builder.adjust(1)
-        
-        welcome_text = (
-            f"👋 **আসসালামু আলাইকুম, {message.from_user.first_name}!**\n\n"
-            f"আমাদের ভিডিও আর্নিং অ্যাপের অফিসিয়াল বোটে আপনাকে স্বাগতম। এখানে আপনি প্রতিদিন বিভিন্ন শর্ট ভিডিও, "
-            f"মুভি ক্লিপস এবং টাস্ক কমপ্রীট করে ফ্রিতে আনলিমিটেড কয়েন ইনকাম করতে পারবেন।\n\n"
-            f"💰 ১০০% ট্রাস্টেড পেমেন্ট বিকাশ এবং নগদের মাধ্যমে সরাসরি দেওয়া হয়।"
-        )
-        await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-
-    @dp.message(Command("panel"))
-    async def cmd_panel(message: types.Message):
-        if message.from_user.id not in ADMINS:
-            return
-        await message.answer("⚙️ **ওয়েলকাম এডমিন কন্ট্রোল ড্যাশবোর্ড:**", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-
-    @dp.callback_query(F.data == "admin_stats")
-    async def cb_stats(callback: types.CallbackQuery):
-        if callback.from_user.id not in ADMINS: return
-        total_users = await db.users.count_documents({})
-        total_vids = await db.videos.count_documents({})
-        pending_w = await db.withdrawals.count_documents({"status": "Pending"})
-        
-        stat_msg = (
-            f"📊 **টোটাল সিস্টেম স্ট্যাটিস্টিক্স:**\n\n"
-            f"👥 মোট রেজিস্টার্ড ইউজার: {total_users} জন\n"
-            f"🎥 মোট আপলোডকৃত ভিডিও: {total_vids} টি\n"
-            f"⏳ পেন্ডিং উইথড্র রিকোয়েস্ট: {pending_w} টি"
-        )
-        await callback.message.edit_text(stat_msg, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-
-    @dp.callback_query(F.data == "admin_upload_video")
-    async def cb_upload_init(callback: types.CallbackQuery, state: FSMContext):
-        if callback.from_user.id not in ADMINS: return
-        await state.set_state(AdminStates.waiting_for_video)
-        await callback.message.answer("🎬 অনুগ্রহ করে আপনার কাঙ্ক্ষিত ভিডিওটি (MP4 Format) এখানে সেন্ড করুন:")
-        await callback.answer()
-
-    @dp.message(AdminStates.waiting_for_video, F.video)
-    async def process_admin_video(message: types.Message, state: FSMContext):
-        file_id = message.video.file_id
-        await state.update_data(file_id=file_id)
-        await state.set_state(AdminStates.waiting_for_video_details)
-        
-        info_txt = (
-            "📌 **ভিডিও রিসিভড!**\n\n"
-            "এখন নিচের ফরম্যাটে ভিডিওর ডিটেইলস লিখে পাঠান:\n"
-            "`টাইটেল | ক্যাটাগরি | কয়েন | ডিউরেশন` \n\n"
-            "💡 উদাহরণ: `নতুন মুভি ২০২৬ | movie | 10 | 30`\n"
-            "*(ক্যাটাগরি অবশ্যই movie, income অথবা offer হতে হবে)*"
-        )
-        await message.answer(info_txt, parse_mode="Markdown")
-
-    @dp.message(AdminStates.waiting_for_video_details)
-    async def process_video_details(message: types.Message, state: FSMContext):
-        try:
-            parts = [p.strip() for p in message.text.split("|")]
-            if len(parts) < 4:
-                await message.answer("❌ ফরম্যাট ভুল হয়েছে! আবার চেষ্টা করুন।")
-                return
-                
-            title, category, coins, duration = parts[0], parts[1], int(parts[2]), int(parts[3])
-            state_data = await state.get_data()
-            
-            video_doc = {
-                "title": title,
-                "category": category,
-                "points": coins,
-                "duration": duration,
-                "tg_file_id": state_data["file_id"]
-            }
-            await db.videos.insert_one(video_doc)
-            await state.clear()
-            await message.answer("✅ ভিডিওটি সফলভাবে সিস্টেমে আপলোড করা হয়েছে!", reply_markup=get_admin_keyboard())
-        except Exception as e:
-            await message.answer(f"❌ এরর ঘটেছে: {str(e)}")
-
-    @dp.callback_query(F.data == "admin_broadcast")
-    async def cb_broadcast(callback: types.CallbackQuery, state: FSMContext):
-        if callback.from_user.id not in ADMINS: return
-        await state.set_state(AdminStates.waiting_for_broadcast)
-        await callback.message.answer("📢 সকল ইউজারের কাছে পাঠানোর জন্য ব্রডকাস্ট মেসেজটি লিখুন:")
-        await callback.answer()
-
-    @dp.message(AdminStates.waiting_for_broadcast)
-    async def process_broadcast(message: types.Message, state: FSMContext):
-        text_to_send = message.text
-        await state.clear()
-        await message.answer("⏳ ব্রডকাস্টিং শুরু হয়েছে...")
-        
-        success, fail = 0, 0
-        async for user in db.users.find():
-            try:
-                await bot.send_message(chat_id=user["user_id"], text=text_to_send)
-                success += 1
-                await asyncio.sleep(0.05)
-            except Exception:
-                fail += 1
-                
-        await message.answer(f"📢 **ব্রডকাস্ট সম্পন্ন!**\n\n✅ সফল: {success} জন\n❌ ব্যর্থ: {fail} জন", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-
-    @dp.callback_query(F.data == "admin_ban")
-    async def cb_ban(callback: types.CallbackQuery, state: FSMContext):
-        if callback.from_user.id not in ADMINS: return
-        await state.set_state(AdminStates.waiting_for_ban)
-        await callback.message.answer("🚫 যে ইউজারকে ব্যান করতে চান তার টেলিগ্রাম ইউজার আইডি (User ID) দিন:")
-        await callback.answer()
-
-    @dp.message(AdminStates.waiting_for_ban)
-    async def process_ban(message: types.Message, state: FSMContext):
-        try:
-            target_uid = int(message.text.strip())
-            await db.banned.update_one({"user_id": target_uid}, {"$set": {"date": datetime.datetime.now().strftime("%Y-%m-%d")}}, upsert=True)
-            BANNED_USERS.add(target_uid)
-            await state.clear()
-            await message.answer(f"✅ ইউজার `{target_uid}` কে সফলভাবে ব্যান করা হয়েছে।", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-        except ValueError:
-            await message.answer("❌ সঠিক সংখ্যা বা ইউজার আইডি দিন।")
-
-    @dp.callback_query(F.data == "admin_unban")
-    async def cb_unban(callback: types.CallbackQuery, state: FSMContext):
-        if callback.from_user.id not in ADMINS: return
-        await state.set_state(AdminStates.waiting_for_unban)
-        await callback.message.answer("🔓 যে ইউজারকে আনব্যান করতে চান তার আইডি দিন:")
-        await callback.answer()
-
-    @dp.message(AdminStates.waiting_for_unban)
-    async def process_unban(message: types.Message, state: FSMContext):
-        try:
-            target_uid = int(message.text.strip())
-            await db.banned.delete_one({"user_id": target_uid})
-            if target_uid in BANNED_USERS:
-                BANNED_USERS.remove(target_uid)
-            await state.clear()
-            await message.answer(f"✅ ইউজার `{target_uid}` সফলভাবে আনব্যান হয়েছে।", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
-        except ValueError:
-            await message.answer("❌ সঠিক সংখ্যা বা ইউজার আইডি দিন।")
-
-    @dp.callback_query(F.data == "admin_withdrawals")
-    async def cb_admin_w_list(callback: types.CallbackQuery):
-        if callback.from_user.id not in ADMINS: return
-        builder = InlineKeyboardBuilder()
-        
-        count = 0
-        async for w in db.withdrawals.find({"status": "Pending"}).limit(10):
-            count += 1
-            builder.button(text=f"ID:{w['user_id']} - {w['amount']}C", callback_data=f"v_w_{w['_id']}")
-            
-        builder.adjust(2)
-        if count == 0:
-            await callback.message.answer("কোনো পেন্ডিং উইথড্র রিকোয়েস্ট নেই।")
-        else:
-            await callback.message.answer("🔽 পেন্ডিং রিকোয়েস্টের তালিকা (যেকোনো একটিতে ক্লিক করুন):", reply_markup=builder.as_markup())
-        await callback.answer()
-
-    @dp.callback_query(F.data.startswith("v_w_"))
-    async def cb_view_single_w(callback: types.CallbackQuery):
-        if callback.from_user.id not in ADMINS: return
-        wid = callback.data.replace("v_w_", "")
-        w = await db.withdrawals.find_one({"_id": ObjectId(wid)})
-        if not w:
-            await callback.answer("রিকোয়েস্টটি পাওয়া যায়নি।")
-            return
-            
-        msg = f"💰 **উইথড্রাল ডিটেইলস:**\n\n👤 ইউজার: `{w['user_id']}`\n💳 মেথড: {w['method']}\n📞 নাম্বার: `{w['number']}`\n🪙 পরিমাণ: {w['amount']} Coins"
-        
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Approve", callback_data=f"act_a_{wid}")
-        builder.button(text="❌ Reject", callback_data=f"act_r_{wid}")
-        builder.adjust(2)
-        
-        await callback.message.answer(msg, reply_markup=builder.as_markup(), parse_mode="Markdown")
-        await callback.answer()
-
-    @dp.callback_query(F.data.startswith("act_"))
-    async def cb_action_execute(callback: types.CallbackQuery):
-        if callback.from_user.id not in ADMINS: return
-        action_data = callback.data.replace("act_", "")
-        action_type = "approve" if action_data.startswith("a_") else "reject"
-        wid = action_data.replace("a_", "").replace("r_", "")
-        
-        status_str = "Approved" if action_type == "approve" else "Rejected"
-        w_doc = await db.withdrawals.find_one({"_id": ObjectId(wid)})
-        if not w_doc: return
-        
-        await db.withdrawals.update_one({"_id": ObjectId(wid)}, {"$set": {"status": status_str}})
-        if status_str == "Rejected":
-            await db.users.update_one({"user_id": w_doc["user_id"]}, {"$inc": {"coins": w_doc["amount"]}})
-            
-        await callback.message.edit_text(f"📢 রিকোয়েস্টটি সফলভাবে **{status_str}** করা হয়েছে।", parse_mode="Markdown")
-        
-        try:
-            msg = f"🔔 **আপনার উইথড্র রিকোয়েস্ট আপডেট!**\n\n💰 পরিমাণ: {w_doc['amount']} Coins\n📌 স্ট্যাটাস: {status_str}"
-            await bot.send_message(chat_id=w_doc["user_id"], text=msg, parse_mode="Markdown")
-        except Exception:
-            pass
-
-    asyncio.create_task(dp.start_polling(bot))
-
-@dp.channel_post()
-async def auto_delete_channel_post_handler(message: types.Message):
-    if str(message.chat.id) == str(CHANNEL_ID):
-        delete_time = time.time() + 60
-        job = {
-            "chat_id": message.chat.id,
-            "message_id": message.message_id,
-            "delete_at": delete_time
-        }
-        await db.auto_delete_queue.insert_one(job)
-
-# ==========================================
-# 10. Main Application Startup
-# ==========================================
-async def start():
-    print("Initializing Database & Cache...")
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    
-    port = int(os.getenv("PORT", 8000))
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
-    server = uvicorn.Server(config)
-    
-    print("Starting Background Workers...")
-    asyncio.create_task(auto_delete_worker())
-    
-    print("Connecting to Telegram Bot...")
-    await start_bot_routers()
-    
-    print("Starting Starlette Web Server Engine...")
-    await server.serve()
-
-if __name__ == "__main__":
-    asyncio.run(start())
+        uid =
