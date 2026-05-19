@@ -190,7 +190,7 @@ async def auto_delete_worker():
         await asyncio.sleep(5)
 
 # ==========================================
-# 6. WebApp UI (Cleaned 4 Button Navigation)
+# 6. WebApp UI (4 Button Layout - Missions Completely Removed)
 # ==========================================
 index_html = """
 <!DOCTYPE html>
@@ -448,7 +448,7 @@ index_html = """
             border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;
         }
 
-        /* PREMIUM BOTTOM NAVIGATION BAR (4 BUTTON CLEAN LAYOUT) */
+        /* PREMIUM BOTTOM NAVIGATION BAR (4 BUTTON LAYOUT) */
         nav {
             position: fixed;
             bottom: 0;
@@ -1081,4 +1081,51 @@ async def start_bot_routers():
 
     @dp.message(Command("start"))
     async def cmd_start(message: types.Message):
-        uid =
+        uid = message.from_user.id
+        if uid in BANNED_USERS:
+            await message.answer("🚫 দুঃখিত, আপনার অ্যাকাউন্টটি আমাদের সিস্টেমে ব্লক করা রয়েছে।")
+            return
+            
+        user_doc = await db.users.find_one({"user_id": uid})
+        if not user_doc:
+            user_doc = {
+                "user_id": uid,
+                "first_name": message.from_user.first_name,
+                "last_name": message.from_user.last_name,
+                "username": message.from_user.username,
+                "coins": 0,
+                "watched_videos": [],
+                "joined_date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            await db.users.insert_one(user_doc)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🚀 ওপেন আর্ন অ্যাপ", web_app=types.WebAppInfo(url=APP_URL))
+        builder.button(text="📢 আমাদের চ্যানেল", url=f"https://t.me/{CHANNEL_ID.replace('-100','')}")
+        builder.adjust(1)
+        
+        welcome_text = (
+            f"👋 **আসসালামু আলাইকুম, {message.from_user.first_name}!**\n\n"
+            f"আমাদের ভিডিও আর্নিং অ্যাপের অফিসিয়াল বোটে আপনাকে স্বাগতম। এখানে আপনি প্রতিদিন বিভিন্ন শর্ট ভিডিও, "
+            f"মুভি ক্লিপস এবং টাস্ক কমপ্রীট করে ফ্রিতে আনলিমিটেড কয়েন ইনকাম করতে পারবেন।\n\n"
+            f"💰 ১০০% ট্রাস্টেড পেমেন্ট বিকাশ এবং নগদের মাধ্যমে সরাসরি দেওয়া হয়।"
+        )
+        await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+    @dp.message(Command("panel"))
+    async def cmd_panel(message: types.Message):
+        if message.from_user.id not in ADMINS:
+            return
+        await message.answer("⚙️ **ওয়েলকাম এডমিন কন্ট্রোল ড্যাশবোর্ড:**", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+    @dp.callback_query(F.data == "admin_stats")
+    async def cb_stats(callback: types.CallbackQuery):
+        if callback.from_user.id not in ADMINS: return
+        total_users = await db.users.count_documents({})
+        total_vids = await db.videos.count_documents({})
+        pending_w = await db.withdrawals.count_documents({"status": "Pending"})
+        
+        stat_msg = (
+            f"📊 **টোটাল সিস্টেম স্ট্যাটিস্টিক্স:**\n\n"
+            f"👥 মোট রেজিস্টার্ড ইউজার: {total_users} জন\n"
+            f"🎥 মোট আপলোডকৃত ভিডিও: {total_vids} টি\n"
