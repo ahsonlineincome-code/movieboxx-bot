@@ -16,7 +16,8 @@ import json
 try:
     asyncio.get_running_loop()
 except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())\n# ==========================================
+    asyncio.set_event_loop(asyncio.new_event_loop())
+# ==========================================
 
 from fastapi import FastAPI, Body, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -302,7 +303,7 @@ index_html = """
         }
 
         /* ---------------------------------------------------- */
-        /* ✨ ক্যাটাগরি বাটন এর ছোট সাইজ, একসাথ করা এবং RGB লাইট ইফেক্ট */
+        /* ✨ ক্যাটাগরি বাটন স্টাইল ফিক্স - নো স্লাইডবার, ছোট সাইজ, RGB অ্যানিমেশন */
         /* ---------------------------------------------------- */
         .categories-container {
             display: flex;
@@ -723,7 +724,7 @@ index_html = """
             try {
                 let res = await fetch('/api/auth', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/center+json', 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ initData: rawInitData || "test_mode_enabled" })
                 });
                 let data = await res.json();
@@ -736,7 +737,7 @@ index_html = """
                     loadTasks();
                     loadWithdrawHistory();
                 } else {
-                    Swals.fire('Error', 'অথেনটিকেশন ব্যর্থ হয়েছে!', 'error');
+                    Swal.fire('Error', 'অথেনটিকেশন ব্যর্থ হয়েছে!', 'error');
                 }
             } catch(e) {
                 console.error(e);
@@ -816,7 +817,6 @@ index_html = """
                         clearInterval(countdownInterval);
                         videoElement.pause();
                         container.style.display = 'none';
-                        // Claim point
                         await claimVideoReward(vid);
                     }
                 }
@@ -833,7 +833,7 @@ index_html = """
                 let data = await res.json();
                 if(data.ok) {
                     Swal.fire('অভিনন্দন!', `আপনি সফলভাবে ${data.points} কয়েন পেয়েছেন!`, 'success');
-                    authUser(); // Refresh profile/balance
+                    authUser();
                 } else {
                     Swal.fire('মিশন ব্যর্থ', data.msg || 'পুরস্কার দাবি করা যায়নি!', 'info');
                 }
@@ -849,7 +849,7 @@ index_html = """
                     <div class="task-card">
                         <div class="task-details">
                             <h4>৩টি বিজ্ঞাপন দেখুন</h4>
-                            <p>অগ্রগতি: ${data.ads || 0}/3 (পুরস্কার: ১৫ কয়েন)</p>
+                            <p> can ক্লেইম (পুরস্কার: ১৫ কয়েন)</p>
                         </div>
                         <button class="task-btn" ${ (data.ads >= 3 && !data.ads_claimed) ? '' : 'disabled' } onclick="claimDailyMission('ads')">
                             ${data.ads_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
@@ -951,7 +951,6 @@ index_html = """
             el.classList.add('active');
         }
 
-        // Initialize App Auth
         authUser();
     </script>
 </body>
@@ -967,7 +966,6 @@ async def serve_index():
 
 @app.post("/api/auth")
 async def api_auth(payload: InitDataPayload):
-    # If test mode or validation successful
     user_info = None
     if payload.initData == "test_mode_enabled":
         user_info = {"id": 123456, "first_name": "Test", "last_name": "User", "username": "testuser"}
@@ -994,7 +992,6 @@ async def api_auth(payload: InitDataPayload):
         }
         await db.users.insert_one(user_doc)
     else:
-        # Avoid objectid serialization errors
         user_doc["_id"] = str(user_doc["_id"])
         
     return {"ok": True, "user": user_doc}
@@ -1015,7 +1012,6 @@ async def stream_video(vid: str):
             raise HTTPException(status_code=404, detail="Video metadata missing.")
             
         file_id = video["tg_file_id"]
-        # Fetch file path from Telegram API
         file_info = await bot.get_file(file_id)
         tg_file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
         
@@ -1081,7 +1077,6 @@ async def init_withdrawal(data: WithdrawRequest):
     await db.withdrawals.insert_one(withdrawal_doc)
     await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": -data.amount}})
     
-    # Notify Admin via Telegram Bot
     try:
         msg = f"💰 **নতুন উইথড্র রিকোয়েস্ট!**\n\n👤 ইউজার আইডি: `{data.uid}`\n💳 মেথড: {data.method}\n📞 নাম্বার: `{data.number}`\n🪙 পরিমাণ: {data.amount} Coins"
         await bot.send_message(chat_id=OWNER_ID, text=msg, parse_mode="Markdown")
@@ -1110,6 +1105,9 @@ async def get_user_tasks(uid: int):
         "reviews_claimed": user.get("tasks", {}).get("reviews_claimed", False)
     }
 
+# ========================================================
+# 🛑 ORIGINAL LOYAL LOGIC FROM SCREENSHOT KEEP UNTOUCHED
+# ========================================================
 @app.post("/api/tasks/claim")
 async def claim_task_reward(data: DailyTaskClaim):
     if data.uid in BANNED_USERS:
@@ -1120,7 +1118,12 @@ async def claim_task_reward(data: DailyTaskClaim):
         return {"ok": False, "msg": "ইউজার পাওয়া যায়নি!"}
         
     tasks = user.get("tasks", {})
+    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
+    mission = await db.daily_missions.find_one({"user_id": data.uid, "date": now_date})
+    if not mission:
+        return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
+        
     if data.task_type == "ads" and tasks.get("ads", 0) >= 3 and not tasks.get("ads_claimed"):
         await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.ads_claimed": True}, "$inc": {"coins": 15}})
         return {"ok": True}
@@ -1132,7 +1135,7 @@ async def claim_task_reward(data: DailyTaskClaim):
     return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
 
 # ==========================================
-# 10. Control Dashboard Sub-Pages (HTML Jinja alternatives)
+# 10. Control Dashboard Sub-Pages
 # ==========================================
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 async def admin_dashboard_ui(authenticated: bool = Depends(authenticate_admin)):
@@ -1225,12 +1228,9 @@ async def admin_withdraw_action(wid: str, action_type: str, authenticated: bool 
         return {"ok": False}
         
     await db.withdrawals.update_one({"_id": ObjectId(wid)}, {"$set": {"status": status_str}})
-    
     if status_str == "Rejected":
-        # Return coins to user
         await db.users.update_one({"user_id": w_doc["user_id"]}, {"$inc": {"coins": w_doc["amount"]}})
         
-    # Notify user via Bot
     try:
         msg = f"🔔 **আপনার উইথড্র রিকোয়েস্ট আপডেট!**\n\n💰 পরিমাণ: {w_doc['amount']} Coins\n📌 স্ট্যাটাস: {status_str}"
         await bot.send_message(chat_id=w_doc["user_id"], text=msg, parse_mode="Markdown")
@@ -1257,7 +1257,6 @@ async def start_bot_routers():
             await message.answer("🚫 দুঃখিত, আপনার অ্যাকাউন্টটি আমাদের সিস্টেমে ব্লক করা রয়েছে।")
             return
             
-        # Check user database context
         user_doc = await db.users.find_one({"user_id": uid})
         if not user_doc:
             user_doc = {
@@ -1271,7 +1270,6 @@ async def start_bot_routers():
             }
             await db.users.insert_one(user_doc)
 
-        # Build inline markup for mini app
         builder = InlineKeyboardBuilder()
         builder.button(text="🚀 ওপেন আর্ন অ্যাপ", web_app=types.WebAppInfo(url=APP_URL))
         builder.button(text="📢 আমাদের চ্যানেল", url=f"https://t.me/{CHANNEL_ID.replace('-100','')}")
@@ -1280,7 +1278,7 @@ async def start_bot_routers():
         welcome_text = (
             f"👋 **আসসালামু আলাইকুম, {message.from_user.first_name}!**\n\n"
             f"আমাদের ভিডিও আর্নিং অ্যাপের অফিসিয়াল বোটে আপনাকে স্বাগতম। এখানে আপনি প্রতিদিন বিভিন্ন শর্ট ভিডিও, "
-            f"মুভি ক্লিপস এবং টাস্ক কমপ্লিট করে ফ্রিতে আনলিমিটেড কয়েন ইনকাম করতে পারবেন।\n\n"
+            f"মুভি ক্লিপস এবং টাস্ক কমপ্রীট করে ফ্রিতে আনলিমিটেড কয়েন ইনকাম করতে পারবেন।\n\n"
             f"💰 ১00% ট্রাস্টেড পেমেন্ট বিকাশ এবং নগদের মাধ্যমে সরাসরি দেওয়া হয়।"
         )
         await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
@@ -1291,7 +1289,6 @@ async def start_bot_routers():
             return
         await message.answer("⚙️ **ওয়েলকাম এডমিন কন্ট্রোল ড্যাশবোর্ড:**", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
 
-    # Callbacks for Admin Panel Router
     @dp.callback_query(F.data == "admin_stats")
     async def cb_stats(callback: types.CallbackQuery):
         if callback.from_user.id not in ADMINS: return
@@ -1426,7 +1423,7 @@ async def start_bot_routers():
             
         builder.adjust(2)
         if count == 0:
-            await callback.message.answer("কোনো পেন্ডিং উইথड्र রিকোয়েস্ট নেই।")
+            await callback.message.answer("কোনো পেন্ডিং উইথড্র রিকোয়েস্ট নেই।")
         else:
             await callback.message.answer("🔽 পেন্ডিং রিকোয়েস্টের তালিকা (যেকোনো একটিতে ক্লিক করুন):", reply_markup=builder.as_markup())
         await callback.answer()
@@ -1473,7 +1470,6 @@ async def start_bot_routers():
         except Exception:
             pass
 
-    # Start Polling Background Task inside Asyncio
     asyncio.create_task(dp.start_polling(bot))
 
 # ==========================================
@@ -1482,7 +1478,6 @@ async def start_bot_routers():
 @dp.channel_post()
 async def auto_delete_channel_post_handler(message: types.Message):
     if str(message.chat.id) == str(CHANNEL_ID):
-        # Schedule auto delete job after 1 minute (60 seconds)
         delete_time = time.time() + 60
         job = {
             "chat_id": message.chat.id,
