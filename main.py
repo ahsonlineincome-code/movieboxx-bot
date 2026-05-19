@@ -251,49 +251,52 @@ letter-spacing: 1px;
 .category-wrapper{
 padding:12px 10px;
 width: 100%;
-overflow-x: auto;
--webkit-overflow-scrolling: touch;
-}
-
-/* হাইড স্ক্রলবার */
-.category-wrapper::-webkit-scrollbar {
-display: none;
 }
 
 .category-scroll{
 display:flex;
-gap:8px;
-width: max-content;
-padding-bottom: 2px;
+flex-wrap: wrap;
+justify-content: center;
+gap: 6px;
+width: 100%;
+}
+
+/* RGB এনিমেশন ইফেক্ট */
+@keyframes rgbGlow {
+0% { border-color: #ff0000; box-shadow: 0 0 5px rgba(255, 0, 0, 0.5); }
+33% { border-color: #00ff00; box-shadow: 0 0 5px rgba(0, 255, 0, 0.5); }
+66% { border-color: #0000ff; box-shadow: 0 0 5px rgba(0, 0, 0, 255); }
+100% { border-color: #ff0000; box-shadow: 0 0 5px rgba(255, 0, 0, 0.5); }
 }
 
 .cat-btn{
 border:none;
 outline:none;
 cursor:pointer;
-padding:8px 14px;
-border-radius:20px;
+padding: 5px 10px;
+border-radius:6px;
 background:#111827;
 color:#ccc;
-font-size:13px;
+font-size:11px;
 font-weight:600;
-border:1px solid rgba(255, 91, 0, 0.4);
-box-shadow: 0 0 3px rgba(255, 91, 0, 0.2);
+border:1px solid rgba(255, 255, 255, 0.2);
 transition:.2s ease-in-out;
 white-space:nowrap;
+animation: rgbGlow 6s infinite linear;
 }
 
 .cat-btn:hover{
 color: #fff;
-border-color: #ff5b00;
+opacity: 0.9;
 }
 
 .cat-btn.active{
 background:linear-gradient(45deg,#ff5b00,#ff7300);
 color: #fff;
 font-weight: 700;
+animation: none;
 border-color: #ff7300;
-box-shadow: 0 0 8px #ff5b00;
+box-shadow: 0 0 10px #ff5b00;
 }
 
 .search-box{
@@ -328,6 +331,13 @@ background:#111827;
 border-radius:12px;
 overflow:hidden;
 border: 1px solid #1e293b;
+cursor: pointer;
+transition: transform 0.2s;
+}
+
+.card:hover {
+transform: scale(1.02);
+border-color: #ff5b00;
 }
 
 .card img{
@@ -358,6 +368,10 @@ height:170px;
 .grid {
 gap: 10px;
 padding: 10px;
+}
+.cat-btn {
+padding: 4px 8px;
+font-size: 10px;
 }
 }
 
@@ -474,7 +488,7 @@ return;
 
 grid.innerHTML = data.movies.map(m => `
 
-<div class="card">
+<div class="card" onclick="alert('Clicked on: ' + '${m.title}')">
 
 <img src="/api/image/${m.photo_id}">
 
