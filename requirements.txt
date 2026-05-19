@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-aiogram
-motor
 aiohttp
-apscheduler
+pydantic
+motor
+aiogram==3.13.1
+bson
 
