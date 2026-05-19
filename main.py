@@ -51,11 +51,9 @@ bot = None
 dp = None
 app = FastAPI()
 
-# Cache for Admin & Banned list
 ADMINS = set([OWNER_ID])
 BANNED_USERS = set()
 
-# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -150,9 +148,6 @@ def verify_telegram_init_data(init_data: str) -> dict:
         print("Validation Error:", e)
     return None
 
-# ==========================================
-# 5. Admin Authentication Helper
-# ==========================================
 def authenticate_admin(credentials: HTTPBasicCredentials = Depends(security)):
     if credentials.username == "admin" and credentials.password == ADMIN_PASS:
         return True
@@ -163,7 +158,7 @@ def authenticate_admin(credentials: HTTPBasicCredentials = Depends(security)):
     )
 
 # ==========================================
-# 6. Telegram Bot Handlers & States
+# 5. Telegram Bot Handlers & States
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
@@ -183,9 +178,6 @@ def get_admin_keyboard():
     builder.adjust(1, 2, 2, 1)
     return builder.as_markup()
 
-# ==========================================
-# 7. Background Auto Delete Worker
-# ==========================================
 async def auto_delete_worker():
     while True:
         try:
@@ -202,7 +194,7 @@ async def auto_delete_worker():
         await asyncio.sleep(5)
 
 # ==========================================
-# 8. WebApp Main Landing Route (HTML/JS)
+# 6. WebApp UI with New 5 Button Navigation
 # ==========================================
 index_html = """
 <!DOCTYPE html>
@@ -210,35 +202,36 @@ index_html = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Earn Video WebApp</title>
+    <title>Premium Movie & Earn WebApp</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root {
-            --bg-color: #0d1117;
-            --card-bg: #161b22;
-            --text-color: #c9d1d9;
+            --bg-color: #0b0f17;
+            --card-bg: #121824;
+            --text-color: #a0aec0;
             --text-main: #ffffff;
-            --accent-color: #58a6ff;
-            --success-color: #238636;
-            --danger-color: #da3633;
-            --nav-bg: #161b22;
-            --border-color: #30363d;
+            --accent-color: #e50914; /* Netflix Red Premium Style */
+            --success-color: #10b981;
+            --border-color: #1e293b;
+            --nav-bg: #121824;
+            --nav-active: #ffffff;
+            --nav-inactive: #718096;
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             -webkit-tap-highlight-color: transparent;
         }
 
         body {
             background-color: var(--bg-color);
             color: var(--text-color);
-            padding-bottom: 70px;
+            padding-bottom: 85px;
             font-size: 14px;
             overflow-x: hidden;
         }
@@ -256,7 +249,7 @@ index_html = """
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
         }
 
         .user-info {
@@ -266,15 +259,16 @@ index_html = """
         }
 
         .user-avatar {
-            width: 35px;
-            height: 35px;
-            background: linear-gradient(45deg, #58a6ff, #bc8cff);
+            width: 38px;
+            height: 38px;
+            background: linear-gradient(45deg, var(--accent-color), #ff4b5c);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             font-weight: bold;
+            font-size: 16px;
         }
 
         .user-name {
@@ -284,64 +278,50 @@ index_html = """
         }
 
         .balance-card {
-            background: linear-gradient(135deg, #1f293d 0%, #161b22 100%);
-            border: 1px solid var(--border-color);
-            padding: 12px 15px;
-            border-radius: 12px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            background: rgba(255, 215, 0, 0.1);
+            border: 1px solid #ffd700;
+            padding: 8px 14px;
+            border-radius: 20px;
         }
 
         .balance-amount {
-            font-size: 20px;
+            font-size: 16px;
             font-weight: 700;
             color: #ffd700;
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 6px;
         }
 
         .categories-container {
             display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            justify-content: center;
-            align-items: center;
-            margin-top: 12px;
-            padding: 2px;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 5px 0;
             width: 100%;
         }
-
-        @keyframes rgbGlowEffect {
-            0% { border-color: #ff0000; box-shadow: 0 0 4px #ff0000; }
-            33% { border-color: #00ff00; box-shadow: 0 0 4px #00ff00; }
-            66% { border-color: #0000ff; box-shadow: 0 0 4px #0000ff; }
-            100% { border-color: #ff0000; box-shadow: 0 0 4px #ff0000; }
-        }
+        .categories-container::-webkit-scrollbar { display: none; }
 
         .category-btn {
-            background-color: #21262d;
+            background-color: #1e293b;
             color: var(--text-color);
-            border: 1.5px solid #30363d;
-            padding: 5px 10px;
-            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            padding: 6px 14px;
+            border-radius: 20px;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 500;
             cursor: pointer;
             transition: all 0.2s ease;
             white-space: nowrap;
-            animation: rgbGlowEffect 4s linear infinite;
         }
 
         .category-btn.active {
             background-color: var(--accent-color);
-            color: #000000;
+            color: white;
             border-color: var(--accent-color);
-            animation: none;
-            box-shadow: 0 0 8px var(--accent-color);
         }
 
+        /* Content Sections */
         .content-section {
             padding: 15px;
             display: none;
@@ -351,6 +331,28 @@ index_html = """
             display: block;
         }
 
+        /* Search Section UI */
+        .search-wrapper {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .search-input {
+            width: 100%;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 12px 15px 12px 40px;
+            border-radius: 10px;
+            color: white;
+            font-size: 14px;
+        }
+        .search-wrapper i {
+            position: absolute;
+            left: 15px;
+            top: 15px;
+            color: #718096;
+        }
+
+        /* Video / Movie Grid UI */
         .video-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -362,14 +364,11 @@ index_html = """
             border: 1px solid var(--border-color);
             border-radius: 12px;
             overflow: hidden;
-            position: relative;
-            display: flex;
-            flex-direction: column;
         }
 
         .video-thumbnail {
             width: 100%;
-            height: 180px;
+            height: 190px;
             background-color: #000;
             display: flex;
             align-items: center;
@@ -378,9 +377,9 @@ index_html = """
         }
 
         .video-thumbnail i {
-            font-size: 40px;
+            font-size: 45px;
             color: var(--accent-color);
-            opacity: 0.8;
+            opacity: 0.9;
         }
 
         .video-duration {
@@ -388,7 +387,7 @@ index_html = """
             bottom: 10px;
             right: 10px;
             background-color: rgba(0,0,0,0.8);
-            padding: 2px 6px;
+            padding: 3px 6px;
             border-radius: 4px;
             font-size: 11px;
             color: #fff;
@@ -400,13 +399,10 @@ index_html = """
             left: 10px;
             background-color: #ffd700;
             color: #000;
-            padding: 3px 8px;
+            padding: 4px 10px;
             border-radius: 6px;
             font-size: 11px;
             font-weight: bold;
-            display: flex;
-            align-items: center;
-            gap: 3px;
         }
 
         .video-info {
@@ -417,73 +413,26 @@ index_html = """
             color: var(--text-main);
             font-size: 14px;
             font-weight: 600;
-            margin-bottom: 8px;
-            line-height: 1.4;
+            margin-bottom: 10px;
         }
 
         .video-meta {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 12px;
         }
 
         .watch-btn {
             background-color: var(--accent-color);
-            color: #0d1117;
+            color: white;
             border: none;
-            padding: 6px 12px;
+            padding: 8px 16px;
             border-radius: 6px;
             font-weight: 600;
             cursor: pointer;
         }
 
-        .player-container {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background-color: #000;
-            z-index: 2000;
-            display: none;
-            flex-direction: column;
-        }
-
-        .player-header {
-            padding: 15px;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
-            position: absolute;
-            top: 0;
-            width: 100%;
-            z-index: 10;
-        }
-
-        video {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-        }
-
-        .countdown-overlay {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: rgba(0,0,0,0.7);
-            padding: 8px 16px;
-            border-radius: 20px;
-            color: #fff;
-            font-weight: 600;
-            font-size: 14px;
-            border: 1px solid rgba(255,255,255,0.2);
-            pointer-events: none;
-        }
-
+        /* Missions UI */
         .task-card {
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
@@ -495,120 +444,96 @@ index_html = """
             align-items: center;
         }
 
-        .task-details h4 {
-            color: var(--text-main);
-            margin-bottom: 4px;
-        }
-
-        .task-details p {
-            font-size: 12px;
-            color: #ffd700;
-        }
+        .task-details h4 { color: var(--text-main); margin-bottom: 4px; }
+        .task-details p { font-size: 12px; color: #ffd700; }
 
         .task-btn {
             background-color: var(--success-color);
             color: white;
             border: none;
-            padding: 8px 14px;
+            padding: 8px 16px;
             border-radius: 6px;
             font-weight: 600;
-            cursor: pointer;
         }
+        .task-btn:disabled { background-color: #2d3748; color: #718096; }
 
-        .task-btn:disabled {
-            background-color: #21262d;
-            color: #8b949e;
-            cursor: not-allowed;
-        }
-
-        .form-group {
-            margin-bottom: 15px;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 6px;
-            font-weight: 600;
-        }
-
-        .form-control {
-            width: 100%;
-            background-color: #21262d;
+        /* Profile & Withdrawal Form */
+        .profile-card {
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: 12px;
             border: 1px solid var(--border-color);
-            padding: 10px;
-            border-radius: 8px;
-            color: white;
-            font-size: 14px;
+            text-align: center;
+            margin-bottom: 20px;
         }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--accent-color);
+        .form-group { margin-bottom: 15px; text-align: left;}
+        .form-group label { display: block; margin-bottom: 6px; font-weight: 600; color: white;}
+        .form-control {
+            width: 100%; background-color: #1a202c; border: 1px solid var(--border-color);
+            padding: 12px; border-radius: 8px; color: white;
         }
-
         .submit-btn {
-            width: 100%;
-            background-color: var(--accent-color);
-            color: #000;
-            border: none;
-            padding: 12px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 15px;
-            cursor: pointer;
-            margin-top: 10px;
+            width: 100%; background-color: var(--success-color); color: white;
+            border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;
         }
 
+        /* 🆕 PREMIUM BOTTOM NAVIGATION BAR (MATCHED WITH 2ND SCREENSHOT) */
         nav {
             position: fixed;
             bottom: 0;
             left: 0;
             width: 100%;
-            height: 60px;
+            height: 68px;
             background-color: var(--nav-bg);
             border-top: 1px solid var(--border-color);
             display: flex;
             justify-content: space-around;
             align-items: center;
             z-index: 1000;
+            padding-bottom: env(safe-area-inset-bottom);
         }
 
         .nav-item {
             display: flex;
             flex-direction: column;
             align-items: center;
-            color: #8b949e;
+            color: var(--nav-inactive);
             text-decoration: none;
             font-size: 11px;
-            gap: 4px;
+            font-weight: 500;
+            gap: 5px;
             cursor: pointer;
-        }
-
-        .nav-item.active {
-            color: var(--accent-color);
+            transition: color 0.2s ease;
+            flex: 1;
         }
 
         .nav-item i {
-            font-size: 18px;
+            font-size: 20px;
         }
 
-        .history-item {
-            background-color: #1f242c;
-            padding: 10px;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            font-size: 12px;
-            display: flex;
-            justify-content: space-between;
+        .nav-item.active {
+            color: var(--nav-active);
         }
-        
-        .status-success { color: #56d364; }
-        .status-pending { color: #e3b341; }
+
+        /* Video Player Layer */
+        .player-container {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: #000; z-index: 2000; display: none; flex-direction: column;
+        }
+        .player-header { padding: 15px; color: white; background: rgba(0,0,0,0.6); position: absolute; top:0; width:100%; z-index:10;}
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .countdown-overlay { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); padding: 8px 16px; border-radius: 20px; color:#fff;}
+
+        .history-item {
+            background-color: var(--card-bg); padding: 12px; border-radius: 8px;
+            margin-bottom: 8px; display: flex; justify-content: space-between; font-size: 13px;
+            border: 1px solid var(--border-color);
+        }
     </style>
 </head>
 <body>
 
-    <header>
+    <header id="main-header">
         <div class="user-profile">
             <div class="user-info">
                 <div class="user-avatar" id="avatar-letter">U</div>
@@ -628,72 +553,88 @@ index_html = """
     </header>
 
     <div id="home-section" class="content-section active">
-        <div class="video-grid" id="video-list-container">
-            </div>
+        <div class="video-grid" id="video-list-container"></div>
     </div>
 
-    <div id="tasks-section" class="content-section">
-        <h3 style="margin-bottom: 15px; color: #fff;">দৈনিক মিশন</h3>
+    <div id="search-section" class="content-section">
+        <div class="search-wrapper">
+            <i class="fas fa-search"></i>
+            <input type="text" class="search-input" id="search-bar" placeholder="পছন্দের মুভি বা ভিডিও খুঁজুন..." oninput="searchVideos()">
+        </div>
+        <div class="video-grid" id="search-results-container">
+            <p style="text-align:center; padding:20px; color:var(--text-color);">খোঁজার জন্য উপরে টাইপ করুন।</p>
+        </div>
+    </div>
+
+    <div id="upcoming-section" class="content-section">
+        <h3 style="color: #fff; margin-bottom: 15px;">🍿 আসন্ন মুভি ও ট্রেলার</h3>
+        <div style="background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 40px 15px; text-align: center;">
+            <i class="fas fa-film" style="font-size: 40px; color: var(--accent-color); margin-bottom: 15px;"></i>
+            <h4 style="color: white; margin-bottom: 5px;">নতুন ধামাকা আসছে খুব শীঘ্রই!</h4>
+            <p style="font-size: 13px;">সবচেয়ে লেটেস্ট রিলিজ এবং ট্রেলার দেখতে চোখ রাখুন আমাদের এই ট্যাবে।</p>
+        </div>
+    </div>
+
+    <div id="missions-section" class="content-section">
+        <h3 style="margin-bottom: 15px; color: #fff;">🎯 দৈনিক মিশন সমুহ</h3>
         <div id="tasks-container"></div>
     </div>
 
-    <div id="withdraw-section" class="content-section">
-        <h3 style="margin-bottom: 15px; color: #fff;">টাকা উত্তোলন করুন</h3>
-        <div style="background-color: var(--card-bg); padding: 15px; border-radius:12px; border:1px solid var(--border-color);">
+    <div id="profile-section" class="content-section">
+        <div class="profile-card">
+            <div class="user-avatar" style="width:65px; height:65px; font-size:26px; margin: 0 auto 12px auto;" id="profile-big-avatar">U</div>
+            <h3 id="profile-name" style="color:white; margin-bottom:3px;">User</h3>
+            <p id="profile-id" style="font-size:12px; color:#718096; margin-bottom:15px;">ID: 0</p>
+            <div style="display:flex; justify-content:space-around; background:#0b0f17; padding:12px; border-radius:8px;">
+                <div>
+                    <div style="font-size:16px; font-weight:bold; color:#ffd700;" id="profile-coins">0</div>
+                    <div style="font-size:11px;">মোট ব্যালেন্স</div>
+                </div>
+                <div>
+                    <div style="font-size:16px; font-weight:bold; color:var(--accent-color);" id="profile-watched">0</div>
+                    <div style="font-size:11px;">দেখা ভিডিও</div>
+                </div>
+            </div>
+        </div>
+
+        <h3 style="margin-bottom: 12px; color: #fff;">💰 টাকা উত্তোলন (Withdraw)</h3>
+        <div style="background-color: var(--card-bg); padding: 15px; border-radius:12px; border:1px solid var(--border-color); margin-bottom: 20px;">
             <div class="form-group">
-                <label>মেথড সিলেক্ট করুন</label>
+                <label>পেমেন্ট মেথড</label>
                 <select class="form-control" id="withdraw-method">
                     <option value="Bkash">বিকাশ (Bkash)</option>
                     <option value="Nagad">নগদ (Nagad)</option>
                 </select>
             </div>
             <div class="form-group">
-                <label>অ্যাকাউন্ট নাম্বার</label>
-                <input type="number" class="form-control" id="withdraw-number" placeholder="017XXXXXXXX">
+                <label>মোবাইল নাম্বার</label>
+                <input type="number" class="form-control" id="withdraw-number" placeholder="01XXXXXXXXX">
             </div>
             <div class="form-group">
-                <label>কয়েন পরিমাণ</label>
+                <label>কয়েন এমাউন্ট</label>
                 <input type="number" class="form-control" id="withdraw-amount" placeholder="সর্বনিম্ন ১০০ কয়েন">
             </div>
-            <button class="submit-btn" onclick="submitWithdrawal()">রিকোয়েস্ট পাঠান</button>
+            <button class="submit-btn" onclick="submitWithdrawal()">উইথড্র রিকোয়েস্ট সাবমিট করুন</button>
         </div>
         
-        <h3 style="margin: 20px 0 10px 0; color: #fff;">উইথড্র হিস্ট্রি</h3>
+        <h3 style="margin-bottom: 12px; color: #fff;">📜 উইথড্র হিস্ট্রি</h3>
         <div id="withdraw-history"></div>
-    </div>
-
-    <div id="profile-section" class="content-section">
-        <h3 style="margin-bottom: 15px; color: #fff;">আমার প্রোফাইল</h3>
-        <div style="background-color: var(--card-bg); padding: 20px; border-radius:12px; border:1px solid var(--border-color); text-align:center;">
-            <div class="user-avatar" style="width:70px; height:70px; font-size:30px; margin: 0 auto 15px auto;" id="profile-big-avatar">U</div>
-            <h2 id="profile-name" style="color:white; margin-bottom:5px;">User</h2>
-            <p id="profile-id" style="font-size:12px; color:#8b949e; margin-bottom:15px;">ID: 0</p>
-            <div style="display:flex; justify-content:space-around; background:#0d1117; padding:15px; border-radius:8px;">
-                <div>
-                    <div style="font-size:18px; font-weight:bold; color:#ffd700;" id="profile-coins">0</div>
-                    <div style="font-size:11px;">মোট কয়েন</div>
-                </div>
-                <div>
-                    <div style="font-size:18px; font-weight:bold; color:#58a6ff;" id="profile-watched">0</div>
-                    <div style="font-size:11px;">দেখা ভিডিও</div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <div class="player-container" id="video-player-container">
         <div class="player-header">
-            <span id="player-video-title" style="font-weight:600;">ভিডিও প্লে হচ্ছে...</span>
+            <span id="player-video-title" style="font-weight:600;">মুভি/ভিডিও প্লে হচ্ছে...</span>
         </div>
         <video id="main-video-element" controlslist="nodownload" playsinline></video>
         <div class="countdown-overlay" id="player-countdown">অপেক্ষা করুন: 0s</div>
     </div>
 
     <nav>
-        <div class="nav-item active" onclick="switchTab('home', this)"><i class="fas fa-home"></i>হোম</div>
-        <div class="nav-item" onclick="switchTab('tasks', this)"><i class="fas fa-tasks"></i>মিশন</div>
-        <div class="nav-item" onclick="switchTab('withdraw', this)"><i class="fas fa-wallet"></i>উইথড্র</div>
-        <div class="nav-item" onclick="switchTab('profile', this)"><i class="fas fa-user"></i>প্রোফাইল</div>
+        <div class="nav-item active" onclick="switchTab('home', this)"><i class="fas fa-home"></i>Home</div>
+        <div class="nav-item" onclick="switchTab('search', this)"><i class="fas fa-search"></i>Search</div>
+        <div class="nav-item" onclick="switchTab('upcoming', this)"><i class="fas fa-film"></i>Upcoming</div>
+        <div class="nav-item" onclick="switchTab('missions', this)"><i class="fas fa-tasks"></i>Missions</div>
+        <div class="nav-item" onclick="switchTab('profile', this)"><i class="fas fa-user"></i>Profile</div>
     </nav>
 
     <script>
@@ -702,7 +643,7 @@ index_html = """
         tg.ready();
 
         let rawInitData = tg.initData;
-        let userData = tg.initDataUnsafe.user || { id: 123456, first_name: "Test", last_name: "User", username: "testuser" };
+        let userData = tg.initDataUnsafe.user || { id: 123456, first_name: "Premium", last_name: "User", username: "premium_user" };
         
         let currentCategory = 'all';
         let allVideos = [];
@@ -730,8 +671,6 @@ index_html = """
                     loadVideos();
                     loadTasks();
                     loadWithdrawHistory();
-                } else {
-                    Swal.fire('Error', 'অথেনটিকেশন ব্যর্থ হয়েছে!', 'error');
                 }
             } catch(e) { console.error(e); }
         }
@@ -740,18 +679,21 @@ index_html = """
             try {
                 let res = await fetch('/api/videos');
                 allVideos = await res.json();
-                renderVideos();
+                renderVideos(allVideos, 'video-list-container');
             } catch(e) { console.error(e); }
         }
 
-        function renderVideos() {
-            let container = document.getElementById('video-list-container');
+        function renderVideos(videoArray, targetContainerId) {
+            let container = document.getElementById(targetContainerId);
             container.innerHTML = '';
             
-            let filtered = allVideos.filter(v => currentCategory === 'all' || v.category === currentCategory);
+            let filtered = videoArray;
+            if (targetContainerId === 'video-list-container' && currentCategory !== 'all') {
+                filtered = videoArray.filter(v => v.category === currentCategory);
+            }
             
             if(filtered.length === 0) {
-                container.innerHTML = `<div style="text-align:center; padding:40px 10px; color:#8b949e; width:100%;">এই ক্যাটাগরিতে কোনো ভিডিও পাওয়া যায়নি।</div>`;
+                container.innerHTML = `<div style="text-align:center; padding:30px; color:#718096; width:100%;">কোনো ভিডিও পাওয়া যায়নি!</div>`;
                 return;
             }
 
@@ -767,8 +709,8 @@ index_html = """
                     <div class="video-info">
                         <div class="video-title">${vid.title}</div>
                         <div class="video-meta">
-                            <span style="color:#8b949e;"><i class="fas fa-tag"></i> ${vid.category}</span>
-                            <button class="watch-btn" onclick="startVideoPlayback('${vid._id}', '${btoa(vid.title)}', ${vid.duration})">দেখুন</button>
+                            <span style="color:#718096;"><i class="fas fa-tag"></i> ${vid.category}</span>
+                            <button class="watch-btn" onclick="startVideoPlayback('${vid._id}', '${btoa(vid.title)}', ${vid.duration})">প্লে করুন</button>
                         </div>
                     </div>
                 `;
@@ -781,7 +723,17 @@ index_html = """
             let btns = document.querySelectorAll('.category-btn');
             btns.forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
-            renderVideos();
+            renderVideos(allVideos, 'video-list-container');
+        }
+
+        function searchVideos() {
+            let query = document.getElementById('search-bar').value.toLowerCase();
+            if(!query) {
+                document.getElementById('search-results-container').innerHTML = `<p style="text-align:center; padding:20px; color:var(--text-color);">খোঁজার জন্য উপরে টাইপ করুন।</p>`;
+                return;
+            }
+            let results = allVideos.filter(v => v.title.toLowerCase().includes(query));
+            renderVideos(results, 'search-results-container');
         }
 
         let countdownInterval;
@@ -797,14 +749,12 @@ index_html = """
             
             let timeLeft = duration;
             countdownOverlay.innerText = `অপেক্ষা করুন: ${timeLeft}s`;
-            
-            videoElement.play().catch(err => console.log("Autoplay blocked"));
+            videoElement.play().catch(e => console.log(e));
 
             countdownInterval = setInterval(async () => {
                 if (!videoElement.paused) {
                     timeLeft--;
                     countdownOverlay.innerText = `অপেক্ষা করুন: ${timeLeft}s`;
-                    
                     if(timeLeft <= 0) {
                         clearInterval(countdownInterval);
                         videoElement.pause();
@@ -827,7 +777,7 @@ index_html = """
                     Swal.fire('অভিনন্দন!', `আপনি সফলভাবে ${data.points} কয়েন পেয়েছেন!`, 'success');
                     authUser();
                 } else {
-                    Swal.fire('মিশন ব্যর্থ', data.msg || 'পুরস্কার দাবি করা যায়নি!', 'info');
+                    Swal.fire('ইনফো', data.msg || 'ক্লেইম করা সম্ভব হয়নি', 'info');
                 }
             } catch(e) { console.error(e); }
         }
@@ -840,8 +790,8 @@ index_html = """
                 container.innerHTML = `
                     <div class="task-card">
                         <div class="task-details">
-                            <h4>৩টি বিজ্ঞাপন দেখুন</h4>
-                            <p>progress: ${data.ads}/3 (পুরস্কার: ১৫ কয়েন)</p>
+                            <h4>৩টি ইনকাম বিজ্ঞাপন দেখুন</h4>
+                            <p>প্রোগ্রেস: ${data.ads}/3 (পুরস্কার: ১৫ কয়েন)</p>
                         </div>
                         <button class="task-btn" ${ (data.ads >= 3 && !data.ads_claimed) ? '' : 'disabled' } onclick="claimDailyMission('ads')">
                             ${data.ads_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
@@ -849,8 +799,8 @@ index_html = """
                     </div>
                     <div class="task-card">
                         <div class="task-details">
-                            <h4>২টি প্লেস্টোর রিভিউ</h4>
-                            <p>progress: ${data.reviews}/2 (পুরস্কার: ১০ কয়েন)</p>
+                            <h4>২টি অ্যাপ রিভিউ দিন</h4>
+                            <p>প্রোগ্রেস: ${data.reviews}/2 (পুরস্কার: ১০ কয়েন)</p>
                         </div>
                         <button class="task-btn" ${ (data.reviews >= 2 && !data.reviews_claimed) ? '' : 'disabled' } onclick="claimDailyMission('reviews')">
                             ${data.reviews_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
@@ -869,10 +819,10 @@ index_html = """
                 });
                 let data = await res.json();
                 if(data.ok) {
-                    Swal.fire('সফল!', 'মিশন রিওয়ার্ড যুক্ত হয়েছে!', 'success');
+                    Swal.fire('সফল!', 'মিশন বোনাস অ্যাড করা হয়েছে!', 'success');
                     authUser();
                 } else {
-                    Swal.fire('দুঃখিত', data.msg, 'error');
+                    Swal.fire('ব্যর্থ', data.msg, 'error');
                 }
             } catch(e) { console.error(e); }
         }
@@ -883,7 +833,7 @@ index_html = """
             let amount = parseFloat(document.getElementById('withdraw-amount').value);
 
             if(!number || !amount || amount < 100) {
-                Swal.fire('ভুল ইনপুট', 'সঠিক নাম্বার দিন ও সর্বনিম্ন ১০০ কয়েন উত্তোলন করুন', 'warning');
+                Swal.fire('সতর্কতা', 'সঠিক তথ্য দিন, সর্বনিম্ন উত্তোলন ১০০ কয়েন!', 'warning');
                 return;
             }
 
@@ -895,7 +845,7 @@ index_html = """
                 });
                 let data = await res.json();
                 if(data.ok) {
-                    Swal.fire('সফল', 'আপনার উইথড্র রিকোয়েস্ট পেন্ডিংয়ে আছে।', 'success');
+                    Swal.fire('সফল', 'অনুরোধটি সফলভাবে এডমিনের কাছে পাঠানো হয়েছে!', 'success');
                     document.getElementById('withdraw-number').value = '';
                     document.getElementById('withdraw-amount').value = '';
                     authUser();
@@ -912,7 +862,7 @@ index_html = """
                 let container = document.getElementById('withdraw-history');
                 container.innerHTML = '';
                 if(list.length === 0) {
-                    container.innerHTML = '<p style="font-size:12px; color:#8b949e;">কোনো হিস্ট্রি পাওয়া যায়নি।</p>';
+                    container.innerHTML = '<p style="font-size:12px; color:#718096; padding:10px 0;">কোনো হিস্ট্রি পাওয়া যায়নি।</p>';
                     return;
                 }
                 list.forEach(h => {
@@ -921,11 +871,11 @@ index_html = """
                     div.innerHTML = `
                         <div>
                             <strong>${h.method}</strong> (${h.number})<br>
-                            <small style="color:#8b949e;">${h.date}</small>
+                            <small style="color:#718096;">${h.date}</small>
                         </div>
                         <div style="text-align:right;">
-                            <span style="font-weight:bold; color:#ffd700;">${h.amount} Coins</span><br>
-                            <span class="${h.status==='Approved'?'status-success':'status-pending'}">${h.status}</span>
+                            <span style="font-weight:bold; color:#ffd700;">${h.amount} C</span><br>
+                            <span style="color:${h.status==='Approved'?'#10b981':'#f59e0b'}">${h.status}</span>
                         </div>
                     `;
                     container.appendChild(div);
@@ -933,6 +883,7 @@ index_html = """
             } catch(e) { console.error(e); }
         }
 
+        // 🆕 5 BUTTON NAVIGATION TAB SWITCHING HANDLER
         function switchTab(tabId, el) {
             let sections = document.querySelectorAll('.content-section');
             sections.forEach(s => s.classList.remove('active'));
@@ -941,6 +892,14 @@ index_html = """
             let navs = document.querySelectorAll('.nav-item');
             navs.forEach(n => n.classList.remove('active'));
             el.classList.add('active');
+
+            // Hide main header bar category selection for non-home pages to match UI layout cleanly
+            let header = document.getElementById('categories-list');
+            if (tabId === 'home') {
+                header.style.display = 'flex';
+            } else {
+                header.style.display = 'none';
+            }
         }
 
         authUser();
@@ -950,7 +909,7 @@ index_html = """
 """
 
 # ==========================================
-# 9. FastAPI Business Logic Routes
+# 7. FastAPI Business Logic Routes
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
@@ -960,7 +919,7 @@ async def serve_index():
 async def api_auth(payload: InitDataPayload):
     user_info = None
     if payload.initData == "test_mode_enabled":
-        user_info = {"id": 123456, "first_name": "Test", "last_name": "User", "username": "testuser"}
+        user_info = {"id": 123456, "first_name": "Premium", "last_name": "User", "username": "premium_user"}
     else:
         user_info = verify_telegram_init_data(payload.initData)
         
@@ -1044,16 +1003,14 @@ async def claim_reward(data: ClaimReward):
         return {"ok": False, "msg": "আপনি ইতিমধ্যে এই ভিডিওর পুরস্কার ক্লেইম করেছেন!"}
         
     pts = video.get("points", 5)
-    
-    # 📢 AUTOMATIC DAILY MISSION TRACKER FIX (SCREENSHOT FIX)
     now_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    
     await db.daily_missions.update_one(
         {"user_id": data.uid, "date": now_date},
         {"$set": {"completed": True}},
         upsert=True
     )
     
-    # Increment counters inside user document based on video category
     if video.get("category") == "income" or video.get("category") == "offer":
         await db.users.update_one(
             {"user_id": data.uid},
@@ -1122,9 +1079,6 @@ async def get_user_tasks(uid: int):
         "reviews_claimed": tasks.get("reviews_claimed", False)
     }
 
-# =========================================================
-# 🛑 SCREENSHOT TARGET CODE AREA - FIXED WITH SECURED UPSERT
-# =========================================================
 @app.post("/api/tasks/claim")
 async def claim_task_reward(data: DailyTaskClaim):
     if data.uid in BANNED_USERS:
@@ -1137,7 +1091,6 @@ async def claim_task_reward(data: DailyTaskClaim):
     tasks = user.get("tasks", {})
     now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    # Check mission status safely
     mission = await db.daily_missions.find_one({"user_id": data.uid, "date": now_date})
     if not mission:
         return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
@@ -1150,10 +1103,10 @@ async def claim_task_reward(data: DailyTaskClaim):
         await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.reviews_claimed": True}, "$inc": {"coins": 10}})
         return {"ok": True}
         
-    return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা শর্ত পূরণ হয়নি!"}
+    return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
 
 # ==========================================
-# 10. Control Dashboard Sub-Pages
+# 8. Control Dashboard Sub-Pages (Admin View)
 # ==========================================
 @app.get("/admin/dashboard", response_class=HTMLResponse)
 async def admin_dashboard_ui(authenticated: bool = Depends(authenticate_admin)):
@@ -1258,7 +1211,7 @@ async def admin_withdraw_action(wid: str, action_type: str, authenticated: bool 
     return {"ok": True}
 
 # ==========================================
-# 11. Telegram Bot Core Router Setup
+# 9. Telegram Bot Core Router Setup
 # ==========================================
 async def start_bot_routers():
     global bot, dp, BOT_USERNAME
@@ -1491,9 +1444,6 @@ async def start_bot_routers():
 
     asyncio.create_task(dp.start_polling(bot))
 
-# ==========================================
-# 12. Channels/Groups Post Interceptor
-# ==========================================
 @dp.channel_post()
 async def auto_delete_channel_post_handler(message: types.Message):
     if str(message.chat.id) == str(CHANNEL_ID):
@@ -1506,40 +1456,7 @@ async def auto_delete_channel_post_handler(message: types.Message):
         await db.auto_delete_queue.insert_one(job)
 
 # ==========================================
-# 13. System Specific Daily Mission Checkers
-# ==========================================
-async def update_mission_progress(user_id: int, task_field: str):
-    await db.users.update_one(
-        {"user_id": user_id},
-        {"$inc": {f"tasks.{task_field}": 1}},
-        upsert=True
-    )
-    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    await db.daily_missions.update_one(
-        {"user_id": user_id, "date": now_date},
-        {"$set": {"completed": True}},
-        upsert=True
-    )
-
-# ==========================================
-# 14. Ads/Task Callback Mock Hooks
-# ==========================================
-@app.post("/api/hooks/ads")
-async def webapp_ads_tracker_hook(payload: dict = Body(...)):
-    uid = payload.get("uid")
-    if uid:
-        await update_mission_progress(int(uid), "ads")
-    return {"ok": True}
-
-@app.post("/api/hooks/reviews")
-async def webapp_review_tracker_hook(payload: dict = Body(...)):
-    uid = payload.get("uid")
-    if uid:
-        await update_mission_progress(int(uid), "reviews")
-    return {"ok": True}
-
-# ==========================================
-# 15. Main Application Startup
+# 10. Main Application Startup
 # ==========================================
 async def start():
     print("Initializing Database & Cache...")
