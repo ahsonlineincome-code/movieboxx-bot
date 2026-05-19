@@ -302,9 +302,6 @@ index_html = """
             gap: 5px;
         }
 
-        /* ---------------------------------------------------- */
-        /* ✨ ক্যাটাগরি বাটন স্টাইল - স্ক্রলবার ছাড়া ফ্লেক্স র‍্যাপ ও RGB গ্লো */
-        /* ---------------------------------------------------- */
         .categories-container {
             display: flex;
             flex-wrap: wrap;
@@ -344,7 +341,6 @@ index_html = """
             animation: none;
             box-shadow: 0 0 8px var(--accent-color);
         }
-        /* ---------------------------------------------------- */
 
         .content-section {
             padding: 15px;
@@ -712,7 +708,6 @@ index_html = """
         let allVideos = [];
         let userCoinsCount = 0;
 
-        // UI Setup
         document.getElementById('display-name').innerText = userData.first_name;
         document.getElementById('profile-name').innerText = userData.first_name + (userData.last_name ? ' ' + userData.last_name : '');
         document.getElementById('profile-id').innerText = "ID: " + userData.id;
@@ -738,9 +733,7 @@ index_html = """
                 } else {
                     Swal.fire('Error', 'অথেনটিকেশন ব্যর্থ হয়েছে!', 'error');
                 }
-            } catch(e) {
-                console.error(e);
-            }
+            } catch(e) { console.error(e); }
         }
 
         async function loadVideos() {
@@ -848,7 +841,7 @@ index_html = """
                     <div class="task-card">
                         <div class="task-details">
                             <h4>৩টি বিজ্ঞাপন দেখুন</h4>
-                            <p>অগ্রগতি: ${data.ads}/3 (পুরস্কার: ১৫ কয়েন)</p>
+                            <p>progress: ${data.ads}/3 (পুরস্কার: ১৫ কয়েন)</p>
                         </div>
                         <button class="task-btn" ${ (data.ads >= 3 && !data.ads_claimed) ? '' : 'disabled' } onclick="claimDailyMission('ads')">
                             ${data.ads_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
@@ -857,7 +850,7 @@ index_html = """
                     <div class="task-card">
                         <div class="task-details">
                             <h4>২টি প্লেস্টোর রিভিউ</h4>
-                            <p> can ক্লেইম (পুরস্কার: ১০ কয়েন)</p>
+                            <p>progress: ${data.reviews}/2 (পুরস্কার: ১০ কয়েন)</p>
                         </div>
                         <button class="task-btn" ${ (data.reviews >= 2 && !data.reviews_claimed) ? '' : 'disabled' } onclick="claimDailyMission('reviews')">
                             ${data.reviews_claimed ? 'ক্লেইমড' : 'ক্লেইম'}
@@ -1052,16 +1045,7 @@ async def claim_reward(data: ClaimReward):
         
     pts = video.get("points", 5)
     
-    # Update watched dynamic counter
-    await db.users.update_one(
-        {"user_id": data.uid},
-        {
-            "$inc": {"coins": pts},
-            "$push": {"watched_videos": data.vid}
-        }
-    )
-    
-    # 📢 AUTOMATIC DAILY MISSION TRACKER SYNC FOR SCREENSHOT ISSUE FIX
+    # 📢 AUTOMATIC DAILY MISSION TRACKER FIX (SCREENSHOT FIX)
     now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     await db.daily_missions.update_one(
         {"user_id": data.uid, "date": now_date},
@@ -1069,9 +1053,23 @@ async def claim_reward(data: ClaimReward):
         upsert=True
     )
     
-    # If the video was from income/ads category, increment the task fields
+    # Increment counters inside user document based on video category
     if video.get("category") == "income" or video.get("category") == "offer":
-        await db.users.update_one({"user_id": data.uid}, {"$inc": {"tasks.ads": 1}})
+        await db.users.update_one(
+            {"user_id": data.uid},
+            {
+                "$inc": {"coins": pts, "tasks.ads": 1},
+                "$push": {"watched_videos": data.vid}
+            }
+        )
+    else:
+        await db.users.update_one(
+            {"user_id": data.uid},
+            {
+                "$inc": {"coins": pts},
+                "$push": {"watched_videos": data.vid}
+            }
+        )
         
     return {"ok": True, "points": pts}
 
@@ -1125,7 +1123,7 @@ async def get_user_tasks(uid: int):
     }
 
 # =========================================================
-# 🛑 SCREENSHOT TARGET CODE AREA - KEEP & SECURED
+# 🛑 SCREENSHOT TARGET CODE AREA - FIXED WITH SECURED UPSERT
 # =========================================================
 @app.post("/api/tasks/claim")
 async def claim_task_reward(data: DailyTaskClaim):
@@ -1139,6 +1137,7 @@ async def claim_task_reward(data: DailyTaskClaim):
     tasks = user.get("tasks", {})
     now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     
+    # Check mission status safely
     mission = await db.daily_missions.find_one({"user_id": data.uid, "date": now_date})
     if not mission:
         return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
@@ -1151,7 +1150,7 @@ async def claim_task_reward(data: DailyTaskClaim):
         await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.reviews_claimed": True}, "$inc": {"coins": 10}})
         return {"ok": True}
         
-    return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
+    return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা শর্ত পূরণ হয়নি!"}
 
 # ==========================================
 # 10. Control Dashboard Sub-Pages
@@ -1299,7 +1298,7 @@ async def start_bot_routers():
             f"👋 **আসসালামু আলাইকুম, {message.from_user.first_name}!**\n\n"
             f"আমাদের ভিডিও আর্নিং অ্যাপের অফিসিয়াল বোটে আপনাকে স্বাগতম। এখানে আপনি প্রতিদিন বিভিন্ন শর্ট ভিডিও, "
             f"মুভি ক্লিপস এবং টাস্ক কমপ্রীট করে ফ্রিতে আনলিমিটেড কয়েন ইনকাম করতে পারবেন।\n\n"
-            f"💰 ১00% ট্রাস্টেড পেমেন্ট বিকাশ এবং নগদের মাধ্যমে সরাসরি দেওয়া হয়।"
+            f"💰 ১০০% ট্রাস্টেড পেমেন্ট বিকাশ এবং নগদের মাধ্যমে সরাসরি দেওয়া হয়।"
         )
         await message.answer(welcome_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
@@ -1515,7 +1514,6 @@ async def update_mission_progress(user_id: int, task_field: str):
         {"$inc": {f"tasks.{task_field}": 1}},
         upsert=True
     )
-    # Automatically upsert into daily_missions for verification stability
     now_date = datetime.datetime.now().strftime("%Y-%m-%d")
     await db.daily_missions.update_one(
         {"user_id": user_id, "date": now_date},
