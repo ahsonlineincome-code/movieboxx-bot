@@ -4,4 +4,4 @@ aiogram
 motor
 aiohttp
 apscheduler
-pydantic
+
