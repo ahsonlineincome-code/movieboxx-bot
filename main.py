@@ -190,7 +190,7 @@ async def auto_delete_worker():
         await asyncio.sleep(5)
 
 # ==========================================
-# 6. WebApp UI (4 Button Layout - Missions Completely Removed)
+# 6. WebApp UI (4 Button Layout)
 # ==========================================
 index_html = """
 <!DOCTYPE html>
@@ -317,7 +317,6 @@ index_html = """
             border-color: var(--accent-color);
         }
 
-        /* Content Sections */
         .content-section {
             padding: 15px;
             display: none;
@@ -327,7 +326,6 @@ index_html = """
             display: block;
         }
 
-        /* Search Section UI */
         .search-wrapper {
             position: relative;
             margin-bottom: 20px;
@@ -348,7 +346,6 @@ index_html = """
             color: #718096;
         }
 
-        /* Video / Movie Grid UI */
         .video-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -428,7 +425,6 @@ index_html = """
             cursor: pointer;
         }
 
-        /* Profile & Withdrawal Form */
         .profile-card {
             background-color: var(--card-bg);
             padding: 20px;
@@ -448,7 +444,6 @@ index_html = """
             border: none; padding: 12px; border-radius: 8px; font-weight: 600; cursor: pointer;
         }
 
-        /* PREMIUM BOTTOM NAVIGATION BAR (4 BUTTON LAYOUT) */
         nav {
             position: fixed;
             bottom: 0;
@@ -486,7 +481,6 @@ index_html = """
             color: var(--nav-active);
         }
 
-        /* Video Player Layer */
         .player-container {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             background-color: #000; z-index: 2000; display: none; flex-direction: column;
@@ -1129,3 +1123,208 @@ async def start_bot_routers():
             f"📊 **টোটাল সিস্টেম স্ট্যাটিস্টিক্স:**\n\n"
             f"👥 মোট রেজিস্টার্ড ইউজার: {total_users} জন\n"
             f"🎥 মোট আপলোডকৃত ভিডিও: {total_vids} টি\n"
+            f"⏳ পেন্ডিং উইথড্র রিকোয়েস্ট: {pending_w} টি"
+        )
+        await callback.message.edit_text(stat_msg, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+    @dp.callback_query(F.data == "admin_upload_video")
+    async def cb_upload_init(callback: types.CallbackQuery, state: FSMContext):
+        if callback.from_user.id not in ADMINS: return
+        await state.set_state(AdminStates.waiting_for_video)
+        await callback.message.answer("🎬 অনুগ্রহ করে আপনার কাঙ্ক্ষিত ভিডিওটি (MP4 Format) এখানে সেন্ড করুন:")
+        await callback.answer()
+
+    @dp.message(AdminStates.waiting_for_video, F.video)
+    async def process_admin_video(message: types.Message, state: FSMContext):
+        file_id = message.video.file_id
+        await state.update_data(file_id=file_id)
+        await state.set_state(AdminStates.waiting_for_video_details)
+        
+        info_txt = (
+            "📌 **ভিডিও রিসিভড!**\n\n"
+            "এখন নিচের ফরম্যাটে ভিডিওর ডিটেইলস লিখে পাঠান:\n"
+            "`টাইটেল | ক্যাটাগরি | কয়েন | ডিউরেশন` \n\n"
+            "💡 উদাহরণ: `নতুন মুভি ২০২৬ | movie | 10 | 30`\n"
+            "*(ক্যাটাগরি অবশ্যই movie, income অথবা offer হতে হবে)*"
+        )
+        await message.answer(info_txt, parse_mode="Markdown")
+
+    @dp.message(AdminStates.waiting_for_video_details)
+    async def process_video_details(message: types.Message, state: FSMContext):
+        try:
+            parts = [p.strip() for p in message.text.split("|")]
+            if len(parts) < 4:
+                await message.answer("❌ ফরম্যাট ভুল হয়েছে! আবার চেষ্টা করুন।")
+                return
+                
+            title, category, coins, duration = parts[0], parts[1], int(parts[2]), int(parts[3])
+            state_data = await state.get_data()
+            
+            video_doc = {
+                "title": title,
+                "category": category,
+                "points": coins,
+                "duration": duration,
+                "tg_file_id": state_data["file_id"]
+            }
+            await db.videos.insert_one(video_doc)
+            await state.clear()
+            await message.answer("✅ ভিডিওটি সফলভাবে সিস্টেমে আপলোড করা হয়েছে!", reply_markup=get_admin_keyboard())
+        except Exception as e:
+            await message.answer(f"❌ এরর ঘটেছে: {str(e)}")
+
+    @dp.callback_query(F.data == "admin_broadcast")
+    async def cb_broadcast(callback: types.CallbackQuery, state: FSMContext):
+        if callback.from_user.id not in ADMINS: return
+        await state.set_state(AdminStates.waiting_for_broadcast)
+        await callback.message.answer("📢 সকল ইউজারের কাছে পাঠানোর জন্য ব্রডকাস্ট মেসেজটি লিখুন:")
+        await callback.answer()
+
+    @dp.message(AdminStates.waiting_for_broadcast)
+    async def process_broadcast(message: types.Message, state: FSMContext):
+        text_to_send = message.text
+        await state.clear()
+        await message.answer("⏳ ব্রডকাস্টিং শুরু হয়েছে...")
+        
+        success, fail = 0, 0
+        async for user in db.users.find():
+            try:
+                await bot.send_message(chat_id=user["user_id"], text=text_to_send)
+                success += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                fail += 1
+                
+        await message.answer(f"📢 **ব্রডকাস্ট সম্পন্ন!**\n\n✅ সফল: {success} জন\n❌ ব্যর্থ: {fail} জন", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+    @dp.callback_query(F.data == "admin_ban")
+    async def cb_ban(callback: types.CallbackQuery, state: FSMContext):
+        if callback.from_user.id not in ADMINS: return
+        await state.set_state(AdminStates.waiting_for_ban)
+        await callback.message.answer("🚫 যে ইউজারকে ব্যান করতে চান তার টেলিগ্রাম ইউজার আইডি (User ID) দিন:")
+        await callback.answer()
+
+    @dp.message(AdminStates.waiting_for_ban)
+    async def process_ban(message: types.Message, state: FSMContext):
+        try:
+            target_uid = int(message.text.strip())
+            await db.banned.update_one({"user_id": target_uid}, {"$set": {"date": datetime.datetime.now().strftime("%Y-%m-%d")}}, upsert=True)
+            BANNED_USERS.add(target_uid)
+            await state.clear()
+            await message.answer(f"✅ ইউজার `{target_uid}` কে সফলভাবে ব্যান করা হয়েছে।", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ সঠিক সংখ্যা বা ইউজার আইডি দিন।")
+
+    @dp.callback_query(F.data == "admin_unban")
+    async def cb_unban(callback: types.CallbackQuery, state: FSMContext):
+        if callback.from_user.id not in ADMINS: return
+        await state.set_state(AdminStates.waiting_for_unban)
+        await callback.message.answer("🔓 যে ইউজারকে আনব্যান করতে চান তার আইডি দিন:")
+        await callback.answer()
+
+    @dp.message(AdminStates.waiting_for_unban)
+    async def process_unban(message: types.Message, state: FSMContext):
+        try:
+            target_uid = int(message.text.strip())
+            await db.banned.delete_one({"user_id": target_uid})
+            if target_uid in BANNED_USERS:
+                BANNED_USERS.remove(target_uid)
+            await state.clear()
+            await message.answer(f"✅ ইউজার `{target_uid}` সফলভাবে আনব্যান হয়েছে।", reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+        except ValueError:
+            await message.answer("❌ সঠিক সংখ্যা বা ইউজার আইডি দিন।")
+
+    @dp.callback_query(F.data == "admin_withdrawals")
+    async def cb_admin_w_list(callback: types.CallbackQuery):
+        if callback.from_user.id not in ADMINS: return
+        builder = InlineKeyboardBuilder()
+        
+        count = 0
+        async for w in db.withdrawals.find({"status": "Pending"}).limit(10):
+            count += 1
+            builder.button(text=f"ID:{w['user_id']} - {w['amount']}C", callback_data=f"v_w_{w['_id']}")
+            
+        builder.adjust(2)
+        if count == 0:
+            await callback.message.answer("কোনো পেন্ডিং উইথড্র রিকোয়েস্ট নেই।")
+        else:
+            await callback.message.answer("🔽 পেন্ডিং রিকোয়েস্টের তালিকা (যেকোনো একটিতে ক্লিক করুন):", reply_markup=builder.as_markup())
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("v_w_"))
+    async def cb_view_single_w(callback: types.CallbackQuery):
+        if callback.from_user.id not in ADMINS: return
+        wid = callback.data.replace("v_w_", "")
+        w = await db.withdrawals.find_one({"_id": ObjectId(wid)})
+        if not w:
+            await callback.answer("রিকোয়েস্টটি পাওয়া যায়নি।")
+            return
+            
+        msg = f"💰 **উইথড্রাল ডিটেইলস:**\n\n👤 ইউজার: `{w['user_id']}`\n💳 মেথড: {w['method']}\n📞 নাম্বার: `{w['number']}`\n🪙 পরিমাণ: {w['amount']} Coins"
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Approve", callback_data=f"act_a_{wid}")
+        builder.button(text="❌ Reject", callback_data=f"act_r_{wid}")
+        builder.adjust(2)
+        
+        await callback.message.answer(msg, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("act_"))
+    async def cb_action_execute(callback: types.CallbackQuery):
+        if callback.from_user.id not in ADMINS: return
+        action_data = callback.data.replace("act_", "")
+        action_type = "approve" if action_data.startswith("a_") else "reject"
+        wid = action_data.replace("a_", "").replace("r_", "")
+        
+        status_str = "Approved" if action_type == "approve" else "Rejected"
+        w_doc = await db.withdrawals.find_one({"_id": ObjectId(wid)})
+        if not w_doc: return
+        
+        await db.withdrawals.update_one({"_id": ObjectId(wid)}, {"$set": {"status": status_str}})
+        if status_str == "Rejected":
+            await db.users.update_one({"user_id": w_doc["user_id"]}, {"$inc": {"coins": w_doc["amount"]}})
+            
+        await callback.message.edit_text(f"📢 রিকোয়েস্টটি সফলভাবে **{status_str}** করা হয়েছে।", parse_mode="Markdown")
+        
+        try:
+            msg = f"🔔 **আপনার উইথড্র রিকোয়েস্ট আপডেট!**\n\n💰 পরিমাণ: {w_doc['amount']} Coins\n📌 স্ট্যাটাস: {status_str}"
+            await bot.send_message(chat_id=w_doc["user_id"], text=msg, parse_mode="Markdown")
+        except Exception:
+            pass
+
+    asyncio.create_task(dp.start_polling(bot))
+
+@dp.channel_post()
+async def auto_delete_channel_post_handler(message: types.Message):
+    if str(message.chat.id) == str(CHANNEL_ID):
+        delete_time = time.time() + 60
+        job = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+            "delete_at": delete_time
+        }
+        await db.auto_delete_queue.insert_one(job)
+
+# ==========================================
+# 10. Main Application Startup
+# ==========================================
+async def main_init():
+    print("Initializing Database & Cache...")
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    
+    print("Starting Background Workers...")
+    asyncio.create_task(auto_delete_worker())
+    
+    print("Connecting to Telegram Bot...")
+    await start_bot_routers()
+
+# Render বা Uvicorn-এর জন্য গ্লোবাল ইভেন্ট লুপ সেটআপ
+loop = asyncio.get_event_loop()
+loop.run_until_complete(main_init())
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
