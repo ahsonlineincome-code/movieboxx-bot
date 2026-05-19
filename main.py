@@ -82,7 +82,7 @@ async def load_admins():
 
 async def load_banned_users():
     global BANNED_USERS
-    BANNED_USERS =尊set()
+    BANNED_USERS = set()
     async for user in db.banned.find():
         BANNED_USERS.add(user["user_id"])
 
@@ -301,9 +301,9 @@ index_html = """
             gap: 5px;
         }
 
-        /* ------------------------------------------ */
-        /* ✨ ক্যাটাগরি বাটন এর আপডেট সাইজ ও RGB ইফেক্ট */
-        /* ------------------------------------------ */
+        /* ---------------------------------------------------- */
+        /* ✨ ক্যাটাগরি বাটন এর ছোট সাইজ, একসাথ করা এবং RGB লাইট ইফেক্ট */
+        /* ---------------------------------------------------- */
         .categories-container {
             display: flex;
             flex-wrap: wrap;
@@ -315,11 +315,11 @@ index_html = """
             width: 100%;
         }
 
-        @keyframes rgbGlow {
-            0% { border-color: #ff0000; box-shadow: 0 0 3px #ff0000; }
-            33% { border-color: #00ff00; box-shadow: 0 0 3px #00ff00; }
-            66% { border-color: #0000ff; box-shadow: 0 0 3px #0000ff; }
-            100% { border-color: #ff0000; box-shadow: 0 0 3px #ff0000; }
+        @keyframes rgbGlowEffect {
+            0% { border-color: #ff0000; box-shadow: 0 0 4px #ff0000; }
+            33% { border-color: #00ff00; box-shadow: 0 0 4px #00ff00; }
+            66% { border-color: #0000ff; box-shadow: 0 0 4px #0000ff; }
+            100% { border-color: #ff0000; box-shadow: 0 0 4px #ff0000; }
         }
 
         .category-btn {
@@ -333,7 +333,7 @@ index_html = """
             cursor: pointer;
             transition: all 0.2s ease;
             white-space: nowrap;
-            animation: rgbGlow 4s linear infinite;
+            animation: rgbGlowEffect 4s linear infinite;
         }
 
         .category-btn.active {
@@ -341,9 +341,9 @@ index_html = """
             color: #000000;
             border-color: var(--accent-color);
             animation: none;
-            box-shadow: 0 0 6px var(--accent-color);
+            box-shadow: 0 0 8px var(--accent-color);
         }
-        /* ------------------------------------------ */
+        /* ---------------------------------------------------- */
 
         .content-section {
             padding: 15px;
@@ -1100,15 +1100,14 @@ async def withdraw_history(uid: int):
 
 @app.get("/api/tasks/{uid}")
 async def get_user_tasks(uid: int):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    data = await db.daily_missions.find_one({"user_id": uid, "date": today})
-    if not data:
+    user = await db.users.find_one({"user_id": uid})
+    if not user:
         return {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
     return {
-        "ads": data.get("ads", 0),
-        "reviews": data.get("reviews", 0),
-        "ads_claimed": data.get("ads_claimed", False),
-        "reviews_claimed": data.get("reviews_claimed", False)
+        "ads": user.get("tasks", {}).get("ads", 0),
+        "reviews": user.get("tasks", {}).get("reviews", 0),
+        "ads_claimed": user.get("tasks", {}).get("ads_claimed", False),
+        "reviews_claimed": user.get("tasks", {}).get("reviews_claimed", False)
     }
 
 @app.post("/api/tasks/claim")
@@ -1116,19 +1115,18 @@ async def claim_task_reward(data: DailyTaskClaim):
     if data.uid in BANNED_USERS:
         return {"ok": False, "msg": "Banned"}
         
-    now_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    tasks = await db.daily_missions.find_one({"user_id": data.uid, "date": now_date})
-    if not tasks:
-        return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
+    user = await db.users.find_one({"user_id": data.uid})
+    if not user:
+        return {"ok": False, "msg": "ইউজার পাওয়া যায়নি!"}
         
+    tasks = user.get("tasks", {})
+    
     if data.task_type == "ads" and tasks.get("ads", 0) >= 3 and not tasks.get("ads_claimed"):
-        await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 15}})
-        await db.daily_missions.update_one({"user_id": data.uid, "date": now_date}, {"$set": {"ads_claimed": True}})
+        await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.ads_claimed": True}, "$inc": {"coins": 15}})
         return {"ok": True}
         
     if data.task_type == "reviews" and tasks.get("reviews", 0) >= 2 and not tasks.get("reviews_claimed"):
-        await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 10}})
-        await db.daily_missions.update_one({"user_id": data.uid, "date": now_date}, {"$set": {"reviews_claimed": True}})
+        await db.users.update_one({"user_id": data.uid}, {"$set": {"tasks.reviews_claimed": True}, "$inc": {"coins": 10}})
         return {"ok": True}
         
     return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
@@ -1428,7 +1426,7 @@ async def start_bot_routers():
             
         builder.adjust(2)
         if count == 0:
-            await callback.message.answer("কোনো পেন্ডিং উইথড্র রিকোয়েস্ট নেই।")
+            await callback.message.answer("কোনো পেন্ডিং উইথड्र রিকোয়েস্ট নেই।")
         else:
             await callback.message.answer("🔽 পেন্ডিং রিকোয়েস্টের তালিকা (যেকোনো একটিতে ক্লিক করুন):", reply_markup=builder.as_markup())
         await callback.answer()
@@ -1497,10 +1495,9 @@ async def auto_delete_channel_post_handler(message: types.Message):
 # 13. System Specific Daily Mission Checkers
 # ==========================================
 async def update_mission_progress(user_id: int, task_field: str):
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
-    await db.daily_missions.update_one(
-        {"user_id": user_id, "date": today},
-        {"$inc": {task_field: 1}},
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$inc": {f"tasks.{task_field}": 1}},
         upsert=True
     )
 
