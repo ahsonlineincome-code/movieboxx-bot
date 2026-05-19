@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+aiogram
+motor
+aiohttp
+apscheduler
+pydantic
