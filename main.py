@@ -137,7 +137,7 @@ async def catch_all_inputs(m: types.Message):
         }
 
         await m.answer(
-            "✅ ভিডিও পেয়েছি\n\nএখন পোস্টার দিন"
+            "✅ ভিডিও পেয়েছি\n\nএখন পোস্টার দিন"
         )
 
         return
@@ -171,7 +171,7 @@ async def catch_all_inputs(m: types.Message):
         kb.adjust(3,3,4,1)
 
         await m.answer(
-            "✅ পোস্টার পেয়েছি\n\nক্যাটাগরি সিলেক্ট করুন",
+            "✅ পোস্টার পেয়েছি\n\nক্যাটাগরি সিলেক্ট করুন",
             reply_markup=kb.as_markup()
         )
 
@@ -241,66 +241,79 @@ color:#fff;
 header{
 padding:15px;
 text-align:center;
-font-size:25px;
+font-size:22px;
 font-weight:bold;
 background:#0f172a;
-border-bottom:1px solid #222;
+border-bottom:1px solid #1e293b;
+letter-spacing: 1px;
 }
 
 .category-wrapper{
-padding:15px 10px;
+padding:12px 10px;
+width: 100%;
+overflow-x: auto;
+-webkit-overflow-scrolling: touch;
+}
+
+/* হাইড স্ক্রলবার */
+.category-wrapper::-webkit-scrollbar {
+display: none;
 }
 
 .category-scroll{
 display:flex;
-flex-wrap:wrap;
-gap:12px;
+gap:8px;
+width: max-content;
+padding-bottom: 2px;
 }
 
 .cat-btn{
-
 border:none;
 outline:none;
 cursor:pointer;
-
-padding:12px 22px;
-
-border-radius:30px;
-
+padding:8px 14px;
+border-radius:20px;
 background:#111827;
-color:#fff;
-
-font-size:15px;
-font-weight:700;
-
-border:2px solid #ff5b00;
-
-box-shadow:
-0 0 5px #ff5b00,
-0 0 10px rgba(255,91,0,.5);
-
-transition:.3s;
-
+color:#ccc;
+font-size:13px;
+font-weight:600;
+border:1px solid rgba(255, 91, 0, 0.4);
+box-shadow: 0 0 3px rgba(255, 91, 0, 0.2);
+transition:.2s ease-in-out;
 white-space:nowrap;
+}
+
+.cat-btn:hover{
+color: #fff;
+border-color: #ff5b00;
 }
 
 .cat-btn.active{
 background:linear-gradient(45deg,#ff5b00,#ff7300);
+color: #fff;
+font-weight: 700;
+border-color: #ff7300;
+box-shadow: 0 0 8px #ff5b00;
 }
 
 .search-box{
-padding:10px;
+padding:10px 15px;
 }
 
 .search-input{
 width:100%;
-padding:15px;
+padding:12px 20px;
 border:none;
 outline:none;
 border-radius:30px;
 background:#111827;
 color:#fff;
-font-size:16px;
+font-size:15px;
+border: 1px solid #1e293b;
+}
+
+.search-input:focus{
+border-color: #ff5b00;
 }
 
 .grid{
@@ -312,40 +325,40 @@ gap:15px;
 
 .card{
 background:#111827;
-border-radius:15px;
+border-radius:12px;
 overflow:hidden;
+border: 1px solid #1e293b;
 }
 
 .card img{
 width:100%;
-height:220px;
+height:200px;
 object-fit:cover;
 }
 
 .card-footer{
 padding:10px;
 text-align:center;
-font-weight:bold;
-font-size:14px;
+font-weight:600;
+font-size:13px;
+color: #e2e8f0;
 }
 
 .view{
-font-size:12px;
-opacity:.8;
+font-size:11px;
+opacity:.7;
 margin-top:5px;
+color: #94a3b8;
 }
 
 @media(max-width:500px){
-
 .card img{
-height:190px;
+height:170px;
 }
-
-.cat-btn{
-font-size:13px;
-padding:11px 18px;
+.grid {
+gap: 10px;
+padding: 10px;
 }
-
 }
 
 </style>
@@ -451,7 +464,7 @@ const grid = document.getElementById("movieGrid");
 if(data.movies.length === 0){
 
 grid.innerHTML = `
-<h2 style="padding:20px;">
+<h2 style="padding:20px; text-align:center; width:100%; grid-column: span 2; font-size:16px; color:#64748b;">
 No Movies Found
 </h2>
 `;
