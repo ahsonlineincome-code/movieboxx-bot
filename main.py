@@ -858,30 +858,17 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
         </script>
     
 <script>
-
 window.addEventListener("load",()=>{
-
-    setTimeout(()=>{
-
-        document
-        .getElementById("splash-screen")
-        .classList
-        .add("hide-splash")
-
-        setTimeout(()=>{
-
-            const splash=document.getElementById("splash-screen")
-
-            if(splash){
-                splash.remove()
-            }
-
-        },1000)
-
-    },3500)
-
-})
-
+setTimeout(()=>{
+const s=document.getElementById("splash-screen");
+if(s){
+s.classList.add("hide-splash");
+setTimeout(()=>{
+s.remove();
+},1000);
+}
+},3000);
+});
 </script>
 
 </body>
@@ -1118,181 +1105,59 @@ async def web_ui():
             .task-btn:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
             .task-btn.claimed { background: #10b981; }
         
-/* ===============================
-   PREMIUM SPLASH SCREEN
-================================ */
-
+/* PREMIUM SPLASH */
 #splash-screen{
-    position: fixed;
-    top:0;
-    left:0;
-    width:100%;
-    height:100%;
-    background:#020617;
-    z-index:999999;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    flex-direction:column;
-    overflow:hidden;
-}
-
-.splash-bg{
-    position:absolute;
-    width:500px;
-    height:500px;
-    background:radial-gradient(circle,#ff00ff33,#00ffff11,transparent);
-    filter:blur(40px);
-    animation:bgMove 6s linear infinite alternate;
-}
-
-@keyframes bgMove{
-    0%{
-        transform:translate(-50px,-50px) scale(1);
-    }
-
-    100%{
-        transform:translate(50px,50px) scale(1.3);
-    }
-}
-
-.logo-wrapper{
-    position:relative;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    flex-direction:column;
-    z-index:10;
-}
-
-.logo-ring{
-    position:absolute;
-    width:220px;
-    height:220px;
-    border-radius:50%;
-    border:3px solid #00ffff;
-    box-shadow:
-    0 0 20px #00ffff,
-    0 0 50px #00ffff,
-    inset 0 0 20px #00ffff;
-    animation:rotateRing 8s linear infinite;
-}
-
-.logo-ring::before{
-    content:"";
-    position:absolute;
-    inset:-10px;
-    border-radius:50%;
-    border:2px solid #ff00ff;
-    box-shadow:
-    0 0 20px #ff00ff,
-    0 0 40px #ff00ff;
-}
-
-@keyframes rotateRing{
-    from{
-        transform:rotate(0deg);
-    }
-
-    to{
-        transform:rotate(360deg);
-    }
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:#020617;
+z-index:999999;
+display:flex;
+justify-content:center;
+align-items:center;
+flex-direction:column;
+overflow:hidden;
 }
 
 .logo-text{
-    font-size:52px;
-    font-weight:900;
-    letter-spacing:3px;
-    text-transform:uppercase;
-    background:linear-gradient(45deg,#ff00ff,#00ffff,#ffffff,#ff00ff);
-    background-size:400%;
-    -webkit-background-clip:text;
-    -webkit-text-fill-color:transparent;
-    animation:textGlow 5s linear infinite;
-    text-shadow:
-    0 0 10px #ff00ff,
-    0 0 30px #00ffff;
-}
-
-@keyframes textGlow{
-    0%{
-        background-position:0% 50%;
-        transform:scale(0.8);
-        opacity:0;
-    }
-
-    50%{
-        transform:scale(1.05);
-        opacity:1;
-    }
-
-    100%{
-        background-position:100% 50%;
-        transform:scale(1);
-        opacity:1;
-    }
+font-size:48px;
+font-weight:900;
+letter-spacing:3px;
+background:linear-gradient(45deg,#ff00ff,#00ffff,#ffffff);
+-webkit-background-clip:text;
+-webkit-text-fill-color:transparent;
+animation:zoomGlow 3s infinite alternate;
+text-shadow:0 0 20px #00ffff;
 }
 
 .loading-text{
-    margin-top:30px;
-    color:#94a3b8;
-    font-size:15px;
-    letter-spacing:4px;
-    animation:blink 1.2s infinite;
+margin-top:20px;
+color:white;
+letter-spacing:4px;
 }
 
-@keyframes blink{
-    0%,100%{
-        opacity:0.3;
-    }
-
-    50%{
-        opacity:1;
-    }
+@keyframes zoomGlow{
+0%{
+transform:scale(.8);
+opacity:.4;
 }
-
-.particles{
-    position:absolute;
-    width:6px;
-    height:6px;
-    background:#00ffff;
-    border-radius:50%;
-    box-shadow:0 0 10px #00ffff;
-    animation:floatParticle 8s linear infinite;
+100%{
+transform:scale(1.1);
+opacity:1;
 }
-
-.particles:nth-child(1){top:10%;left:20%;animation-delay:0s;}
-.particles:nth-child(2){top:80%;left:30%;animation-delay:1s;}
-.particles:nth-child(3){top:40%;left:80%;animation-delay:2s;}
-.particles:nth-child(4){top:70%;left:70%;animation-delay:3s;}
-.particles:nth-child(5){top:20%;left:60%;animation-delay:4s;}
-.particles:nth-child(6){top:50%;left:10%;animation-delay:5s;}
-
-@keyframes floatParticle{
-    0%{
-        transform:translateY(0px) scale(1);
-        opacity:0;
-    }
-
-    50%{
-        opacity:1;
-    }
-
-    100%{
-        transform:translateY(-120px) scale(1.8);
-        opacity:0;
-    }
 }
 
 .hide-splash{
-    animation:hideSplash 1s forwards;
+animation:fadeOut 1s forwards;
 }
 
-@keyframes hideSplash{
-    to{
-        opacity:0;
-        visibility:hidden;
-    }
+@keyframes fadeOut{
+to{
+opacity:0;
+visibility:hidden;
+}
 }
 
 </style>
@@ -1300,16 +1165,7 @@ async def web_ui():
     <body onclick="closeMenu(event)">
         <header>
             <div class="logo">Movie Box</div>
-            <div class="header-right">
-                <div style="display: flex; flex-direction: column; align-items: flex-end;">
-                    <div class="user-info">
-                        <span id="uName">Guest</span>
-                        <span id="vipBadge" class="vip-tag"><i class="fa-solid fa-crown"></i> VIP</span>
-                        <span class="coin-tag"><i class="fa-solid fa-coins"></i> <span id="coinCount">0</span></span>
-                        <img id="uPic" src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png">
-                    </div>
-                    <div id="badgesContainer"></div>
-                </div>
+            
                 <div class="menu-btn" onclick="toggleMenu(event)"><i class="fa-solid fa-bars"></i></div>
             </div>
         </header>
@@ -2221,35 +2077,7 @@ async def web_ui():
 
             fetchUserInfo(); loadTrending(); loadUpcoming(); loadMovies(1); 
         </script>
-    
-<script>
-
-window.addEventListener("load",()=>{
-
-    setTimeout(()=>{
-
-        document
-        .getElementById("splash-screen")
-        .classList
-        .add("hide-splash")
-
-        setTimeout(()=>{
-
-            const splash=document.getElementById("splash-screen")
-
-            if(splash){
-                splash.remove()
-            }
-
-        },1000)
-
-    },3500)
-
-})
-
-</script>
-
-</body>
+    </body>
     </html>
     """
     html_code = html_code.replace("{{DIRECT_LINKS}}", dl_json).replace("{{ZONE_ID}}", zone_id).replace("{{TG_LINK}}", tg_url).replace("{{LINK_18}}", link_18).replace("{{AD_COUNT}}", str(required_ads)).replace("{{BOT_USER}}", BOT_USERNAME).replace("{{BKASH_NO}}", bkash_no).replace("{{NAGAD_NO}}", nagad_no)
