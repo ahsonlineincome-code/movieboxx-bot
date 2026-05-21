@@ -711,7 +711,7 @@ async def send_reply(m: types.Message, state: FSMContext):
         else: 
             await m.copy_to(target_uid, caption=f"📩 <b>অ্যাডমিন রিপ্লাই:</b>\n\n{m.caption or ''}", parse_mode="HTML")
         await m.answer("✅ ইউজারকে সফলভাবে রিপ্লাই পাঠানো হয়েছে!")
-    except Exception:
+    except Exception: 
         await m.answer("⚠️ রিপ্লাই পাঠানো যায়নি! ইউজার হয়তো বট ব্লক করেছে।")
 
 
@@ -735,7 +735,6 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
             <div class="flex justify-between items-center mb-8 border-b border-gray-700 pb-4">
                 <h1 class="text-3xl font-bold text-red-500"><i class="fa-solid fa-shield-halved"></i> MovieZone Admin</h1>
             </div>
-            
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                 <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
                     <h3 class="text-gray-400 text-sm font-bold">TOTAL USERS</h3>
@@ -750,7 +749,6 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
                     <p class="text-4xl font-bold text-yellow-400 mt-2" id="statNew">...</p>
                 </div>
             </div>
-
             <div class="bg-gray-800 rounded-xl shadow-lg border border-gray-700 p-6">
                 <h2 class="text-xl font-bold mb-4 text-gray-200"><i class="fa-solid fa-film text-red-400"></i> Manage Movies & Streams</h2>
                 <div class="overflow-x-auto">
@@ -771,1007 +769,1754 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
             </div>
         </div>
 
+        <!-- Custom Admin Edit Modal -->
         <div id="adminEditModal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50">
             <div class="bg-gray-800 p-6 rounded-xl border border-gray-700 w-full max-w-md relative">
                 <button onclick="closeAdminEdit()" class="absolute top-3 right-4 text-gray-400 hover:text-red-500 text-2xl">&times;</button>
                 <h3 class="text-xl font-bold mb-4 text-white"><i class="fa-solid fa-pen-to-square text-blue-400"></i> Edit Movie</h3>
                 <input type="hidden" id="editOldTitle">
+                
                 <div class="mb-5">
                     <label class="block text-gray-400 text-sm mb-1 font-bold">Movie Title (সব ফাইলের নাম বদলাবে)</label>
                     <input type="text" id="editNewTitle" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500">
                 </div>
+                
                 <button onclick="saveAdminEdit()" class="w-full bg-blue-600 text-white rounded p-3 font-bold hover:bg-blue-500 transition text-lg shadow-lg">Save Changes</button>
             </div>
         </div>
 
         <script>
             function formatViews(num) {
-                if (num >= 1000000) return (num / 1000000).toFixed(1).replace('.0', '') + 'M';
-                if (num >= 1000) return (num / 1000).toFixed(1).replace('.0', '') + 'K';
-                return num;
+                if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\\.0$/, '') + 'M';
+                if (num >= 1000) return (num / 1000).toFixed(1).replace(/\\.0$/, '') + 'K';
+                return num.toString();
             }
-            async function loadStats() {
+
+            async function loadAdminData() {
                 try {
-                    let r = await fetch('/api/admin/stats');
-                    let d = await r.json();
-                    document.getElementById('statUsers').innerText = d.total_users;
-                    document.getElementById('statMovies').innerText = d.total_movies;
-                    document.getElementById('statNew').innerText = d.new_today;
-                } catch(e){}
-            }
-            async function loadMovies() {
-                try {
-                    let r = await fetch('/api/admin/movies');
-                    let movies = await r.json();
+                    const res = await fetch('/api/admin/data');
+                    const data = await res.json();
+                    document.getElementById('statUsers').innerText = data.total_users;
+                    document.getElementById('statMovies').innerText = data.total_groups;
+                    document.getElementById('statNew').innerText = data.new_users_today;
                     let html = '';
-                    if(movies.length === 0) {
-                        html = '<tr><td colspan="4" class="text-center p-8 text-gray-400">No movies found.</td></tr>';
-                    } else {
-                        movies.forEach(m => {
-                            html += `<tr class="border-b border-gray-700 hover:bg-gray-750 transition">
-                                <td class="p-4 font-medium text-white">${m.title}</td>
-                                <td class="p-4 text-gray-300 font-bold">${formatViews(m.total_clicks)}</td>
-                                <td class="p-4 text-blue-400 font-semibold">${m.files_count} files</td>
-                                <td class="p-4 flex gap-2">
-                                    <button onclick="openAdminEdit('${btoa(unescape(encodeURIComponent(m.title)))}')" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-edit"></i> Edit</button>
-                                    <button onclick="deleteMovie('${btoa(unescape(encodeURIComponent(m.title)))}')" class="bg-red-600 hover:bg-red-500 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-trash"></i> Delete</button>
-                                </td>
-                            </tr>`;
-                        });
-                    }
+                    data.movies.forEach(m => {
+                        html += `<tr class="border-b border-gray-700 hover:bg-gray-750 transition">
+                            <td class="p-4 font-medium text-base">` + m._id + `</td>
+                            <td class="p-4 text-gray-400 font-bold"><i class="fa-solid fa-eye text-gray-500"></i> ` + formatViews(m.clicks) + `</td>
+                            <td class="p-4 text-green-400 font-bold">` + m.file_count + `</td>
+                            <td class="p-4 flex gap-2">
+                                <button onclick="addViews('`+encodeURIComponent(m._id)+`')" class="text-yellow-400 bg-yellow-900 bg-opacity-30 px-3 py-1 rounded"><i class="fa-solid fa-fire"></i> Boost</button>
+                                <button onclick="openAdminEdit('`+encodeURIComponent(m._id)+`', '`+m._id.replace(/'/g, "\\'")+`')" class="text-blue-400 bg-blue-900 bg-opacity-30 px-3 py-1 rounded">Edit</button>
+                                <button onclick="deleteMovie('`+encodeURIComponent(m._id)+`')" class="text-red-400 bg-red-900 bg-opacity-30 px-3 py-1 rounded">Delete</button>
+                            </td>
+                        </tr>`;
+                    });
                     document.getElementById('movieTableBody').innerHTML = html;
-                } catch(e){}
+                } catch (e) { alert("Error loading data from the server!"); }
             }
-            function openAdminEdit(encodedTitle) {
-                let title = decodeURIComponent(escape(atob(encodedTitle)));
-                document.getElementById('editOldTitle').value = title;
-                document.getElementById('editNewTitle').value = title;
+            
+            function openAdminEdit(encodedTitle, oldTitle) {
+                document.getElementById('editOldTitle').value = encodedTitle;
+                document.getElementById('editNewTitle').value = oldTitle;
                 document.getElementById('adminEditModal').classList.remove('hidden');
             }
+            
             function closeAdminEdit() {
                 document.getElementById('adminEditModal').classList.add('hidden');
             }
+            
             async function saveAdminEdit() {
-                let old_title = document.getElementById('editOldTitle').value;
-                let new_title = document.getElementById('editNewTitle').value.trim();
-                if(!new_title) return;
-                let r = await fetch('/api/admin/edit-movie', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({old_title, new_title})
+                let encodedTitle = document.getElementById('editOldTitle').value;
+                let newTitle = document.getElementById('editNewTitle').value.trim();
+                
+                await fetch('/api/admin/movie/' + encodedTitle, {
+                    method: 'PUT', 
+                    headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({title_new: newTitle})
                 });
-                let d = await r.json();
-                if(d.ok) { closeAdminEdit(); loadMovies(); } else { alert(d.msg || "Error"); }
+                closeAdminEdit();
+                loadAdminData();
             }
+
             async function deleteMovie(encodedTitle) {
-                let title = decodeURIComponent(escape(atob(encodedTitle)));
-                if(!confirm(`Are you sure you want to delete all files under "${title}"?`)) return;
-                let r = await fetch('/api/admin/delete-movie', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({title})
-                });
-                let d = await r.json();
-                if(d.ok) { loadMovies(); loadStats(); }
+                if(!confirm('Are you absolutely sure you want to delete ALL files for this movie?')) return;
+                await fetch('/api/admin/movie/' + encodedTitle, {method: 'DELETE'});
+                loadAdminData();
             }
-            window.onload = function() { loadStats(); loadMovies(); };
+
+            async function addViews(encodedTitle) {
+                let amount = prompt("এই মুভির ভিউ কত বাড়াতে চান? (যেমন: 1000 বা 5000):", "1000");
+                if(amount && amount.trim() !== "" && !isNaN(amount)) {
+                    await fetch('/api/admin/movie/' + encodedTitle, {
+                        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({add_clicks: parseInt(amount)})
+                    });
+                    loadAdminData();
+                }
+            }
+            loadAdminData();
         </script>
-    </body>
+    
+<script>
+window.addEventListener("load",()=>{
+setTimeout(()=>{
+const s=document.getElementById("splash-screen");
+if(s){
+s.classList.add("hide-splash");
+setTimeout(()=>{
+s.remove();
+},1000);
+}
+},3000);
+});
+</script>
+
+</body>
     </html>
     """
     return HTMLResponse(content=html_content)
 
-
-@app.get("/api/admin/stats")
-async def api_admin_stats(auth: bool = Depends(verify_admin)):
+@app.get("/api/admin/data")
+async def get_admin_data(auth: bool = Depends(verify_admin)):
     uc = await db.users.count_documents({})
-    mc = await db.movies.count_documents({})
     now = datetime.datetime.utcnow()
     today_start = datetime.datetime(now.year, now.month, now.day)
-    new_today = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    return {"total_users": uc, "total_movies": mc, "new_today": new_today}
-
-@app.get("/api/admin/movies")
-async def api_admin_movies(auth: bool = Depends(verify_admin)):
+    new_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
     pipeline = [
-        {"$group": {"_id": "$title", "total_clicks": {"$sum": "$clicks"}, "files_count": {"$sum": 1}}},
-        {"$sort": {"_id": 1}}
+        {"$group": {
+            "_id": "$title", 
+            "clicks": {"$sum": "$clicks"}, 
+            "file_count": {"$sum": 1}, 
+            "created_at": {"$max": "$created_at"}
+        }},
+        {"$sort": {"created_at": -1}}, {"$limit": 50}
     ]
-    results = await db.movies.aggregate(pipeline).to_list(None)
-    return [{"title": r["_id"], "total_clicks": r["total_clicks"], "files_count": r["files_count"]} for r in results]
+    movies = await db.movies.aggregate(pipeline).to_list(50)
+    return {"total_users": uc, "total_groups": len(movies), "new_users_today": new_users, "movies": movies}
 
-class EditMovieSchema(BaseModel):
-    old_title: str
-    new_title: str
-
-@app.post("/api/admin/edit-movie")
-async def api_edit_movie(data: EditMovieSchema, auth: bool = Depends(verify_admin)):
-    if not data.new_title.strip():
-        return {"ok": False, "msg": "Title cannot be empty"}
-    await db.movies.update_many({"title": data.old_title}, {"$set": {"title": data.new_title.strip()}})
-    await db.channel_posts.update_many({"title": data.old_title}, {"$set": {"title": data.new_title.strip()}})
+@app.delete("/api/admin/movie/{title}")
+async def delete_movie_api(title: str, auth: bool = Depends(verify_admin)):
+    await db.movies.delete_many({"title": title})
     return {"ok": True}
 
-class DeleteMovieSchema(BaseModel):
-    title: str
-
-@app.post("/api/admin/delete-movie")
-async def api_delete_movie(data: DeleteMovieSchema, auth: bool = Depends(verify_admin)):
-    await db.movies.delete_many({"title": data.title})
-    await db.channel_posts.delete_many({"title": data.title})
+@app.put("/api/admin/movie/{title}")
+async def edit_movie_api(title: str, data: dict = Body(...), auth: bool = Depends(verify_admin)):
+    update_data = {}
+    
+    if new_title := data.get("title_new"): 
+        update_data["title"] = new_title
+        
+    if update_data:
+        await db.movies.update_many({"title": title}, {"$set": update_data})
+        
+    if add_clicks := data.get("add_clicks"):
+        try:
+            clicks_to_add = int(add_clicks)
+            await db.movies.update_many({"title": update_data.get("title", title)}, {"$inc": {"clicks": clicks_to_add}})
+        except ValueError: pass
+            
     return {"ok": True}
 
 
 # ==========================================
-# 13. Main Frontend Mini App Interface (User UI)
+# 13. Main Web App UI (Frontend with Full Features)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
-async def serve_mini_app():
-    html_content = """
+async def web_ui():
+    ad_cfg = await db.settings.find_one({"id": "ad_config"})
+    tg_cfg = await db.settings.find_one({"id": "link_tg"})
+    b18_cfg = await db.settings.find_one({"id": "link_18"})
+    ad_count_cfg = await db.settings.find_one({"id": "ad_count"})
+    bkash_cfg = await db.settings.find_one({"id": "bkash_no"})
+    nagad_cfg = await db.settings.find_one({"id": "nagad_no"})
+    dl_cfg = await db.settings.find_one({"id": "direct_links"})
+    
+    zone_id = ad_cfg['zone_id'] if ad_cfg else "10916755"
+    tg_url = tg_cfg['url'] if tg_cfg else "https://t.me/MovieeBD"
+    link_18 = b18_cfg['url'] if b18_cfg else "https://t.me/MovieeBD"
+    required_ads = ad_count_cfg['count'] if ad_count_cfg else 1
+    
+    bkash_no = bkash_cfg['number'] if bkash_cfg else "Not Set"
+    nagad_no = nagad_cfg['number'] if nagad_cfg else "Not Set"
+    
+    direct_links = dl_cfg.get('links', []) if dl_cfg else []
+    dl_json = json.dumps(direct_links)
+
+    html_code = r"""
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="bn">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>MovieBox - Premium Stream Platform</title>
-        <script src="https://cdn.tailwindcss.com"></script>
+        <title>MovieZone BD</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-        <style>
-            body { -webkit-tap-highlight-color: transparent; }
-            .no-scrollbar::-webkit-scrollbar { display: none; }
-            .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-            .active-tab { color: #ef4444 !important; }
-        </style>
-    </head>
-    <body class="bg-gray-950 text-white font-sans antialiased selection:bg-red-500 selection:text-white overflow-x-hidden">
         
-        <header class="bg-gray-900/95 backdrop-blur border-b border-gray-800 sticky top-0 z-40 px-4 py-3 flex items-center justify-center">
-            <div class="hidden flex items-center gap-2">
-                <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-red-600 to-amber-500 flex items-center justify-center font-bold text-sm text-white border border-gray-700 shadow-inner" id="userAvatar">M</div>
-                <span class="text-xs font-bold tracking-wide max-w-[80px] truncate text-gray-300" id="userName">User</span>
-            </div>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            html { scroll-behavior: smooth; }
+            body { background: #0f172a; font-family: sans-serif; color: #fff; -webkit-font-smoothing: antialiased; overscroll-behavior-y: none; } 
             
-            <div class="text-center">
-                <span class="text-xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-rose-400">MOVIEBOX</span>
-            </div>
+            header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); z-index: 1000; }
+            .logo { font-size: 24px; font-weight: bold; }
+            .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 5px; margin-left: 5px; font-size: 16px; }
+            .header-right { display: flex; align-items: center; gap: 10px; }
+            .user-info { display: flex; align-items: center; gap: 8px; background: #1e293b; padding: 6px 14px; border-radius: 25px; font-weight: bold; font-size: 14px; border: 1px solid #334155; }
+            .user-info img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
             
-            <button class="hidden text-gray-400 hover:text-white transition active:scale-90">
-                <i class="fa-solid fa-bars text-lg"></i>
-            </button>
+            .menu-btn { background: #1e293b; border: 1px solid #334155; padding: 8px 12px; border-radius: 8px; cursor: pointer; color: white; font-size: 18px; transition: 0.3s; }
+            .menu-btn:active { transform: scale(0.9); }
+            
+            .dropdown-menu { display: none; position: absolute; top: 65px; right: 15px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 5px 20px rgba(0,0,0,0.5); z-index: 2000; width: 220px; }
+            .dropdown-menu a { display: block; padding: 12px 15px; color: white; text-decoration: none; font-weight: bold; font-size: 15px; border-bottom: 1px solid #334155; cursor: pointer; transition: 0.2s; }
+            .dropdown-menu a:hover { background: #334155; }
+            .dropdown-menu a:last-child { border-bottom: none; }
+            .dropdown-menu i { width: 20px; text-align: center; margin-right: 8px; }
+
+            .search-box { padding: 15px; }
+            .search-input { width: 100%; padding: 16px; border-radius: 25px; border: none; outline: none; text-align: center; background: #1e293b; color: #fff; font-size: 18px; font-weight: bold; transition: 0.3s; box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); }
+            .search-input::placeholder { color: #94a3b8; font-weight: 500; font-size: 16px; }
+            .search-input:focus { box-shadow: 0 0 15px rgba(248,113,113,0.7); }
+            
+            .section-title { padding: 5px 15px 15px; font-size: 22px; font-weight: 900; display: flex; align-items: center; gap: 8px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0px 4px 15px rgba(255, 75, 43, 0.4); }
+            .section-title i { -webkit-text-fill-color: #ff416c; }
+            
+            .trending-container, .upcoming-container { display: flex; overflow-x: auto; gap: 15px; padding: 0 15px 20px; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+            .trending-container::-webkit-scrollbar, .upcoming-container::-webkit-scrollbar { display: none; }
+            .trending-card, .upcoming-card { min-width: 140px; max-width: 140px; background: #1e293b; border-radius: 12px; overflow: hidden; cursor: pointer; flex-shrink: 0; position: relative; transition: transform 0.2s; }
+            .trending-card:active, .upcoming-card:active { transform: scale(0.95); }
+            .trending-card img, .upcoming-card img { height: 200px; object-fit: cover; width: 100%; border-radius: 10px; display: block; }
+            
+            .grid { padding: 0 15px 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+            .card { background: #1e293b; border-radius: 12px; overflow: hidden; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+            .card:active { transform: scale(0.95); }
+            
+            .post-content { position: relative; padding: 3px; border-radius: 12px; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; }
+            @keyframes glowing { 0% { background-position: 0 0; } 50% { background-position: 400% 0; } 100% { background-position: 0 0; } }
+            .post-content img { width: 100%; height: 230px; object-fit: cover; display: block; border-radius: 10px; }
+            
+            .top-badge { position: absolute; top: 10px; left: 10px; background: linear-gradient(45deg, #ff0000, #cc0000); color: white; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; z-index: 10; }
+            .view-badge { position: absolute; bottom: 10px; left: 10px; background: rgba(0,0,0,0.75); color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 5px; }
+            .ep-badge { position: absolute; top: 10px; right: 10px; background: #10b981; color: white; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: bold; z-index: 10; }
+
+            .card-footer { padding: 12px; font-size: 14px; font-weight: bold; text-align: center; color: #f8fafc; line-height: 1.4; white-space: normal; word-wrap: break-word; display: block; }
+            
+            .skeleton { background: #1e293b; border-radius: 12px; height: 260px; overflow: hidden; position: relative; }
+            .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
+            @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+            .pagination { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 10px 15px 120px; flex-wrap: wrap; }
+            .page-btn { background: #1e293b; color: #fff; border: 1px solid #334155; padding: 10px 16px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.3s; outline: none; }
+            .page-btn.active { background: #f87171; border-color: #f87171; color: white; box-shadow: 0 0 10px rgba(248,113,113,0.4); }
+
+            .floating-btn { position: fixed; right: 20px; color: white; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); transition: 0.3s; }
+            .floating-btn:active { transform: scale(0.9); }
+            .btn-18 { bottom: 155px; background: linear-gradient(45deg, #ff0000, #990000); border: 2px solid #fff; font-weight: bold; font-size: 18px; }
+            .btn-tg { bottom: 95px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
+            .btn-req { bottom: 35px; background: linear-gradient(45deg, #10b981, #059669); }
+
+            .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; z-index: 3000; backdrop-filter: blur(5px); }
+            .modal-content { background: #1e293b; width: 92%; max-width: 400px; padding: 25px; border-radius: 20px; text-align: center; border: 1px solid #334155; max-height: 85vh; overflow-y: auto; position: relative; }
+            
+            .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: #334155; color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; z-index: 100; border: 1px solid #475569; }
+            .close-icon:hover { background: #ef4444; color: white; }
+            .close-icon:active { transform: scale(0.9); }
+
+            .instruction-text { color: #fbbf24; font-size: 15.5px; font-weight: bold; margin-bottom: 20px; line-height: 1.5; }
+            
+            .rgb-border { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; padding: 3px; border-radius: 14px; margin-bottom: 12px; cursor: pointer; transition: 0.3s; width: 100%; box-shadow: 0 0 15px rgba(255,0,0,0.3); }
+            .rgb-border:active { transform: scale(0.98); }
+            .rgb-inner { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 16px; border-radius: 12px; width: 100%; color: white; font-weight: bold; font-size: 16px; }
+
+            .close-btn { background: #334155; color: white; padding: 12px 20px; border-radius: 12px; margin-top: 15px; border: none; width: 100%; font-weight: bold; font-size: 16px; cursor: pointer; }
+            .req-input { width: 100%; padding: 16px; margin: 20px 0; border-radius: 12px; border: 2px solid #334155; background: #0f172a; color: white; outline: none; font-size: 16px; font-weight: bold; }
+            .btn-submit { background: linear-gradient(45deg, #10b981, #059669); color: white; border: none; padding: 15px 20px; border-radius: 12px; font-weight: bold; width: 100%; font-size: 18px; cursor: pointer; transition: 0.3s; }
+            .btn-submit:active { transform: scale(0.95); }
+            .notice-box { background: linear-gradient(135deg, rgba(248,113,113,0.15), rgba(220,38,38,0.25)); border-left: 5px solid #ef4444; padding: 15px; text-align: left; margin: 25px 0; border-radius: 8px; }
+            .notice-box p { color: #fecaca; font-size: 16.5px; font-weight: bold; margin: 0; line-height: 1.6; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+            .refer-box { background: #0f172a; padding: 15px; border-radius: 10px; border: 1px dashed #3b82f6; margin: 15px 0; font-size: 14px; word-break: break-all; color: #93c5fd; }
+
+            /* Direct Link RGB Modal Custom CSS */
+            .dl-rgb-wrap { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; padding: 4px; border-radius: 16px; width: 100%; max-width: 350px; margin: auto; }
+            .dl-inner-box { background: rgba(15, 23, 42, 0.98); border-radius: 12px; padding: 30px 20px; display: flex; flex-direction: column; align-items: center; gap: 15px; }
+
+            .vip-tag { background: linear-gradient(45deg, #fbbf24, #f59e0b); color: #000; font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: bold; display: none; margin-left:5px; box-shadow: 0 0 10px rgba(251,191,36,0.5); }
+            
+            /* CSS FOR FEATURES */
+            .coin-tag { background: #3b82f6; color: white; font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: bold; margin-left:5px; display: inline-block; }
+            .badge-tag { background: #6366f1; color: white; font-size: 11px; padding: 2px 6px; border-radius: 8px; font-weight: bold; margin-left:4px; display: inline-block; margin-top: 4px; border:1px solid #818cf8;}
+            .lb-item { display: flex; justify-content: space-between; background: #0f172a; padding: 12px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #334155; align-items: center;}
+            .lb-rank { font-size: 18px; font-weight: 900; color: #fbbf24; width: 30px;}
+            .req-item { background: #0f172a; padding: 12px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;}
+            .vote-btn { background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s;}
+            .vote-btn:disabled { background: #475569; cursor: not-allowed; color:#94a3b8;}
+            
+            /* Review UI */
+            .review-section { margin-top: 25px; padding-top: 20px; border-top: 1px solid #334155; text-align: left; }
+            .stars { color: #fbbf24; font-size: 24px; cursor: pointer; letter-spacing: 5px; text-align: center; margin: 15px 0; }
+            .review-input { width: 100%; background: #0f172a; border: 1px solid #334155; color: white; padding: 12px; border-radius: 8px; outline: none; margin-bottom: 12px; font-family: inherit; }
+            .review-item { background: #0f172a; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-size: 14px; border-left: 3px solid #38bdf8; }
+            .review-item span { color: #fbbf24; font-weight: bold; }
+
+            /* VIP Payment Packages UI */
+            .method-btn { padding: 12px; width: 48%; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; font-size: 16px; transition: 0.3s; }
+            .pay-box { background: #0f172a; border: 1px solid #334155; padding: 15px; border-radius: 10px; margin-top:15px; text-align: left; font-size: 14.5px; color:#cbd5e1; display:none; }
+            .pay-number { font-size: 24px; color: #4ade80; font-weight: 900; text-align: center; letter-spacing: 2px; margin: 15px 0; }
+            
+            .pkg-options { margin: 15px 0; }
+            .pkg-label { display: block; background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 8px; cursor: pointer; border: 1px solid #334155; font-weight: bold; transition: 0.3s; }
+            .pkg-label:hover { background: #334155; }
+            .pkg-label input { margin-right: 10px; transform: scale(1.2); }
+
+            /* Chat CSS */
+            .chat-container { height: 350px; overflow-y: auto; background: #0f172a; border-radius: 10px; border: 1px solid #334155; padding: 10px; margin-top: 15px; text-align: left; display: flex; flex-direction: column; gap: 8px; }
+            .chat-msg { background: #1e293b; padding: 8px 12px; border-radius: 12px; font-size: 14px; width: fit-content; max-width: 85%; word-break: break-word; position: relative; }
+            .chat-msg.mine { background: #3b82f6; color: white; align-self: flex-end; border-bottom-right-radius: 2px; }
+            .chat-msg.others { border-bottom-left-radius: 2px; border: 1px solid #334155; }
+            .chat-name { font-size: 11px; color: #fbbf24; font-weight: bold; margin-bottom: 3px; }
+            .chat-reply-btn { font-size: 12px; color: #94a3b8; cursor: pointer; margin-left: 10px; float: right; padding: 2px 5px; }
+            .chat-reply-btn:hover { color: #fbbf24; }
+            
+            /* Spin CSS (FIXED FOR 8 SLICES) */
+            .spin-wrapper { position: relative; width: 250px; height: 250px; margin: 20px auto; border-radius: 50%; border: 8px solid #334155; overflow: hidden; box-shadow: 0 0 30px rgba(251,191,36,0.3); }
+            .wheel { 
+                position: relative; width: 100%; height: 100%; border-radius: 50%; 
+                transition: transform 4s cubic-bezier(0.1, 0.7, 0.1, 1); 
+                background: conic-gradient(
+                    #ff9a9e 0deg 45deg,
+                    #fecfef 45deg 90deg,
+                    #a18cd1 90deg 135deg,
+                    #fbc2eb 135deg 180deg,
+                    #84fab0 180deg 225deg,
+                    #8fd3f4 225deg 270deg,
+                    #fccb90 270deg 315deg,
+                    #d57eeb 315deg 360deg
+                ); 
+            }
+            .pointer { position: absolute; top: -15px; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 15px solid transparent; border-right: 15px solid transparent; border-top: 30px solid #ef4444; z-index: 10; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5)); }
+            .spin-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 50px; height: 50px; background: #1e293b; border-radius: 50%; z-index: 5; border: 3px solid #fbbf24; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; }
+
+            /* Tasks CSS */
+            .task-box { background: #0f172a; padding: 15px; border-radius: 12px; border: 1px solid #334155; text-align: left; margin-bottom: 15px; }
+            .task-title { font-size: 16px; font-weight: bold; color: white; margin-bottom: 8px; display: flex; justify-content: space-between; }
+            .progress-bg { width: 100%; height: 10px; background: #334155; border-radius: 5px; overflow: hidden; margin-bottom: 10px; }
+            .progress-fill { height: 100%; background: linear-gradient(45deg, #10b981, #059669); width: 0%; transition: width 0.5s; }
+            .task-btn { padding: 8px 15px; border-radius: 8px; border: none; font-weight: bold; color: white; width: 100%; cursor: pointer; background: #3b82f6; transition: 0.2s; }
+            .task-btn:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
+            .task-btn.claimed { background: #10b981; }
+        
+/* PREMIUM SPLASH */
+#splash-screen{
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:#020617;
+z-index:999999;
+display:flex;
+justify-content:center;
+align-items:center;
+flex-direction:column;
+overflow:hidden;
+}
+
+.logo-text{
+font-size:48px;
+font-weight:900;
+letter-spacing:3px;
+background:linear-gradient(45deg,#ff00ff,#00ffff,#ffffff);
+-webkit-background-clip:text;
+-webkit-text-fill-color:transparent;
+animation:zoomGlow 3s infinite alternate;
+text-shadow:0 0 20px #00ffff;
+}
+
+.loading-text{
+margin-top:20px;
+color:white;
+letter-spacing:4px;
+}
+
+@keyframes zoomGlow{
+0%{
+transform:scale(.8);
+opacity:.4;
+}
+100%{
+transform:scale(1.1);
+opacity:1;
+}
+}
+
+.hide-splash{
+animation:fadeOut 1s forwards;
+}
+
+@keyframes fadeOut{
+to{
+opacity:0;
+visibility:hidden;
+}
+}
+
+</style>
+    </head>
+    <body onclick="closeMenu(event)">
+        <header>
+            <div class="logo">Movie Box</div>
+            
+                <div class="menu-btn" onclick="toggleMenu(event)"><i class="fa-solid fa-bars"></i></div>
+            </div>
         </header>
+        
+        <div id="dropdownMenu" class="dropdown-menu">
+            <a onclick="goHome()"><i class="fa-solid fa-house text-green-400"></i> হোম পেইজ</a>
+            <a onclick="openCheckinModal()"><i class="fa-solid fa-gift text-pink-400"></i> ডেইলি চেক-ইন 🪙</a>
+            <a onclick="openTasksModal()"><i class="fa-solid fa-bullseye text-red-400"></i> ডেইলি মিশন 🎯</a>
+            <a onclick="openSpinModal()"><i class="fa-solid fa-dharmachakra text-yellow-400"></i> লাকি স্পিন 🎡</a>
+            <a onclick="openChatModal()"><i class="fa-solid fa-comments text-blue-400"></i> গ্লোবাল চ্যাট 💬</a>
+            <a onclick="openVipModal()"><i class="fa-solid fa-crown text-yellow-400"></i> VIP প্যাকেজ কিনুন</a>
+            <a onclick="openReferModal()"><i class="fa-solid fa-share-nodes text-blue-400"></i> রেফার ও ইনকাম</a>
+            <a onclick="openLeaderboard()"><i class="fa-solid fa-trophy text-yellow-400"></i> লিডারবোর্ড 🏆</a>
+            <a onclick="openReqModal()"><i class="fa-solid fa-code-pull-request text-green-400"></i> রিকোয়েস্ট ও ভোট 🗳️</a>
+        </div>
 
-        <main class="max-w-md mx-auto px-4 pt-4 pb-24 min-h-[85vh]">
-            <div id="homeView" class="tab-view">
-                <div class="relative mb-6 shadow-md rounded-xl overflow-hidden group">
-                    <input type="text" id="searchInput" placeholder="Search movies, series, episodes..." class="w-full bg-gray-900 border border-gray-800 rounded-xl py-3.5 pl-11 pr-10 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-red-500/50 transition">
-                    <i class="fa-solid fa-magnifying-glass absolute left-4 top-4 text-gray-500 text-sm group-focus-within:text-red-500 transition"></i>
-                    <button onclick="clearSearch()" id="searchClearBtn" class="absolute right-3.5 top-3.5 hidden w-5 h-5 bg-gray-800 rounded-full text-xs text-gray-400 hover:text-white flex items-center justify-center">&times;</button>
-                </div>
+        <div class="search-box">
+            <input type="text" id="searchInput" class="search-input" placeholder="🔍 মুভি বা ওয়েব সিরিজ খুঁজুন...">
+        </div>
 
-                <div id="upcomingSection" class="mb-8 hidden">
-                    <div class="flex justify-between items-center mb-3">
-                        <h2 class="text-sm font-black uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
-                            <i class="fa-solid fa-fire text-amber-500"></i> Upcoming Releases
-                        </h2>
-                    </div>
-                    <div id="upcomingWrapper" class="flex gap-3 overflow-x-auto no-scrollbar pb-1"></div>
-                </div>
-
-                <div>
-                    <h2 class="text-sm font-black uppercase tracking-wider text-gray-400 mb-4 flex items-center gap-1.5" id="listHeader">
-                        <i class="fa-solid fa-clapperboard text-red-500"></i> Latest Uploads
-                    </h2>
-                    <div class="grid grid-cols-2 gap-4" id="moviesGrid">
-                        <div class="bg-gray-900 rounded-xl h-60 animate-pulse border border-gray-800"></div>
-                        <div class="bg-gray-900 rounded-xl h-60 animate-pulse border border-gray-800"></div>
-                    </div>
-                </div>
+        <div id="trendingWrapper">
+            <div class="section-title"><i class="fa-solid fa-fire"></i> ট্রেন্ডিং মুভি</div>
+            <div class="trending-container" id="trendingGrid">
+                <div class="skeleton" style="min-width:140px; height:240px;"></div>
+                <div class="skeleton" style="min-width:140px; height:240px;"></div>
+                <div class="skeleton" style="min-width:140px; height:240px;"></div>
             </div>
+        </div>
 
-            <div id="requestView" class="tab-view hidden">
-                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 shadow-xl mb-6">
-                    <h2 class="text-xl font-black text-white mb-2 flex items-center gap-2"><i class="fa-solid fa-paper-plane text-blue-400"></i> Movie Request Hub</h2>
-                    <p class="text-xs text-gray-400 mb-5 leading-relaxed">Can't find your desired content? Drop the exact title below. If others vote for it, admins will prioritize upload.</p>
-                    
-                    <div class="space-y-4">
-                        <input type="text" id="reqInput" placeholder="Enter full Movie / Series title..." class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3.5 text-sm outline-none focus:border-blue-500 transition">
-                        <button onclick="submitRequest()" class="w-full bg-blue-600 hover:bg-blue-500 active:scale-[0.98] transition p-3.5 rounded-xl text-sm font-bold text-white shadow-lg shadow-blue-900/30">Submit Hub Request</button>
-                    </div>
-                </div>
+        <div id="upcomingWrapper" style="display: none;">
+            <div class="section-title"><i class="fa-solid fa-clock-rotate-left"></i> আপকামিং মুভি</div>
+            <div class="upcoming-container" id="upcomingGrid"></div>
+        </div>
 
-                <h3 class="text-xs font-black uppercase tracking-wider text-gray-500 mb-3 flex items-center gap-1"><i class="fa-solid fa-list-check"></i> Community Wanted List</h3>
-                <div class="space-y-3" id="requestContainer"></div>
-            </div>
+        <div class="section-title"><i class="fa-solid fa-film"></i> নতুন সব মুভি</div>
+        <div class="grid" id="movieGrid"></div>
+        <div class="pagination" id="paginationBox"></div>
 
-            <div id="earnView" class="tab-view hidden">
-                <div class="bg-gradient-to-b from-gray-900 to-gray-950 border border-gray-800 rounded-2xl p-6 text-center shadow-xl mb-6 relative overflow-hidden">
-                    <div class="absolute -right-6 -top-6 w-24 h-24 bg-yellow-500/10 rounded-full blur-xl"></div>
-                    <i class="fa-solid fa-coins text-4xl text-yellow-500 mb-2 animate-bounce"></i>
-                    <h2 class="text-xs font-bold uppercase text-gray-400 tracking-widest">Your Vault Balance</h2>
-                    <p class="text-4xl font-black text-yellow-400 mt-1" id="vaultBalance">0 <span class="text-xs text-gray-500 font-medium">coins</span></p>
-                    <p class="text-[10px] text-gray-500 mt-2">Earn 15 coins to download files without subscription restrictions.</p>
-                </div>
+        <div class="floating-btn btn-18" onclick="window.open('{{LINK_18}}')">18+</div>
+        <div class="floating-btn btn-tg" onclick="window.open('{{TG_LINK}}')"><i class="fa-brands fa-telegram"></i></div>
+        <div class="floating-btn btn-req" onclick="openReqModal()"><i class="fa-solid fa-code-pull-request"></i></div>
 
-                <div class="space-y-4">
-                    <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between shadow-md">
-                        <div class="flex items-center gap-3.5">
-                            <div class="w-10 h-10 bg-amber-500/10 text-amber-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-calendar-day"></i></div>
-                            <div>
-                                <h4 class="text-sm font-bold">Daily Attendance</h4>
-                                <p class="text-[11px] text-gray-400 mt-0.5">+2 Coins instant claim</p>
-                            </div>
-                        </div>
-                        <button id="btnCheckin" onclick="doDailyCheckin()" class="bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-lg hover:bg-amber-500 active:scale-95 transition shadow-md shadow-amber-900/20">Claim</button>
-                    </div>
-
-                    <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between shadow-md">
-                        <div class="flex items-center gap-3.5">
-                            <div class="w-10 h-10 bg-red-500/10 text-red-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-rectangle-ad"></i></div>
-                            <div>
-                                <h4 class="text-sm font-bold">Watch Commercial Ads</h4>
-                                <p class="text-[11px] text-gray-400 mt-0.5">Need 3 views (<span id="adProgress">0</span>/3)</p>
-                            </div>
-                        </div>
-                        <button id="btnAd" onclick="watchRewardAd()" class="bg-red-600 text-white font-bold text-xs px-3.5 py-2 rounded-lg hover:bg-red-500 active:scale-95 transition shadow-md shadow-red-900/20">Watch</button>
-                    </div>
-
-                    <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl flex items-center justify-between shadow-md">
-                        <div class="flex items-center gap-3.5">
-                            <div class="w-10 h-10 bg-purple-500/10 text-purple-500 rounded-lg flex items-center justify-center text-lg"><i class="fa-solid fa-star-half-stroke"></i></div>
-                            <div>
-                                <h4 class="text-sm font-bold">Review Movie App</h4>
-                                <p class="text-[11px] text-gray-400 mt-0.5">Write 2 reviews (<span id="reviewProgress">0</span>/2)</p>
-                            </div>
-                        </div>
-                        <button id="btnReview" onclick="switchTab('home')" class="bg-purple-600 text-white font-bold text-xs px-3.5 py-2 rounded-lg hover:bg-purple-500 active:scale-95 transition shadow-md shadow-purple-900/20">Go Write</button>
-                    </div>
-                </div>
-            </div>
-
-            <div id="premiumView" class="tab-view hidden">
-                <div id="premiumActiveHeader" class="bg-gradient-to-r from-yellow-600 to-amber-500 p-5 rounded-2xl mb-6 shadow-xl hidden">
-                    <div class="flex items-center gap-3">
-                        <i class="fa-solid fa-crown text-3xl text-white drop-shadow"></i>
-                        <div>
-                            <h2 class="text-lg font-black text-white">VIP Membership Active</h2>
-                            <p class="text-xs text-white/90 mt-0.5">Expires: <span id="vipExpireDate" class="font-bold">...</span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 shadow-xl mb-6">
-                    <h2 class="text-xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-300 mb-1 flex items-center gap-2"><i class="fa-solid fa-crown"></i> Unlock Ultra VIP Tier</h2>
-                    <p class="text-xs text-gray-400 leading-relaxed">No commercials, direct stream file forwarding, persistent chat access, and immune to message auto-delete cycles.</p>
-                    
-                    <div class="grid grid-cols-3 gap-2.5 mt-5">
-                        <div onclick="selectPackage(30, 20)" class="pkg-card bg-gray-950 border-2 border-gray-800 rounded-xl p-3 text-center cursor-pointer transition relative" id="pkg30">
-                            <span class="text-xs font-bold text-gray-400 block">1 Month</span>
-                            <span class="text-lg font-black text-amber-400 block mt-1">৳20</span>
-                        </div>
-                        <div onclick="selectPackage(90, 50)" class="pkg-card bg-gray-950 border-2 border-gray-800 rounded-xl p-3 text-center cursor-pointer transition relative" id="pkg90">
-                            <span class="absolute -top-2 left-1/2 -translate-x-1/2 bg-red-500 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-full tracking-wide">Save</span>
-                            <span class="text-xs font-bold text-gray-400 block">3 Month</span>
-                            <span class="text-lg font-black text-amber-400 block mt-1">৳50</span>
-                        </div>
-                        <div onclick="selectPackage(180, 90)" class="pkg-card bg-gray-950 border-2 border-gray-800 rounded-xl p-3 text-center cursor-pointer transition relative" id="pkg180">
-                            <span class="text-xs font-bold text-gray-400 block">6 Month</span>
-                            <span class="text-lg font-black text-amber-400 block mt-1">৳90</span>
-                        </div>
-                    </div>
-
-                    <div id="paymentBox" class="mt-6 border-t border-gray-800 pt-5 hidden">
-                        <p class="text-xs text-gray-400 mb-3">Send exact amount <b class="text-white text-sm" id="payAmountLabel">৳0</b> to any provider number using <b>Send Money</b> option:</p>
-                        <div class="space-y-2 text-xs">
-                            <div class="bg-gray-950 p-3 rounded-xl flex items-center justify-between border border-gray-850"><span class="font-bold text-pink-500"><i class="fa-solid fa-wallet"></i> bKash:</span> <code class="text-gray-200 font-mono select-all font-bold" id="bkashNo">...</code></div>
-                            <div class="bg-gray-950 p-3 rounded-xl flex items-center justify-between border border-gray-850"><span class="font-bold text-orange-400"><i class="fa-solid fa-wallet"></i> Nagad:</span> <code class="text-gray-200 font-mono select-all font-bold" id="nagadNo">...</code></div>
-                        </div>
-                        <div class="mt-4 space-y-3">
-                            <label class="block text-[11px] font-bold text-gray-400 uppercase tracking-wider">Provide Payment Reference TrxID:</label>
-                            <input type="text" id="trxInput" placeholder="Enter the 10-digit Transaction ID" class="w-full bg-gray-950 border border-gray-800 rounded-xl p-3 text-sm font-mono text-center outline-none focus:border-amber-500 transition uppercase tracking-wide">
-                            <button onclick="submitPayment()" class="w-full bg-gradient-to-r from-yellow-600 to-amber-500 hover:from-yellow-500 hover:to-amber-400 active:scale-[0.98] transition p-3.5 rounded-xl text-sm font-black text-white shadow-lg shadow-amber-900/20">Submit Verification TrxID</button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 shadow-xl">
-                    <h3 class="text-sm font-black uppercase tracking-wider text-gray-400 mb-3 flex items-center gap-1.5"><i class="fa-solid fa-user-plus text-green-400"></i> Free Refer & Earn System</h3>
-                    <p class="text-xs text-gray-400 mb-4 leading-relaxed">Invite friends via link. Every 5 successfully validated joins awards you with <b>24 Hours VIP Tier</b> status dynamically.</p>
-                    <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 flex items-center justify-between mb-3"><code class="text-[11px] text-gray-400 font-mono truncate mr-2" id="referLink">Generating link...</code><button onclick="copyReferLink()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold text-xs px-3 py-1.5 rounded-md transition whitespace-nowrap"><i class="fa-solid fa-copy"></i> Copy</button></div>
-                    <div class="text-center text-xs text-gray-500 font-medium">Total Successful Referrals: <span class="text-green-400 font-bold" id="referCountLabel">0</span></div>
-                </div>
-            </div>
-        </main>
-
-        <nav class="fixed bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur border-t border-gray-800 py-2.5 z-40 shadow-2xl">
-            <div class="max-w-md mx-auto flex justify-around items-center text-gray-500">
-                <button onclick="switchTab('home')" id="tabHome" class="flex flex-col items-center gap-1 active-tab transition"><i class="fa-solid fa-house text-lg"></i><span class="text-[10px] font-bold tracking-wide">Home</span></button>
-                <button onclick="switchTab('request')" id="tabRequest" class="flex flex-col items-center gap-1 transition"><i class="fa-solid fa-code-pull-request text-lg"></i><span class="text-[10px] font-bold tracking-wide">Request</span></button>
-                <button onclick="switchTab('earn')" id="tabEarn" class="flex flex-col items-center gap-1 transition"><i class="fa-solid fa-coins text-lg"></i><span class="text-[10px] font-bold tracking-wide">Earn</span></button>
-                <button onclick="switchTab('premium')" id="tabPremium" class="flex flex-col items-center gap-1 transition relative"><div class="absolute -top-1 right-2 w-2 h-2 bg-red-500 rounded-full"></div><i class="fa-solid fa-crown text-lg"></i><span class="text-[10px] font-bold tracking-wide">Premium</span></button>
-            </div>
-        </nav>
-
-        <div id="movieModal" class="fixed inset-0 bg-black/90 backdrop-blur-sm hidden z-50 overflow-y-auto no-scrollbar">
-            <div class="min-h-screen flex flex-col justify-end max-w-md mx-auto relative">
-                <button onclick="closeMovieModal()" class="absolute top-4 right-4 w-9 h-9 bg-gray-900/80 hover:bg-red-600 rounded-full text-white text-xl flex items-center justify-center border border-gray-800 transition shadow-lg z-50">&times;</button>
+        <!-- Download & Review Modal -->
+        <div id="qualityModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="closeQualityModal()"><i class="fa-solid fa-xmark"></i></div>
+                <h2 id="modalTitle" style="color:#38bdf8; margin-bottom: 8px; font-size: 22px; font-weight:900;">Movie Title</h2>
+                <p class="instruction-text">👇 আপনি কোনটি ডাউনলোড করতে চান তা নির্বাচন করুন:</p>
                 
-                <div class="bg-gray-900 border-t border-gray-800 rounded-t-3xl overflow-hidden shadow-2xl pb-10">
-                    <div class="w-full h-56 relative overflow-hidden bg-gray-950">
-                        <img id="modalPoster" src="" alt="Movie Poster" class="w-full h-full object-cover">
-                        <div class="absolute inset-0 bg-gradient-to-t from-gray-900 via-transparent to-black/40"></div>
-                        <div class="absolute bottom-4 left-4 right-4"><h3 class="text-xl font-black text-white drop-shadow-md" id="modalTitle">...</h3></div>
+                <div id="qualityList"></div>
+                
+                <!-- Rating & Review Section -->
+                <div class="review-section">
+                    <h3 style="color:white; font-size:18px;"><i class="fa-solid fa-star text-yellow-400"></i> রেটিং ও কমেন্ট</h3>
+                    <div class="stars" id="starRating">
+                        <i class="fa-regular fa-star" onclick="setRating(1)"></i>
+                        <i class="fa-regular fa-star" onclick="setRating(2)"></i>
+                        <i class="fa-regular fa-star" onclick="setRating(3)"></i>
+                        <i class="fa-regular fa-star" onclick="setRating(4)"></i>
+                        <i class="fa-regular fa-star" onclick="setRating(5)"></i>
                     </div>
-
-                    <div class="p-5">
-                        <div class="flex gap-2 mb-6 overflow-x-auto no-scrollbar" id="modalFilesBox"></div>
-
-                        <div class="border-t border-gray-850 pt-5 mt-4">
-                            <h4 class="text-xs font-black uppercase tracking-wider text-gray-400 mb-3 flex items-center gap-1"><i class="fa-solid fa-comments text-purple-400"></i> Reviews / Chat</h4>
-                            <div class="space-y-3 max-h-40 overflow-y-auto no-scrollbar mb-4 bg-gray-950/50 p-2.5 rounded-xl border border-gray-850" id="reviewsBox"></div>
-                            
-                            <div class="flex gap-2">
-                                <input type="text" id="reviewInput" placeholder="Type a review or message..." class="flex-1 bg-gray-950 border border-gray-850 rounded-xl px-3.5 py-2.5 text-xs outline-none focus:border-purple-500 transition">
-                                <button onclick="postReview()" class="bg-purple-600 hover:bg-purple-500 text-white px-4 rounded-xl text-xs font-bold transition active:scale-95"><i class="fa-solid fa-paper-plane"></i></button>
-                            </div>
-                        </div>
+                    <textarea id="reviewText" class="review-input" rows="2" placeholder="মুভিটি কেমন লাগলো? কমেন্ট করে জানান..."></textarea>
+                    <button class="btn-submit" style="padding:10px; font-size:16px;" onclick="submitReview()">সাবমিট করুন</button>
+                    
+                    <div id="reviewList" style="margin-top:20px; max-height:150px; overflow-y:auto; padding-right:5px;">
+                        <!-- Reviews will load here -->
                     </div>
                 </div>
             </div>
         </div>
 
-        <script>
-            let tg = window.Telegram.WebApp;
-            tg.expand();
-            tg.ready();
+        <!-- Direct Link RGB Modal -->
+        <div id="directLinkModal" class="modal">
+            <div class="modal-content" style="background: transparent; border: none; padding: 0;">
+                <div class="close-icon" onclick="document.getElementById('directLinkModal').style.display='none'" style="top: -15px; right: 5px; z-index: 1000;"><i class="fa-solid fa-xmark"></i></div>
+                <div class="dl-rgb-wrap">
+                    <div class="dl-inner-box">
+                        <h2 style="color: #4ade80; font-size: 24px; font-weight: 900; margin-bottom: 5px;"><i class="fa-solid fa-unlock-keyhole"></i> আনলক করুন</h2>
+                        <p id="dlDescText" style="color: #cbd5e1; font-size: 15px; line-height: 1.6; font-weight: 600;">
+                            <!-- Text injected via JS -->
+                        </p>
+                        <button id="dlClickBtn" class="btn-submit" style="background: linear-gradient(45deg, #ef4444, #f97316); box-shadow: 0 0 15px rgba(239,68,68,0.5); font-size: 18px; padding: 15px; margin-top: 10px;" onclick="executeDirectLink()">🔗 Click Here (Open Link)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            let initData = tg.initData || "";
-            let userObj = tg.initDataUnsafe?.user || { id: 12345, first_name: "Developer" };
-
-            // Initialize Header attributes
-            document.getElementById('userName').innerText = userObj.first_name;
-            if(userObj.first_name) {
-                document.getElementById('userAvatar').innerText = userObj.first_name.charAt(0).toUpperCase();
-            }
-
-            let appState = { uid: userObj.id, first_name: userObj.first_name, coins: 0, is_vip: false, vip_until: null, refer_count: 0, current_movie: null };
-            let activePackage = { days: 0, amount: 0 };
-
-            async function req(route, body={}) {
-                try {
-                    let r = await fetch(route, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json', 'X-TG-Data': initData},
-                        body: JSON.stringify({uid: appState.uid, first_name: appState.first_name, ...body})
-                    });
-                    return await r.json();
-                } catch(e) { return {ok:false, msg:"Network execution failed"}; }
-            }
-
-            function switchTab(tab) {
-                document.querySelectorAll('.tab-view').forEach(v => v.classList.add('hidden'));
-                document.querySelectorAll('nav button').forEach(b => b.classList.remove('active-tab'));
+        <!-- Daily Check-in Modal -->
+        <div id="checkinModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('checkinModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <i class="fa-solid fa-gift" style="font-size:70px; color:#ec4899; text-shadow: 0 0 20px rgba(236,72,153,0.5);"></i>
+                <h2 style="margin:15px 0 10px; color:white; font-size: 24px;">ডেইলি রিওয়ার্ড</h2>
+                <p style="color:#cbd5e1; font-size:15px; line-height: 1.5;">প্রতিদিন লগিন করে ফ্রী কয়েন সংগ্রহ করুন। ৫০ কয়েন জমিয়ে ১ দিনের VIP কেনা যাবে!</p>
                 
-                if(tab === 'home') { document.getElementById('homeView').classList.remove('hidden'); document.getElementById('tabHome').classList.add('active-tab'); }
-                if(tab === 'request') { document.getElementById('requestView').classList.remove('hidden'); document.getElementById('tabRequest').classList.add('active-tab'); loadRequests(); }
-                if(tab === 'earn') { document.getElementById('earnView').classList.remove('hidden'); document.getElementById('tabEarn').classList.add('active-tab'); }
-                if(tab === 'premium') { document.getElementById('premiumView').classList.remove('hidden'); document.getElementById('tabPremium').classList.add('active-tab'); loadPremiumInfo(); }
+                <div style="background:#0f172a; border: 2px dashed #fbbf24; border-radius:15px; padding: 20px; margin: 20px 0;">
+                    <h1 style="color:#fbbf24; font-size:45px; margin: 0;"><i class="fa-solid fa-coins"></i> <span id="modalCoinCount">0</span></h1>
+                    <p style="color:gray; font-size:13px; margin-top:5px;">আপনার বর্তমান ব্যালেন্স</p>
+                </div>
+                
+                <button class="btn-submit" style="background: linear-gradient(45deg, #3b82f6, #2563eb); margin-bottom: 10px;" onclick="claimCheckin()">আজকের ১০ কয়েন সংগ্রহ করুন</button>
+                <button class="btn-submit" style="background: linear-gradient(45deg, #8b5cf6, #6d28d9); margin-bottom: 10px;" onclick="watchAdForCoins()"><i class="fa-solid fa-link"></i> ডাইরেক্ট লিংক ভিজিট করে ৫ কয়েন আয় করুন</button>
+                <button class="btn-submit" style="background: linear-gradient(45deg, #f59e0b, #d97706); color:black;" onclick="convertCoins()"><i class="fa-solid fa-crown"></i> কয়েন দিয়ে VIP কিনুন (50)</button>
+            </div>
+        </div>
+
+        <!-- VIP Automated Payment Modal with Packages -->
+        <div id="vipModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('vipModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:#fbbf24; font-size: 24px; margin-bottom:10px;"><i class="fa-solid fa-crown"></i> VIP প্যাকেজ কিনুন</h2>
+                <p style="color:#cbd5e1; font-size:14.5px; margin-bottom:15px; line-height: 1.4;">পেমেন্ট করে VIP প্যাকেজ কিনুন। ফাইল অটো-ডিলিট হবে না এবং কোনো অ্যাড দেখতে হবে না!</p>
+                
+                <div style="display:flex; justify-content:space-between; margin-bottom: 15px;">
+                    <button class="method-btn" style="background:#e11471; box-shadow: 0 4px 10px rgba(225,20,113,0.4);" onclick="selectPayment('bkash')">bKash</button>
+                    <button class="method-btn" style="background:#f97316; box-shadow: 0 4px 10px rgba(249,115,22,0.4);" onclick="selectPayment('nagad')">Nagad</button>
+                </div>
+
+                <div id="payBox" class="pay-box">
+                    <p style="color:#38bdf8; font-weight:bold; font-size: 16px; margin-bottom:10px;">👇 প্যাকেজ সিলেক্ট করুন:</p>
+                    <div class="pkg-options">
+                        <label class="pkg-label"><input type="radio" name="vip_pkg" value="7" data-price="10" checked> ৭ দিন - ১০ টাকা</label>
+                        <label class="pkg-label"><input type="radio" name="vip_pkg" value="15" data-price="20"> ১৫ দিন - ২০ টাকা</label>
+                        <label class="pkg-label"><input type="radio" name="vip_pkg" value="30" data-price="30"> ১ মাস (৩০ দিন) - ৩০ টাকা</label>
+                        <label class="pkg-label"><input type="radio" name="vip_pkg" value="90" data-price="80"> ৩ মাস (৯০ দিন) - ৮০ টাকা</label>
+                        <label class="pkg-label"><input type="radio" name="vip_pkg" value="180" data-price="150"> ৬ মাস (১৮০ দিন) - ১৫০ টাকা</label>
+                    </div>
+
+                    <p><b>১.</b> নিচের নাম্বারে আপনার নির্বাচিত প্যাকেজের টাকা <b>Send Money</b> করুন:</p>
+                    <div class="pay-number" id="payNumberText">...</div>
+                    <p><b>২.</b> টাকা পাঠানোর পর ফিরতি মেসেজে থাকা <b>TrxID</b> নিচে সাবমিট করুন:</p>
+                    <input type="text" id="trxIdInput" class="search-input" style="margin-top:10px; background:#1e293b; padding:15px; font-size:16px;" placeholder="যেমন: 8JD8XXXXX">
+                    <button class="btn-submit" onclick="submitPayment()">পেমেন্ট ভেরিফাই করুন</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Refer Modal -->
+        <div id="referModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('referModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <i class="fa-solid fa-share-nodes" style="font-size:60px; color:#38bdf8;"></i>
+                <h2 style="margin:15px 0 10px; color:white; font-size: 24px;">রেফার করুন</h2>
+                <p style="color:#cbd5e1; font-size:15px; margin-bottom:15px;">প্রতি ৫ জন রেফার করলেই পাবেন ২৪ ঘণ্টার VIP একদম ফ্রি!</p>
+                <h3 style="color:#4ade80; font-size:18px;">মোট রেফার: <span id="refCountNum" style="font-size:24px; font-weight:900;">0</span> জন</h3>
+                <div class="refer-box" id="refLinkText">Loading link...</div>
+                <button class="btn-submit" style="background: linear-gradient(45deg, #3b82f6, #1d4ed8);" onclick="copyReferLink()"><i class="fa-regular fa-copy"></i> লিংক কপি করুন</button>
+            </div>
+        </div>
+        
+        <!-- Leaderboard Modal -->
+        <div id="leaderboardModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('leaderboardModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:#fbbf24; font-size: 24px; margin-bottom:15px;"><i class="fa-solid fa-trophy"></i> টপ লিডারবোর্ড</h2>
+                <div id="lbList" style="max-height: 50vh; overflow-y:auto; text-align:left; padding-right:5px;">
+                    <!-- Loading leaderboard -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Request Board & Vote Modal -->
+        <div id="reqModal" class="modal">
+            <div class="modal-content" style="max-height: 90vh;">
+                <div class="close-icon" onclick="document.getElementById('reqModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:white; font-size: 24px;">মুভি রিকোয়েস্ট ও ভোট 🗳️</h2>
+                <div style="display:flex; gap:10px; margin-top:15px;">
+                    <input type="text" id="reqText" class="req-input" style="margin:0;" placeholder="নতুন মুভির নাম...">
+                    <button class="btn-submit" style="width:auto; padding:0 20px;" onclick="sendReq()"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <p style="text-align:left; color:#94a3b8; font-size:14px; margin-top:15px; font-weight:bold;">ট্রেন্ডিং রিকোয়েস্ট:</p>
+                <div id="reqList" style="max-height: 40vh; overflow-y:auto; margin-top:10px; text-align:left; padding-right:5px;">
+                    <!-- Loading requests -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Global Chat Modal -->
+        <div id="chatModal" class="modal">
+            <div class="modal-content" style="max-height: 90vh; display:flex; flex-direction:column;">
+                <div class="close-icon" onclick="closeChat()"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:white; font-size: 22px; margin-bottom:5px;"><i class="fa-solid fa-comments text-blue-400"></i> গ্লোবাল চ্যাট</h2>
+                <p style="color:#94a3b8; font-size:13px; margin-bottom:5px;">সবার সাথে কথা বলুন, মুভির নাম শেয়ার করুন!</p>
+                <div id="chatBox" class="chat-container"></div>
+                <div style="display:flex; gap:8px; margin-top:15px;">
+                    <input type="text" id="chatInput" class="req-input" style="margin:0; padding:12px; font-size:14px;" placeholder="মেসেজ লিখুন...">
+                    <button class="btn-submit" style="width:auto; padding:0 20px; font-size:16px;" onclick="sendChatMessage()"><i class="fa-solid fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Spin to Win Modal -->
+        <div id="spinModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('spinModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:#fbbf24; font-size: 24px; margin-bottom:5px;"><i class="fa-solid fa-dharmachakra"></i> লাকি স্পিন</h2>
+                <p style="color:#cbd5e1; font-size:14px;">প্রতিদিন ৩ বার স্পিন করে ফ্রী কয়েন জিতে নিন! স্পিন করতে একটি লিংক ভিজিট করতে হবে.</p>
+                
+                <div class="spin-wrapper">
+                    <div class="pointer"></div>
+                    <div class="spin-center">SPIN</div>
+                    <div class="wheel" id="spinWheel">
+                        <!-- Slices will be rendered via JS -->
+                    </div>
+                </div>
+                
+                <p style="color:#4ade80; font-weight:bold; margin-bottom:15px;">আজকের স্পিন বাকি: <span id="spinsLeftText">...</span></p>
+                <button class="btn-submit" id="spinBtn" onclick="startSpin()" style="background: linear-gradient(45deg, #f59e0b, #d97706);"><i class="fa-solid fa-play"></i> স্পিন করুন</button>
+            </div>
+        </div>
+
+        <!-- Daily Missions Modal -->
+        <div id="tasksModal" class="modal">
+            <div class="modal-content">
+                <div class="close-icon" onclick="document.getElementById('tasksModal').style.display='none'"><i class="fa-solid fa-xmark"></i></div>
+                <h2 style="color:#f87171; font-size: 24px; margin-bottom:5px;"><i class="fa-solid fa-bullseye"></i> ডেইলি মিশন</h2>
+                <p style="color:#cbd5e1; font-size:14px; margin-bottom:15px;">প্রতিদিনের কাজগুলো সম্পূর্ণ করে এক্সট্রা কয়েন কালেক্ট করুন!</p>
+                
+                <div class="task-box">
+                    <div class="task-title"><span><i class="fa-solid fa-link text-pink-400"></i> ৩টি ডাইরেক্ট লিংক দেখুন</span> <span id="adTaskProgress">0/3</span></div>
+                    <div class="progress-bg"><div class="progress-fill" id="adTaskBar"></div></div>
+                    <button class="task-btn" id="adTaskBtn" disabled onclick="claimTaskReward('ads')">15 Coins Claim করুন</button>
+                </div>
+                
+                <div class="task-box">
+                    <div class="task-title"><span><i class="fa-solid fa-star text-yellow-400"></i> ২টি মুভি রিভিউ দিন</span> <span id="revTaskProgress">0/2</span></div>
+                    <div class="progress-bg"><div class="progress-fill" id="revTaskBar"></div></div>
+                    <button class="task-btn" id="revTaskBtn" disabled onclick="claimTaskReward('reviews')">10 Coins Claim করুন</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="successModal" class="modal">
+            <div class="modal-content">
+                <i class="fa-solid fa-circle-check" style="font-size:80px; color:#4ade80;"></i>
+                <h2 style="margin:20px 0 10px; color:white; font-size: 26px;">সম্পন্ন হয়েছে!</h2>
+                <p style="color: #4ade80; font-size: 17px; font-weight: bold;">✅ ফাইলটি বটের ইনবক্সে পাঠানো হয়েছে।</p>
+                <div class="notice-box" id="successNoticeBox">
+                    <p><i class="fa-solid fa-triangle-exclamation" style="color: #fbbf24;"></i> <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি কিছুক্ষণ পর অটোমেটিক ডিলিট হয়ে যাবে। এখনই বট থেকে সেভ করে নিন!</p>
+                </div>
+                <button class="btn-submit" onclick="tg.close()">বটে ফিরে যান</button>
+            </div>
+        </div>
+
+        <script>
+            let tg = window.Telegram.WebApp; 
+            tg.expand();
+            
+            const DIRECT_LINKS = {{DIRECT_LINKS}};
+            let onAdCompleteCallback = null;
+
+            const ZONE_ID = "{{ZONE_ID}}";
+            const REQUIRED_ADS = parseInt("{{AD_COUNT}}");
+            const INIT_DATA = tg.initData || "";
+            const BOT_UNAME = "{{BOT_USER}}";
+            let currentPage = 1; let isLoading = false; let searchQuery = "";
+            let uid = tg.initDataUnsafe?.user?.id || 0;
+            let currentAdStep = 1; let activeFileId = null; let autoScrollInterval; let isTouching = false; let abortController = null;
+            let isRewardAd = false;
+            let isSpinAd = false;
+            
+            const BKASH_NO = "{{BKASH_NO}}";
+            const NAGAD_NO = "{{NAGAD_NO}}";
+            
+            let loadedMovies = {}; 
+            let isUserVip = false;
+            let isAdmin = false;
+            let userReferCount = 0;
+            let currentRating = 0;
+            let currentMovieTitle = "";
+            let selectedPayMethod = "";
+
+            function formatViews(num) {
+                if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+                if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+                return num.toString();
             }
 
-            async function syncUser() {
-                let res = await req('/api/user/sync');
-                if(res.ok) {
-                    appState.coins = res.user.coins;
-                    appState.is_vip = res.user.is_vip;
-                    appState.vip_until = res.user.vip_until;
-                    appState.refer_count = res.user.refer_count;
+            if(tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                document.getElementById('uName').innerText = tg.initDataUnsafe.user.first_name;
+                if(tg.initDataUnsafe.user.photo_url) document.getElementById('uPic').src = tg.initDataUnsafe.user.photo_url;
+            }
+
+            async function fetchUserInfo() {
+                try {
+                    const res = await fetch('/api/user/' + uid);
+                    const data = await res.json();
+                    isUserVip = data.vip;
+                    isAdmin = data.is_admin;
+                    userReferCount = data.refer_count;
+                    document.getElementById('coinCount').innerText = data.coins;
+                    document.getElementById('modalCoinCount').innerText = data.coins;
                     
-                    document.getElementById('vaultBalance').innerText = appState.coins;
-                    document.getElementById('adProgress').innerText = res.tasks.ads || 0;
-                    document.getElementById('reviewProgress').innerText = res.tasks.reviews || 0;
-                    
-                    if(appState.is_vip) {
-                        document.getElementById('premiumActiveHeader').classList.remove('hidden');
-                        document.getElementById('vipExpireDate').innerText = new Date(appState.vip_until).toLocaleDateString();
-                    } else {
-                        document.getElementById('premiumActiveHeader').classList.add('hidden');
-                    }
-                }
-            }
-
-            async function loadCatalog() {
-                let res = await req('/api/movies/catalog');
-                if(res.ok) {
-                    // Load Upcoming Slider
-                    if(res.upcoming && res.upcoming.length > 0) {
-                        document.getElementById('upcomingSection').classList.remove('hidden');
-                        let upcHtml = '';
-                        res.upcoming.forEach(u => {
-                            upcHtml += `<div class="min-w-[100px] max-w-[100px] flex flex-col gap-1 text-center">
-                                <div class="w-full h-28 bg-gray-900 border border-gray-850 rounded-xl overflow-hidden shadow-md">
-                                    <img src="/api/file/proxy?file_id=${u.photo_id}" class="w-full h-full object-cover">
-                                </div>
-                                <span class="text-[10px] font-bold truncate text-gray-300 px-0.5">${u.title}</span>
-                            </div>`;
-                        });
-                        document.getElementById('upcomingWrapper').innerHTML = upcHtml;
-                    }
-
-                    // Load Latest Upload Grid
-                    renderMovies(res.movies);
-                }
-            }
-
-            function renderMovies(arr) {
-                let html = '';
-                if(arr.length === 0) {
-                    html = '<div class="col-span-2 text-center py-10 text-gray-500 text-xs font-bold">No contents found matching title.</div>';
-                } else {
-                    arr.forEach(m => {
-                        html += `<div onclick="openMovieDetail('${btoa(unescape(encodeURIComponent(m.title)))}')" class="bg-gray-900 border border-gray-850 rounded-2xl overflow-hidden shadow-lg active:scale-[0.98] transition flex flex-col group">
-                            <div class="w-full h-44 bg-gray-950 relative overflow-hidden">
-                                <img src="/api/file/proxy?file_id=${m.photo_id}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" loading="lazy">
-                                <div class="absolute top-2 left-2 bg-black/70 backdrop-blur-sm text-[9px] font-black tracking-wide text-red-400 px-2 py-0.5 rounded-full border border-gray-800">${m.files_count} Files</div>
-                            </div>
-                            <div class="p-3 flex-1 flex flex-col justify-between gap-1">
-                                <h3 class="text-xs font-bold text-gray-200 line-clamp-2 leading-relaxed">${m.title}</h3>
-                                <div class="flex items-center justify-between mt-1 text-[10px] font-bold text-gray-500">
-                                    <span><i class="fa-solid fa-eye text-gray-600"></i> ${formatViews(m.total_clicks)}</span>
-                                </div>
-                            </div>
-                        </div>`;
-                    });
-                }
-                document.getElementById('moviesGrid').innerHTML = html;
-            }
-
-            function formatViews(n) {
-                if (n >= 1000000) return (n/1000000).toFixed(1).replace('.0','')+'M';
-                if (n >= 1000) return (n/1000).toFixed(1).replace('.0','')+'K';
-                return n;
-            }
-
-            // Real-time local filtering search handling
-            document.getElementById('searchInput').addEventListener('input', async function(e) {
-                let query = e.target.value.trim();
-                if(query.length > 0) {
-                    document.getElementById('searchClearBtn').classList.remove('hidden');
-                    document.getElementById('listHeader').innerHTML = `<i class="fa-solid fa-square-poll-vertical text-red-500"></i> Search Results`;
-                } else {
-                    document.getElementById('searchClearBtn').classList.add('hidden');
-                    document.getElementById('listHeader').innerHTML = `<i class="fa-solid fa-clapperboard text-red-500"></i> Latest Uploads`;
-                }
-                let res = await req('/api/movies/search', {query});
-                if(res.ok) renderMovies(res.results);
-            });
-
-            function clearSearch() {
-                document.getElementById('searchInput').value = '';
-                document.getElementById('searchClearBtn').classList.add('hidden');
-                document.getElementById('listHeader').innerHTML = `<i class="fa-solid fa-clapperboard text-red-500"></i> Latest Uploads`;
-                loadCatalog();
-            }
-
-            async function openMovieDetail(encodedTitle) {
-                let title = decodeURIComponent(escape(atob(encodedTitle)));
-                let res = await req('/api/movies/details', {title});
-                if(res.ok) {
-                    appState.current_movie = title;
-                    document.getElementById('modalTitle').innerText = title;
-                    document.getElementById('modalPoster').src = `/api/file/proxy?file_id=${res.photo_id}`;
-                    
-                    let filesHtml = '';
-                    res.files.forEach(f => {
-                        filesHtml += `<button onclick="triggerFileAction('${f._id}')" class="bg-gray-950 border border-gray-800 hover:border-red-500/50 p-3 rounded-xl flex items-center justify-between min-w-[140px] text-left transition active:scale-95 shadow-md">
-                            <div>
-                                <span class="text-xs font-black text-gray-200 block">${f.quality}</span>
-                                <span class="text-[9px] font-bold text-gray-500 block mt-0.5"><i class="fa-solid fa-eye"></i> ${formatViews(f.clicks || 0)}</span>
-                            </div>
-                            <i class="fa-solid fa-circle-arrow-down text-red-500 text-lg"></i>
-                        </button>`;
-                    });
-                    document.getElementById('modalFilesBox').innerHTML = filesHtml;
-                    renderReviews(res.reviews);
-                    document.getElementById('movieModal').classList.remove('hidden');
-                }
-            }
-
-            function closeMovieModal() {
-                document.getElementById('movieModal').classList.add('hidden');
-                appState.current_movie = null;
-                loadCatalog();
-            }
-
-            function renderReviews(arr) {
-                let html = '';
-                if(!arr || arr.length === 0) {
-                    html = '<div class="text-center py-4 text-[10px] text-gray-600 font-bold">No commentary yet. Leave yours below.</div>';
-                } else {
-                    arr.forEach(r => {
-                        html += `<div class="bg-gray-900 border border-gray-850 p-2.5 rounded-lg text-xs leading-relaxed">
-                            <div class="flex justify-between font-bold text-[10px] text-purple-400 mb-0.5"><span>${r.username}</span> <span class="text-gray-600">${new Date(r.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span></div>
-                            <p class="text-gray-200 font-medium">${r.comment}</p>
-                        </div>`;
-                    });
-                }
-                document.getElementById('reviewsBox').innerHTML = html;
-                let b = document.getElementById('reviewsBox');
-                b.scrollTop = b.scrollHeight;
-            }
-
-            async function postReview() {
-                let inp = document.getElementById('reviewInput');
-                let comment = inp.value.trim();
-                if(!comment || !appState.current_movie) return;
-                inp.value = '';
-                let res = await req('/api/movies/add-review', {movie_title: appState.current_movie, comment});
-                if(res.ok) { renderReviews(res.reviews); syncUser(); }
-            }
-
-            async function triggerFileAction(fileId) {
-                let res = await req('/api/movies/claim-file', {file_id: fileId});
-                if(res.ok) {
-                    tg.close();
-                } else {
-                    alert(res.msg || "Action failed");
-                    if(res.redirect === 'earn') switchTab('earn');
-                }
-            }
-
-            // Tasks Subsystem
-            async function doDailyCheckin() {
-                let res = await req('/api/tasks/checkin');
-                alert(res.msg);
-                if(res.ok) syncUser();
-            }
-
-            function watchRewardAd() {
-                if(typeof AdController !== 'undefined') {
-                    AdController.show({
-                        zoneId: 8843, 
-                        onStateChange: async function(state) {
-                            if(state === 'completed') {
-                                let res = await req('/api/tasks/ad-watched');
-                                if(res.ok) { syncUser(); alert("Ad reward accounted successfully!"); }
+                    if(isUserVip) {
+                        document.getElementById('vipBadge').style.display = 'inline-block';
+                        if(data.vip_expiry) {
+                            if(!document.getElementById('vipExpiryText')) {
+                                document.getElementById('dropdownMenu').insertAdjacentHTML('afterbegin', `<div id="vipExpiryText" style="padding: 10px 15px; color: #4ade80; font-size: 13px; font-weight: bold; border-bottom: 1px solid #334155; text-align: center;"><i class="fa-regular fa-clock"></i> মেয়াদ: ${data.vip_expiry}</div>`);
                             }
                         }
-                    });
-                } else {
-                    // Ad fallback mockup mechanism for standalone testing pipeline environments
-                    setTimeout(async () => {
-                        let res = await req('/api/tasks/ad-watched');
-                        if(res.ok) { syncUser(); alert("Commercial simulation completed! (+1 claim incremented)"); }
-                    }, 1200);
-                }
-            }
-
-            // Requests subsystem 
-            async function loadRequests() {
-                let res = await req('/api/requests/list');
-                if(res.ok) {
-                    let html = '';
-                    if(res.requests.length === 0) {
-                        html = '<div class="text-center py-8 text-xs text-gray-500 font-bold">No active requests found on database.</div>';
-                    } else {
-                        res.requests.forEach(r => {
-                            let hasVoted = r.voters.includes(appState.uid);
-                            html += `<div class="bg-gray-900 border border-gray-850 p-4 rounded-xl flex items-center justify-between shadow-md">
-                                <div class="max-w-[70%]">
-                                    <h4 class="text-xs font-black text-gray-200 truncate">${r.movie}</h4>
-                                    <span class="text-[10px] font-bold text-gray-500 mt-1 block"><i class="fa-solid fa-thumbs-up text-blue-500/70"></i> ${r.voters.length} requests supported</span>
-                                </div>
-                                <button onclick="voteRequest('${r._id}')" class="${hasVoted ? 'bg-gray-800 text-gray-500 border border-gray-700 cursor-not-allowed' : 'bg-blue-600/90 text-white hover:bg-blue-500'} font-bold text-[10px] tracking-wide px-3 py-2 rounded-lg transition" ${hasVoted ? 'disabled' : ''}>${hasVoted ? 'Supported' : '<i class="fa-solid fa-plus"></i> Support'}</button>
-                            </div>`;
-                        });
                     }
-                    document.getElementById('requestContainer').innerHTML = html;
-                }
+                    document.getElementById('refCountNum').innerText = userReferCount;
+                    document.getElementById('refLinkText').innerText = `https://t.me/${BOT_UNAME}?start=ref_${uid}`;
+                    
+                    if(data.badges && data.badges.length > 0) {
+                        document.getElementById('badgesContainer').innerHTML = data.badges.map(b => '<span class="badge-tag">'+b+'</span>').join('');
+                    }
+                } catch(e) {}
             }
 
-            async function submitRequest() {
-                let inp = document.getElementById('reqInput');
-                let title = inp.value.trim();
-                if(!title) return;
-                inp.value = '';
-                let res = await req('/api/requests/create', {movie: title});
-                alert(res.msg);
-                if(res.ok) loadRequests();
+            function toggleMenu(e) { e.stopPropagation(); const menu = document.getElementById('dropdownMenu'); menu.style.display = (menu.style.display === 'block') ? 'none' : 'block'; }
+            function closeMenu() { document.getElementById('dropdownMenu').style.display = 'none'; }
+            
+            function goHome() {
+                document.getElementById('searchInput').value = ""; searchQuery = "";
+                document.getElementById('trendingWrapper').style.display = 'block';
+                loadUpcoming(); loadTrending(); loadMovies(1); closeMenu();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
-
-            async function voteRequest(reqId) {
-                let res = await req('/api/requests/vote', {request_id: reqId});
-                if(res.ok) loadRequests();
-            }
-
-            // Premium system handling
-            async function loadPremiumInfo() {
-                let res = await req('/api/premium/gateways');
-                if(res.ok) {
-                    document.getElementById('bkashNo').innerText = res.bkash || "Not Set";
-                    document.getElementById('nagadNo').innerText = res.nagad || "Not Set";
-                    document.getElementById('referLink').innerText = `https://t.me/${BOT_USERNAME}?start=ref_${appState.uid}`;
-                    document.getElementById('referCountLabel').innerText = appState.refer_count;
-                }
-            }
-
-            function selectPackage(days, amt) {
-                activePackage = { days, amount: amt };
-                document.querySelectorAll('.pkg-card').forEach(c => c.classList.remove('border-amber-500', 'bg-amber-950/20'));
-                document.getElementById(`pkg${days}`).classList.add('border-amber-500', 'bg-amber-950/20');
-                document.getElementById('payAmountLabel').innerText = `৳${amt}`;
-                document.getElementById('paymentBox').classList.remove('hidden');
-            }
-
-            async function submitPayment() {
-                let trx = document.getElementById('trxInput').value.trim();
-                if(!trx || activePackage.days === 0) return alert("Fill out the Transaction Identification field parameter.");
-                let res = await req('/api/premium/pay-submit', {trx_id: trx, days: activePackage.days, amount: activePackage.amount});
-                alert(res.msg);
-                if(res.ok) {
-                    document.getElementById('trxInput').value = '';
-                    document.getElementById('paymentBox').classList.add('hidden');
-                }
-            }
-
+            
+            function openReferModal() { document.getElementById('referModal').style.display = 'flex'; closeMenu(); }
             function copyReferLink() {
-                let link = document.getElementById('referLink').innerText;
-                navigator.clipboard.writeText(link);
-                alert("Referral URL link successfully generated and written to text clipboard buffer!");
+                navigator.clipboard.writeText(document.getElementById('refLinkText').innerText).then(() => { tg.showAlert("✅ রেফার লিংক কপি হয়েছে!"); });
+            }
+            
+            async function openLeaderboard() {
+                closeMenu();
+                document.getElementById('leaderboardModal').style.display = 'flex';
+                const lbList = document.getElementById('lbList');
+                lbList.innerHTML = "<p style='color:gray; text-align:center;'>Loading...</p>";
+                try {
+                    const res = await fetch('/api/leaderboard');
+                    const data = await res.json();
+                    if(data.length===0) return lbList.innerHTML = "<p style='color:gray; text-align:center;'>কোনো ডাটা পাওয়া যায়নি।</p>";
+                    lbList.innerHTML = data.map((u, i) => `
+                        <div class="lb-item">
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                <span class="lb-rank">#${i+1}</span>
+                                <span style="color:white; font-weight:bold;">${u.name}</span>
+                            </div>
+                            <span style="color:#4ade80; font-weight:bold;"><i class="fa-solid fa-users"></i> ${u.refers}</span>
+                        </div>
+                    `).join('');
+                } catch(e) {}
             }
 
-            // Primary App Lifecycle initial boot sequencing triggers
-            switchTab('home');
-            syncUser();
-            loadCatalog();
+            // --- REVIEWS LOGIC ---
+            function setRating(val) {
+                currentRating = val;
+                let stars = document.getElementById('starRating').children;
+                for(let i=0; i<5; i++) stars[i].className = i < val ? "fa-solid fa-star" : "fa-regular fa-star";
+            }
+
+            async function loadReviews(title) {
+                const list = document.getElementById('reviewList');
+                list.innerHTML = "<p style='color:gray; text-align:center; padding:10px;'>Loading...</p>";
+                try {
+                    const res = await fetch('/api/reviews/' + encodeURIComponent(title));
+                    const data = await res.json();
+                    if(data.length === 0) list.innerHTML = "<p style='color:gray; text-align:center; padding:10px;'>এখনো কেউ কমেন্ট করেনি। আপনি প্রথম হতে পারেন!</p>";
+                    else list.innerHTML = data.map(r => `<div class="review-item"><span>${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span> <b style="color:#e2e8f0;">${r.name}</b>: <br><span style="color:#94a3b8; font-weight:normal;">${r.comment}</span></div>`).join('');
+                } catch(e) {}
+            }
+
+            async function submitReview() {
+                if(currentRating === 0) return tg.showAlert("অনুগ্রহ করে স্টার রেটিং দিন!");
+                let text = document.getElementById('reviewText').value;
+                if(!text) return tg.showAlert("কিছু কমেন্ট লিখুন!");
+                
+                try {
+                    await fetch('/api/reviews', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({uid: uid, name: document.getElementById('uName').innerText, title: currentMovieTitle, rating: currentRating, comment: text, initData: INIT_DATA})
+                    });
+                    document.getElementById('reviewText').value = ""; setRating(0);
+                    loadReviews(currentMovieTitle); tg.showAlert("✅ ধন্যবাদ! আপনার রিভিউ যুক্ত হয়েছে।");
+                } catch(e) {}
+            }
+
+            // --- CHECK-IN LOGIC ---
+            function openCheckinModal() { document.getElementById('checkinModal').style.display = 'flex'; closeMenu(); }
+            async function claimCheckin() {
+                try {
+                    const res = await fetch('/api/checkin', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({uid: uid, action: "claim", initData: INIT_DATA})
+                    });
+                    const data = await res.json();
+                    if(data.ok) { tg.showAlert("🎉 অভিনন্দন! আপনি 10 Coins পেয়েছেন।"); fetchUserInfo(); }
+                    else tg.showAlert(data.msg || "আপনি ইতিমধ্যে আজকের রিওয়ার্ড নিয়েছেন!");
+                } catch(e) {}
+            }
+            async function convertCoins() {
+                try {
+                    const res = await fetch('/api/checkin', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({uid: uid, action: "convert", initData: INIT_DATA})
+                    });
+                    const data = await res.json();
+                    if(data.ok) { tg.showAlert("✅ সফল! ৫০ কয়েন কেটে নেওয়া হয়েছে এবং আপনার ১ দিনের VIP চালু হয়েছে।"); fetchUserInfo(); }
+                    else tg.showAlert(data.msg || "আপনার পর্যাপ্ত কয়েন নেই! (৫০ প্রয়োজন)");
+                } catch(e) {}
+            }
+            
+            // --- VIP PAYMENT LOGIC ---
+            function openVipModal() { document.getElementById('vipModal').style.display = 'flex'; document.getElementById('payBox').style.display='none'; closeMenu(); }
+            function selectPayment(method) {
+                selectedPayMethod = method;
+                document.getElementById('payBox').style.display = 'block';
+                document.getElementById('payNumberText').innerText = method === 'bkash' ? BKASH_NO : NAGAD_NO;
+            }
+            async function submitPayment() {
+                const trxId = document.getElementById('trxIdInput').value.trim();
+                if(trxId.length < 5) return tg.showAlert("সঠিক TrxID দিন!");
+                
+                let selectedRadio = document.querySelector('input[name="vip_pkg"]:checked');
+                let days = parseInt(selectedRadio.value);
+                let price = parseInt(selectedRadio.getAttribute('data-price'));
+                
+                try {
+                    const res = await fetch('/api/payment/submit', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({uid: uid, method: selectedPayMethod, trx_id: trxId, days: days, price: price, initData: INIT_DATA})
+                    });
+                    const data = await res.json();
+                    if(data.ok) {
+                        tg.showAlert("✅ পেমেন্ট রিকোয়েস্ট সফলভাবে পাঠানো হয়েছে! অ্যাডমিন যাচাই করার পর আপনার VIP চালু করে দেবে।");
+                        document.getElementById('vipModal').style.display = 'none';
+                        document.getElementById('trxIdInput').value = '';
+                    } else { tg.showAlert(data.msg || "TrxID আগে ব্যবহার করা হয়েছে অথবা ভুল!"); }
+                } catch(e) {}
+            }
+
+
+            // --- MOVIE LOADING & UI LOGIC ---
+            function drawSkeletons(count) { return Array(count).fill('<div class="skeleton"></div>').join(''); }
+            function startAutoScroll() {
+                if(autoScrollInterval) clearInterval(autoScrollInterval);
+                autoScrollInterval = setInterval(() => {
+                    if(isTouching) return; 
+                    let grid = document.getElementById('trendingGrid');
+                    if(grid) {
+                        if (grid.scrollLeft >= (grid.scrollWidth - grid.clientWidth - 10)) grid.scrollTo({ left: 0, behavior: 'smooth' });
+                        else grid.scrollBy({ left: 155, behavior: 'smooth' });
+                    }
+                }, 3500);
+            }
+
+            async function loadTrending() {
+                try {
+                    const r = await fetch(`/api/trending?uid=${uid}`);
+                    const data = await r.json();
+                    if(data.error === "banned") return document.body.innerHTML = `<h2 style='color:#ef4444; text-align:center; margin-top:80px;'>🚫 You are permanently Banned!</h2>`;
+                    const grid = document.getElementById('trendingGrid');
+                    if(data.length === 0) return document.getElementById('trendingWrapper').style.display = 'none';
+                    grid.innerHTML = data.map(m => {
+                        loadedMovies[m._id] = m;
+                        return `<div class="trending-card" onclick="openQualityModal('${m._id.replace(/'/g, "\\'")}')">
+                            <div class="post-content">
+                                <div class="top-badge">🔥 TOP</div>
+                                <img src="/api/image/${m.photo_id}" loading="lazy" onerror="this.src='https://via.placeholder.com/400x240?text=No+Image'">
+                                <div class="ep-badge"><i class="fa-solid fa-list"></i> ${m.files.length}</div>
+                                <div class="view-badge"><i class="fa-solid fa-eye"></i> ${formatViews(m.clicks)}</div>
+                            </div>
+                            <div class="card-footer">${m._id}</div>
+                        </div>`;
+                    }).join('');
+                    grid.addEventListener('touchstart', () => isTouching = true, {passive: true});
+                    grid.addEventListener('touchend', () => setTimeout(() => isTouching = false, 1000), {passive: true});
+                    setTimeout(startAutoScroll, 2000);
+                } catch(e) {}
+            }
+
+            async function loadUpcoming() {
+                try {
+                    const r = await fetch(`/api/upcoming`);
+                    const data = await r.json();
+                    const grid = document.getElementById('upcomingGrid');
+                    const wrapper = document.getElementById('upcomingWrapper');
+                    if(data.length > 0) {
+                        wrapper.style.display = 'block';
+                        grid.innerHTML = data.map(m => `<div class="upcoming-card"><img src="/api/image/${m.photo_id}"><div class="card-footer">${m.title}</div></div>`).join('');
+                    } else { wrapper.style.display = 'none'; }
+                } catch(e) {}
+            }
+
+            async function loadMovies(page = 1, signal = null) {
+                if(isLoading) return; isLoading = true; currentPage = page;
+                const grid = document.getElementById('movieGrid');
+                const pBox = document.getElementById('paginationBox');
+                grid.innerHTML = drawSkeletons(16); pBox.innerHTML = "";
+
+                try {
+                    const r = await fetch(`/api/list?page=${currentPage}&q=${encodeURIComponent(searchQuery)}&uid=${uid}`, { signal });
+                    const data = await r.json();
+                    if(data.error === "banned") return;
+
+                    if(data.movies && data.movies.length === 0) {
+                        grid.innerHTML = `<p style='grid-column: span 2; text-align:center; color:#fbbf24; font-size: 18px; padding:40px;'>🚫 কোনো মুভি পাওয়া যায়নি!</p>`;
+                    } else if (data.movies) {
+                        grid.innerHTML = data.movies.map(m => {
+                            loadedMovies[m._id] = m; 
+                            return `<div class="card" onclick="openQualityModal('${m._id.replace(/'/g, "\\'")}')">
+                                <div class="post-content">
+                                    <img src="/api/image/${m.photo_id}" loading="lazy" onerror="this.src='https://via.placeholder.com/400x240?text=No+Image'">
+                                    <div class="ep-badge"><i class="fa-solid fa-list"></i> ${m.files.length}</div>
+                                    <div class="view-badge"><i class="fa-solid fa-eye"></i> ${formatViews(m.clicks)}</div>
+                                </div>
+                                <div class="card-footer">${m._id}</div>
+                            </div>`;
+                        }).join('');
+                        renderPagination(data.total_pages);
+                    }
+                } catch(e) {}
+                isLoading = false;
+            }
+
+            function renderPagination(totalPages) {
+                if (totalPages <= 1) return;
+                let html = `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})"><i class="fa-solid fa-angle-left"></i></button>`;
+                let start = Math.max(1, currentPage - 1); let end = Math.min(totalPages, currentPage + 1);
+                if (start > 1) { html += `<button class="page-btn" onclick="goToPage(1)">1</button>`; if (start > 2) html += `<span style="color:gray;">...</span>`; }
+                for (let i = start; i <= end; i++) html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`; 
+                if (end < totalPages) { if (end < totalPages - 1) html += `<span style="color:gray;">...</span>`; html += `<button class="page-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`; }
+                html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})"><i class="fa-solid fa-angle-right"></i></button>`;
+                document.getElementById('paginationBox').innerHTML = html;
+            }
+
+            function goToPage(p) { if (p < 1) return; loadMovies(p); window.scrollTo({ top: document.getElementById('movieGrid').offsetTop - 100, behavior: 'smooth' }); }
+
+            let timeout = null;
+            document.getElementById('searchInput').addEventListener('input', function(e) {
+                clearTimeout(timeout); searchQuery = e.target.value.trim();
+                if(searchQuery !== "") { document.getElementById('trendingWrapper').style.display = 'none'; document.getElementById('upcomingWrapper').style.display = 'none'; isTouching = true; } 
+                else { document.getElementById('trendingWrapper').style.display = 'block'; loadUpcoming(); isTouching = false; loadTrending(); }
+                timeout = setTimeout(() => { 
+                    if(abortController) abortController.abort();
+                    abortController = new AbortController();
+                    loadMovies(1, abortController.signal); 
+                }, 500); 
+            });
+
+
+            // ==========================================
+            // DIRECT LINK AD LOGIC (REPLACED MONETAG)
+            // ==========================================
+            function showDirectLinkModal(descText) {
+                document.getElementById('dlDescText').innerHTML = descText;
+                const btn = document.getElementById('dlClickBtn');
+                btn.innerText = "🔗 Click Here (Open Link)";
+                btn.disabled = false;
+                btn.style.background = "linear-gradient(45deg, #ef4444, #f97316)";
+                document.getElementById('directLinkModal').style.display = 'flex';
+            }
+
+            function executeDirectLink() {
+                if (!DIRECT_LINKS || DIRECT_LINKS.length === 0) {
+                    document.getElementById('directLinkModal').style.display = 'none';
+                    if (onAdCompleteCallback) onAdCompleteCallback();
+                    return;
+                }
+                
+                const randomLink = DIRECT_LINKS[Math.floor(Math.random() * DIRECT_LINKS.length)];
+                tg.openLink(randomLink);
+
+                const btn = document.getElementById('dlClickBtn');
+                btn.disabled = true;
+                let timeLeft = 15;
+                btn.innerText = `⏳ অপেক্ষা করুন... (${timeLeft}s)`;
+                btn.style.background = "#475569";
+
+                let dlTimer = setInterval(() => {
+                    timeLeft--;
+                    btn.innerText = `⏳ অপেক্ষা করুন... (${timeLeft}s)`;
+                    if (timeLeft <= 0) {
+                        clearInterval(dlTimer);
+                        document.getElementById('directLinkModal').style.display = 'none';
+                        if (onAdCompleteCallback) onAdCompleteCallback();
+                    }
+                }, 1000);
+            }
+
+            function openQualityModal(title) {
+                const movie = loadedMovies[title];
+                if(!movie) return;
+                currentMovieTitle = title;
+                document.getElementById('modalTitle').innerText = title;
+                
+                let listHtml = movie.files.map(f => {
+                    let isFree = f.is_unlocked || isUserVip;
+                    let icon = isFree ? '<i class="fa-solid fa-paper-plane text-green-400" style="font-size:18px;"></i>' : '<i class="fa-solid fa-lock text-red-400" style="font-size:18px;"></i>';
+                    let cls = isFree ? 'border-left: 5px solid #10b981;' : 'border-left: 5px solid #ef4444;';
+                    return `
+                    <div class="rgb-border" onclick="handleQualityClick('${f.id}', ${f.is_unlocked})">
+                        <div class="rgb-inner" style="${cls}"><span><i class="fa-solid fa-download"></i> ${f.quality}</span> ${icon}</div>
+                    </div>`;
+                }).join('');
+                
+                document.getElementById('qualityList').innerHTML = listHtml;
+                document.getElementById('qualityModal').style.display = 'flex';
+                
+                setRating(0);
+                loadReviews(title);
+            }
+            
+            function closeQualityModal() { document.getElementById('qualityModal').style.display = 'none'; }
+
+            function handleQualityClick(fileId, isUnlocked) {
+                closeQualityModal();
+                if(isUnlocked || isUserVip) { 
+                    sendFile(fileId); 
+                } else { 
+                    activeFileId = fileId; 
+                    onAdCompleteCallback = () => sendFile(activeFileId);
+                    showDirectLinkModal("এই ভিডিও বা মুভিটি আনলক করতে নিচের বাটনে ক্লিক করুন। একটি নতুন পেইজ ওপেন হবে, সেখানে <b>১৫ সেকেন্ড</b> অপেক্ষা করুন। এরপর অটোমেটিক আপনার বটের ইনবক্সে মুভি চলে যাবে!");
+                }
+            }
+            
+            function watchAdForCoins() {
+                document.getElementById('checkinModal').style.display = 'none';
+                onAdCompleteCallback = () => claimAdReward();
+                showDirectLinkModal("৫ কয়েন ফ্রী পেতে নিচের বাটনে ক্লিক করুন। একটি নতুন পেইজ ওপেন হবে, সেখানে <b>১৫ সেকেন্ড</b> অপেক্ষা করুন। এরপর আপনার ব্যালেন্সে কয়েন যোগ হয়ে যাবে!");
+            }
+            
+            async function claimAdReward() {
+                try {
+                    const res = await fetch('/api/reward_ad', { 
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({uid: uid, initData: INIT_DATA})
+                    });
+                    const data = await res.json();
+                    if(data.ok) { tg.showAlert("🎉 অভিনন্দন! আপনি লিংক ভিজিট করে ৫ কয়েন পেয়েছেন!"); fetchUserInfo(); loadTasks(); }
+                } catch(e) {}
+            }
+
+            async function sendFile(id) {
+                try {
+                    const res = await fetch('/api/send', { 
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({userId: uid, movieId: id, initData: INIT_DATA})
+                    });
+                    const responseData = await res.json();
+                    if(!responseData.ok) return alert("⚠️ Security verification failed!");
+                    
+                    if (isUserVip) {
+                        document.getElementById('successNoticeBox').innerHTML = `<p style="color:#4ade80;"><i class="fa-solid fa-crown" style="color: #fbbf24;"></i> <b>VIP সুবিধা:</b> এই ফাইলটি আপনার ইনবক্স থেকে কখনো অটো-ডিলিট হবে না। সারাজীবন সেভ থাকবে!</p>`;
+                        document.getElementById('successNoticeBox').style.background = "linear-gradient(135deg, rgba(74,222,128,0.1), rgba(34,197,94,0.15))";
+                        document.getElementById('successNoticeBox').style.borderLeftColor = "#4ade80";
+                    }
+
+                    document.getElementById('successModal').style.display = 'flex';
+                    setTimeout(() => { loadTrending(); loadMovies(currentPage); }, 1000); 
+                    fetchUserInfo(); 
+                } catch (e) {}
+            }
+            
+            // --- REQUEST & UPVOTE LOGIC ---
+            function openReqModal() { 
+                closeMenu();
+                document.getElementById('reqModal').style.display = 'flex'; 
+                document.getElementById('reqText').focus(); 
+                loadRequests();
+            }
+            
+            async function loadRequests() {
+                const reqList = document.getElementById('reqList');
+                reqList.innerHTML = "<p style='color:gray; text-align:center;'>Loading...</p>";
+                try {
+                    const res = await fetch('/api/requests');
+                    const data = await res.json();
+                    if(data.length===0) return reqList.innerHTML = "<p style='color:gray; text-align:center;'>কোনো রিকোয়েস্ট নেই।</p>";
+                    reqList.innerHTML = data.map(r => {
+                        let hasVoted = r.voters.includes(uid);
+                        let btnCls = hasVoted ? "background:#475569;" : "background:#3b82f6;";
+                        let delBtn = isAdmin ? `<button onclick="deleteReq('${r.id}')" style="background:#ef4444; border:none; padding:6px 10px; border-radius:6px; color:white; cursor:pointer; margin-left:5px;"><i class="fa-solid fa-trash"></i></button>` : '';
+                        return `
+                        <div class="req-item">
+                            <span style="color:white; font-weight:bold; flex:1;">${r.movie}</span>
+                            <div>
+                                <button class="vote-btn" style="${btnCls}" ${hasVoted?'disabled':''} onclick="voteRequest('${r.id}')">
+                                    <i class="fa-solid fa-caret-up"></i> ${r.votes}
+                                </button>
+                                ${delBtn}
+                            </div>
+                        </div>
+                        `;
+                    }).join('');
+                } catch(e) {}
+            }
+            
+            async function voteRequest(id) {
+                try {
+                    await fetch('/api/requests/vote', { 
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({uid: uid, req_id: id, initData: INIT_DATA})
+                    });
+                    loadRequests();
+                } catch (e) {}
+            }
+            
+            async function deleteReq(id) {
+                if(!confirm('আপনি কি নিশ্চিত যে এই রিকোয়েস্টটি ডিলিট করতে চান?')) return;
+                try {
+                    await fetch('/api/requests/' + id, { method: 'DELETE' });
+                    loadRequests();
+                } catch(e) {}
+            }
+            
+            async function sendReq() {
+                const text = document.getElementById('reqText').value;
+                if(!text) return alert('মুভির নাম লিখুন!');
+                try {
+                    await fetch('/api/request', { 
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({uid: uid, uname: tg.initDataUnsafe.user?.first_name || 'Guest', movie: text, initData: INIT_DATA})
+                    });
+                    document.getElementById('reqText').value = '';
+                    tg.showAlert('রিকোয়েস্ট বা ভোট সফলভাবে যোগ করা হয়েছে!');
+                    loadRequests();
+                } catch (e) {}
+            }
+
+            // --- Chat Logic ---
+            let chatInterval = null;
+
+            async function fetchChatMessages() {
+                try {
+                    const res = await fetch('/api/chat');
+                    const data = await res.json();
+                    const chatBox = document.getElementById('chatBox');
+                    
+                    let html = "";
+                    data.forEach(msg => {
+                        const isMine = msg.uid === uid;
+                        html += `
+                            <div class="chat-msg ${isMine ? 'mine' : 'others'}">
+                                ${!isMine ? `<div class="chat-name">${msg.name}</div>` : ''}
+                                ${msg.text}
+                                ${!isMine ? `<span class="chat-reply-btn" onclick="replyToChat('${msg.name}')"><i class="fa-solid fa-reply"></i></span>` : ''}
+                            </div>
+                        `;
+                    });
+                    
+                    const isScrolledToBottom = chatBox.scrollHeight - chatBox.clientHeight <= chatBox.scrollTop + 10;
+                    chatBox.innerHTML = html;
+                    if(isScrolledToBottom) chatBox.scrollTop = chatBox.scrollHeight;
+                    
+                } catch(e) {}
+            }
+            
+            function replyToChat(name) {
+                const input = document.getElementById('chatInput');
+                input.value = `@${name} ` + input.value;
+                input.focus();
+            }
+
+            function openChatModal() {
+                closeMenu();
+                document.getElementById('chatModal').style.display = 'flex';
+                document.getElementById('chatBox').innerHTML = "<p style='color:gray; text-align:center;'>Loading chat...</p>";
+                fetchChatMessages();
+                chatInterval = setInterval(fetchChatMessages, 3000);
+            }
+            
+            function closeChat() {
+                document.getElementById('chatModal').style.display='none';
+                if(chatInterval) { clearInterval(chatInterval); chatInterval = null; }
+            }
+
+            async function sendChatMessage() {
+                const input = document.getElementById('chatInput');
+                const text = input.value.trim();
+                if(!text) return;
+                
+                input.value = "";
+                const chatBox = document.getElementById('chatBox');
+                
+                const div = document.createElement('div');
+                div.className = `chat-msg mine`;
+                div.innerHTML = text;
+                chatBox.appendChild(div);
+                chatBox.scrollTop = chatBox.scrollHeight;
+
+                try {
+                    await fetch('/api/chat', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({uid: uid, name: document.getElementById('uName').innerText, text: text, initData: INIT_DATA})
+                    });
+                    fetchChatMessages();
+                } catch(e) {}
+            }
+
+            // --- Spin To Win Logic ---
+            const spinRewards = [10, 50, 0, 100, 20, 0, 500, 5];
+            let currentRotation = 0;
+            let spinsLeftToday = 3;
+
+            function renderWheel() {
+                const wheel = document.getElementById('spinWheel');
+                wheel.innerHTML = '';
+                const sliceAngle = 360 / 8;
+                for(let i=0; i<8; i++) {
+                    const textDiv = document.createElement('div');
+                    textDiv.style.position = 'absolute';
+                    textDiv.style.width = '40px'; 
+                    textDiv.style.height = '50%'; 
+                    textDiv.style.top = '0';
+                    textDiv.style.left = '50%';
+                    textDiv.style.marginLeft = '-20px';
+                    textDiv.style.transformOrigin = '50% 100%';
+                    textDiv.style.transform = `rotate(${i * sliceAngle + (sliceAngle/2)}deg)`;
+                    textDiv.style.fontWeight = '900';
+                    textDiv.style.fontSize = '18px';
+                    textDiv.style.color = '#000';
+                    textDiv.style.textAlign = 'center';
+                    textDiv.style.paddingTop = '15px'; 
+                    textDiv.innerHTML = spinRewards[i] ? spinRewards[i]+'🪙' : 'Oops!';
+                    wheel.appendChild(textDiv);
+                }
+            }
+            renderWheel();
+
+            async function openSpinModal() {
+                closeMenu();
+                document.getElementById('spinModal').style.display = 'flex';
+                try {
+                    const res = await fetch('/api/spin/status/' + uid);
+                    const data = await res.json();
+                    spinsLeftToday = data.spins_left;
+                    document.getElementById('spinsLeftText').innerText = spinsLeftToday;
+                    document.getElementById('spinBtn').disabled = spinsLeftToday <= 0;
+                } catch(e) {}
+            }
+
+            function startSpin() {
+                if(spinsLeftToday <= 0) return tg.showAlert("আপনি আজকের স্পিন লিমিট শেষ করেছেন!");
+                document.getElementById('spinModal').style.display = 'none';
+                
+                onAdCompleteCallback = () => executeSpin();
+                showDirectLinkModal("স্পিন আনলক করতে নিচের বাটনে ক্লিক করুন। একটি নতুন পেইজ ওপেন হবে, সেখানে <b>১৫ সেকেন্ড</b> অপেক্ষা করুন। এরপর অটোমেটিক স্পিন হুইল চালু হয়ে যাবে!");
+            }
+
+            async function executeSpin() {
+                document.getElementById('spinModal').style.display = 'flex';
+                document.getElementById('spinBtn').disabled = true;
+                
+                const winIndex = Math.floor(Math.random() * 8);
+                const reward = spinRewards[winIndex];
+                
+                const sliceAngle = 360 / 8;
+                const targetAngle = 360 - (winIndex * sliceAngle + (sliceAngle / 2));
+                
+                let base = Math.floor(currentRotation / 360) * 360;
+                currentRotation = base + (360 * 5) + targetAngle;
+                
+                document.getElementById('spinWheel').style.transform = `rotate(${currentRotation}deg)`;
+                
+                setTimeout(async () => {
+                    try {
+                        const res = await fetch('/api/spin', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({uid: uid, reward: reward, initData: INIT_DATA})
+                        });
+                        const data = await res.json();
+                        if(data.ok) {
+                            spinsLeftToday = data.spins_left;
+                            document.getElementById('spinsLeftText').innerText = spinsLeftToday;
+                            if(reward > 0) { tg.showAlert(`🎉 অভিনন্দন! আপনি ${reward} কয়েন জিতেছেন!`); fetchUserInfo(); }
+                            else { tg.showAlert(`😔 Better luck next time!`); }
+                        } else { tg.showAlert(data.msg); }
+                    } catch(e) {}
+                    document.getElementById('spinBtn').disabled = spinsLeftToday <= 0;
+                }, 4100);
+            }
+
+            // --- Daily Tasks Logic ---
+            async function openTasksModal() {
+                closeMenu();
+                document.getElementById('tasksModal').style.display = 'flex';
+                loadTasks();
+            }
+
+            async function loadTasks() {
+                try {
+                    const res = await fetch('/api/tasks/' + uid);
+                    const data = await res.json();
+                    
+                    let adCount = Math.min(data.ads, 3);
+                    let revCount = Math.min(data.reviews, 2);
+                    
+                    document.getElementById('adTaskProgress').innerText = `${adCount}/3`;
+                    document.getElementById('adTaskBar').style.width = `${(adCount/3)*100}%`;
+                    const adBtn = document.getElementById('adTaskBtn');
+                    
+                    if(data.ads_claimed) { adBtn.innerText = "Claimed ✅"; adBtn.className = "task-btn claimed"; adBtn.disabled = true; }
+                    else if(adCount >= 3) { adBtn.innerText = "Claim 15 Coins!"; adBtn.className = "task-btn"; adBtn.disabled = false; }
+                    else { adBtn.innerText = "15 Coins Claim করুন"; adBtn.className = "task-btn"; adBtn.disabled = true; }
+                    
+                    document.getElementById('revTaskProgress').innerText = `${revCount}/2`;
+                    document.getElementById('revTaskBar').style.width = `${(revCount/2)*100}%`;
+                    const revBtn = document.getElementById('revTaskBtn');
+                    
+                    if(data.reviews_claimed) { revBtn.innerText = "Claimed ✅"; revBtn.className = "task-btn claimed"; revBtn.disabled = true; }
+                    else if(revCount >= 2) { revBtn.innerText = "Claim 10 Coins!"; revBtn.className = "task-btn"; revBtn.disabled = false; }
+                    else { revBtn.innerText = "10 Coins Claim করুন"; revBtn.className = "task-btn"; revBtn.disabled = true; }
+                    
+                } catch(e) {}
+            }
+
+            fetchUserInfo(); loadTrending(); loadUpcoming(); loadMovies(1); 
         </script>
     </body>
     </html>
     """
-    return HTMLResponse(content=html_content)
+    html_code = html_code.replace("{{DIRECT_LINKS}}", dl_json).replace("{{ZONE_ID}}", zone_id).replace("{{TG_LINK}}", tg_url).replace("{{LINK_18}}", link_18).replace("{{AD_COUNT}}", str(required_ads)).replace("{{BOT_USER}}", BOT_USERNAME).replace("{{BKASH_NO}}", bkash_no).replace("{{NAGAD_NO}}", nagad_no)
+    return html_code
 
 
 # ==========================================
-# 14. API Router Endpoints Backend Logic
+# 14. Main Web App APIs
 # ==========================================
-class UserBaseModel(BaseModel):
-    uid: int
-    first_name: str
-
-@app.post("/api/user/sync")
-async def api_sync_user(data: UserBaseModel, request: Request):
-    if not validate_tg_data(request.headers.get("X-TG-Data", "")):
-        return {"ok": False, "msg": "Telegram Integrity Authentication Broken"}
-        
+@app.get("/api/user/{uid}")
+async def get_user_info(uid: int):
+    user = await db.users.find_one({"user_id": uid})
+    if not user: return {"vip": False, "is_admin": False, "refer_count": 0, "vip_expiry": None, "coins": 0, "badges": []}
+    
+    vip_until = user.get("vip_until")
     now = datetime.datetime.utcnow()
-    user = await db.users.find_one({"user_id": data.uid})
-    if not user:
-        await db.users.insert_one({
-            "user_id": data.uid, "first_name": data.first_name, "joined_at": now,
-            "refer_count": 0, "coins": 0, "last_checkin": now - datetime.timedelta(days=2),
-            "vip_until": now - datetime.timedelta(days=1)
-        })
-        user = await db.users.find_one({"user_id": data.uid})
+    is_vip = False
+    vip_expiry_str = None
+    
+    if vip_until and vip_until > now:
+        is_vip = True
+        vip_expiry_str = vip_until.strftime("%d %b %Y")
         
-    tasks = await db.tasks.find_one({"user_id": data.uid})
-    if tasks and tasks.get("date") != now.strftime("%Y-%m-%d"):
-        await db.tasks.delete_one({"user_id": data.uid})
-        tasks = None
+    badges = []
+    refer_count = user.get("refer_count", 0)
+    unlocks = await db.user_unlocks.count_documents({"user_id": uid})
+    reviews_count = await db.reviews.count_documents({"user_id": uid})
+    
+    if refer_count >= 5: badges.append("🤝 Top Referrer")
+    if unlocks >= 5: badges.append("🍿 Binge Watcher")
+    if reviews_count >= 3: badges.append("✍️ Top Critic")
         
-    is_vip = user.get("vip_until", now) > now
     return {
-        "ok": True,
-        "user": {
-            "coins": user.get("coins", 0),
-            "is_vip": is_vip,
-            "vip_until": user.get("vip_until", now).isoformat(),
-            "refer_count": user.get("refer_count", 0)
-        },
-        "tasks": tasks or {"ads": 0, "reviews": 0}
+        "vip": is_vip,
+        "is_admin": uid in admin_cache,
+        "refer_count": refer_count,
+        "vip_expiry": vip_expiry_str,
+        "coins": user.get("coins", 0),
+        "badges": badges
     }
 
-@app.post("/api/movies/catalog")
-async def api_catalog(data: UserBaseModel):
-    movies_cursor = db.movies.find().sort("created_at", -1)
-    movie_dict = {}
-    async for m in movies_cursor:
-        t = m["title"]
-        if t not in movie_dict:
-            movie_dict[t] = {"title": t, "photo_id": m["photo_id"], "total_clicks": 0, "files_count": 0}
-        movie_dict[t]["total_clicks"] += m.get("clicks", 0)
-        movie_dict[t]["files_count"] += 1
-        
-    upcoming_cursor = db.upcoming.find().sort("added_at", -1).limit(10)
-    upcoming_list = [{"photo_id": u["photo_id"], "title": u["title"]} for u in await upcoming_cursor.to_list(10)]
+async def update_daily_task(uid: int, task_type: str):
+    now_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    user = await db.users.find_one({"user_id": uid})
+    if not user: return
     
-    return {"ok": True, "movies": list(movie_dict.values()), "upcoming": upcoming_list}
+    tasks = user.get("tasks", {})
+    if tasks.get("date") != now_date:
+        tasks = {"date": now_date, "ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
+    
+    if task_type in tasks:
+        tasks[task_type] += 1
+        await db.users.update_one({"user_id": uid}, {"$set": {"tasks": tasks}})
 
-class QuerySchema(BaseModel):
+class ReviewModel(BaseModel):
     uid: int
-    first_name: str
-    query: str
-
-@app.post("/api/movies/search")
-async def api_search_movies(data: QuerySchema):
-    q = data.query.strip()
-    if not q:
-        movies_cursor = db.movies.find().sort("created_at", -1)
-    else:
-        movies_cursor = db.movies.find({"$text": {"$search": q}})
-        
-    movie_dict = {}
-    async for m in movies_cursor:
-        t = m["title"]
-        if t not in movie_dict:
-            movie_dict[t] = {"title": t, "photo_id": m["photo_id"], "total_clicks": 0, "files_count": 0}
-        movie_dict[t]["total_clicks"] += m.get("clicks", 0)
-        movie_dict[t]["files_count"] += 1
-        
-    return {"ok": True, "results": list(movie_dict.values())}
-
-class TitleSchema(BaseModel):
-    uid: int
-    first_name: str
+    name: str
     title: str
-
-@app.post("/api/movies/details")
-async def api_movie_details(data: TitleSchema):
-    files_cursor = db.movies.find({"title": data.title}).sort("quality", 1)
-    files = []
-    photo_id = None
-    async for f in files_cursor:
-        photo_id = f["photo_id"]
-        files.append({"_id": str(f["_id"]), "quality": f["quality"], "clicks": f.get("clicks", 0)})
-        
-    rev_cursor = db.reviews.find({"movie_title": data.title}).sort("timestamp", -1).limit(20)
-    reviews = []
-    async for r in rev_cursor:
-        reviews.append({"username": r["username"], "comment": r["comment"], "timestamp": r["timestamp"].isoformat()})
-    reviews.reverse()
-    
-    return {"ok": True, "photo_id": photo_id, "files": files, "reviews": reviews}
-
-class FileActionSchema(BaseModel):
-    uid: int
-    first_name: str
-    file_id: str
-
-@app.post("/api/movies/claim-file")
-async def api_claim_file(data: FileActionSchema, request: Request):
-    if not validate_tg_data(request.headers.get("X-TG-Data", "")):
-        return {"ok": False, "msg": "Verification Refused"}
-        
-    now = datetime.datetime.utcnow()
-    user = await db.users.find_one({"user_id": data.uid})
-    if not user: return {"ok": False, "msg": "User context null"}
-    
-    is_vip = user.get("vip_until", now) > now
-    
-    if not is_vip and user.get("coins", 0) < 15:
-        return {"ok": False, "redirect": "earn", "msg": "VIP status or minimum 15 task coins required to access resource files."}
-        
-    movie_file = await db.movies.find_one({"_id": ObjectId(data.file_id)})
-    if not movie_file: return {"ok": False, "msg": "File catalog missing"}
-    
-    await db.movies.update_one({"_id": ObjectId(data.file_id)}, {"$inc": {"clicks": 1}})
-    
-    try:
-        cfg = await db.settings.find_one({"id": "protect_content"})
-        protect = cfg.get("status", False) if cfg else False
-        
-        sent = await bot.copy_message(
-            chat_id=data.uid,
-            from_chat_id=CHANNEL_ID if (CHANNEL_ID and CHANNEL_ID != "-100XXXXXXXXXX") else data.uid,
-            message_id=int(movie_file["file_id"]) if movie_file["file_id"].isdigit() else 0, 
-            protect_content=protect
-        )
-        
-        if not is_vip:
-            t_cfg = await db.settings.find_one({"id": "del_time"})
-            mins = t_cfg.get("minutes", 10) if t_cfg else 10
-            del_at = now + datetime.timedelta(minutes=mins)
-            await db.auto_delete.insert_one({"chat_id": data.uid, "message_id": sent.message_id, "delete_at": del_at})
-            await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": -15}})
-            
-            await bot.send_message(data.uid, f"⚠️ <b>ফাইলটি অটো-ডিলিট হওয়ার পূর্বে সেভ করুন!</b>\n\nআপনি VIP মেম্বার নন, তাই নীতি অনুযায়ী ফাইলটি আগামী <b>{mins} মিনিট</b> পর স্বয়ংক্রিয়ভাবে মুছে যাবে।", parse_mode="HTML")
-            
-        return {"ok": True}
-    except Exception as e:
-        # Fallback forward dynamic direct fallback block logic link injection
-        try:
-            bot_info = await bot.get_me()
-            link_obj = await db.settings.find_one({"id": "direct_links"})
-            links = link_obj.get("links", []) if link_obj else []
-            direct_url = links[0] if links else f"https://t.me/{bot_info.username}"
-            
-            await bot.send_message(data.uid, f"📥 <b>আপনার কাঙ্ক্ষিত মুভি ফাইলটি প্রস্তুত!</b>\n\nনিচের লিংকে ক্লিক করে সরাসরি ফাইলটি ডাউনলোড করে নিন:\n🔗 {direct_url}", disable_web_page_preview=True)
-            
-            if not is_vip:
-                await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": -15}})
-            return {"ok": True}
-        except:
-            return {"ok": False, "msg": "বট ইউজারকে সরাসরি বার্তা পাঠাতে অক্ষম। অনুগ্রহ করে বটটি রিস্টার্ট করুন।"}
-
-class ReviewPostSchema(BaseModel):
-    uid: int
-    first_name: str
-    movie_title: str
+    rating: int
     comment: str
+    initData: str
 
-@app.post("/api/movies/add-review")
-async def api_add_review(data: ReviewPostSchema, request: Request):
-    if not validate_tg_data(request.headers.get("X-TG-Data", "")): return {"ok": False}
-    c_str = data.comment.strip()
-    if not c_str: return {"ok": False}
-    
-    now = datetime.datetime.utcnow()
+@app.get("/api/reviews/{title}")
+async def get_reviews(title: str):
+    reviews = await db.reviews.find({"movie_title": title}).sort("created_at", -1).to_list(15)
+    return [{"name": r["name"], "rating": r["rating"], "comment": r["comment"]} for r in reviews]
+
+@app.post("/api/reviews")
+async def add_review(data: ReviewModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
     await db.reviews.insert_one({
-        "user_id": data.uid, "username": data.first_name, "movie_title": data.movie_title,
-        "comment": c_str, "timestamp": now
+        "user_id": data.uid, "name": data.name, "movie_title": data.title,
+        "rating": data.rating, "comment": data.comment, "created_at": datetime.datetime.utcnow()
     })
-    
-    today = now.strftime("%Y-%m-%d")
-    await db.tasks.update_one(
-        {"user_id": data.uid, "date": today},
-        {"$inc": {"reviews": 1}},
-        upsert=True
-    )
-    
-    return await api_movie_details(TitleSchema(uid=data.uid, first_name=data.first_name, title=data.movie_title))
-
-@app.post("/api/requests/list")
-async def api_req_list(data: UserBaseModel):
-    cursor = db.requests.find().sort("voters", -1).limit(30)
-    reqs = []
-    async for r in cursor:
-        reqs.append({"_id": str(r["_id"]), "movie": r["movie"], "voters": r.get("voters", [])})
-    return {"ok": True, "requests": reqs}
-
-class ReqCreateSchema(BaseModel):
-    uid: int
-    first_name: str
-    movie: str
-
-@app.post("/api/requests/create")
-async def api_req_create(data: ReqCreateSchema):
-    m_name = data.movie.strip()
-    if not m_name: return {"ok": False, "msg": "Null title schema matching disallowed"}
-    
-    exists = await db.requests.find_one({"movie": {"$regex": f"^{m_name}$", "$options": "i"}})
-    if exists:
-        return {"ok": False, "msg": "This entry matches a listing already active on the hub pool dashboard index."}
-        
-    await db.requests.insert_one({"movie": m_name, "voters": [data.uid]})
-    
-    try:
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Approve", callback_data=f"req_acc_{str(ObjectId())}") # Real fallback handling uses explicit mappings
-        builder.button(text="❌ Reject", callback_data=f"req_rej_{str(ObjectId())}")
-        # Simplified dynamic reference update for routing approval workflows:
-        new_req = await db.requests.find_one({"movie": m_name})
-        if new_req:
-            builder = InlineKeyboardBuilder()
-            builder.button(text="✅ Approve", callback_data=f"req_acc_{str(new_req['_id'])}")
-            builder.button(text="❌ Reject", callback_data=f"req_rej_{str(new_req['_id'])}")
-            await bot.send_message(OWNER_ID, f"🍿 <b>New Movie Requested Hub</b>:\n\nTitle: <code>{m_name}</code>\nUser: {data.first_name} ({data.uid})", parse_mode="HTML", reply_markup=builder.as_markup())
-    except: pass
-    
-    return {"ok": True, "msg": "Request logged onto hub registry tracker successfully."}
-
-class ReqVoteSchema(BaseModel):
-    uid: int
-    first_name: str
-    request_id: str
-
-@app.post("/api/requests/vote")
-async def api_req_vote(data: ReqVoteSchema):
-    await db.requests.update_one({"_id": ObjectId(data.request_id)}, {"$addToSet": {"voters": data.uid}})
+    await update_daily_task(data.uid, "reviews")
     return {"ok": True}
 
-@app.get("/api/file/proxy")
-async def file_proxy(file_id: str):
-    try:
-        f_info = await bot.get_file(file_id)
-        f_url = f"https://api.telegram.org/file/bot{TOKEN}/{f_info.file_path}"
-        async def stream_file():
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f_url) as resp:
-                    async for chunk in resp.content.iter_chunked(4096):
-                        yield chunk
-        return StreamingResponse(stream_file(), media_type="image/jpeg")
-    except Exception:
-        # Default banner asset dynamic image binary injection
-        return HTMLResponse(status_code=404)
-
-@app.post("/api/premium/gateways")
-async def api_premium_gateways(data: UserBaseModel):
-    b = await db.settings.find_one({"id": "bkash_no"})
-    n = await db.settings.find_one({"id": "nagad_no"})
-    return {
-        "ok": True, 
-        "bkash": b.get("number", "017XXXXXXXX") if b else "017XXXXXXXX", 
-        "nagad": n.get("number", "017XXXXXXXX") if n else "017XXXXXXXX"
-    }
-
-class PaymentSchema(BaseModel):
+class CheckinModel(BaseModel):
     uid: int
-    first_name: str
+    action: str
+    initData: str
+
+@app.post("/api/checkin")
+async def handle_checkin(data: CheckinModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    user = await db.users.find_one({"user_id": data.uid})
+    if not user: return {"ok": False}
+    
+    now = datetime.datetime.utcnow()
+    
+    if data.action == "claim":
+        last_checkin = user.get("last_checkin", now - datetime.timedelta(days=2))
+        if last_checkin.date() >= now.date():
+            return {"ok": False, "msg": "আপনি ইতিমধ্যে আজকের রিওয়ার্ড নিয়ে নিয়েছেন!"}
+        await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 10}, "$set": {"last_checkin": now}})
+        return {"ok": True}
+        
+    elif data.action == "convert":
+        coins = user.get("coins", 0)
+        if coins < 50: return {"ok": False, "msg": "আপনার কমপক্ষে ৫০ কয়েন প্রয়োজন!"}
+        
+        current_vip = user.get("vip_until", now)
+        if current_vip < now: current_vip = now
+        new_vip = current_vip + datetime.timedelta(days=1)
+        
+        await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": -50}, "$set": {"vip_until": new_vip}})
+        return {"ok": True}
+
+class PaymentModel(BaseModel):
+    uid: int
+    method: str
     trx_id: str
     days: int
-    amount: int
+    price: int
+    initData: str
 
-@app.post("/api/premium/pay-submit")
-async def api_premium_submit(data: PaymentSchema, request: Request):
-    if not validate_tg_data(request.headers.get("X-TG-Data", "")): return {"ok": False}
-    trx = data.trx_id.strip().upper()
-    if not trx: return {"ok": False, "msg": "Transaction key field missing"}
+@app.post("/api/payment/submit")
+async def submit_payment(data: PaymentModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
     
-    dup = await db.payments.find_one({"trx_id": trx})
-    if dup: return {"ok": False, "msg": "This transaction reference string ID matches a record already locked under review status verification."}
+    existing = await db.payments.find_one({"trx_id": data.trx_id})
+    if existing: return {"ok": False, "msg": "এই TrxID টি ইতিমধ্যে ব্যবহার করা হয়েছে!"}
     
-    res = await db.payments.insert_one({
-        "user_id": data.uid, "trx_id": trx, "days": data.days, "amount": data.amount,
-        "status": "pending", "timestamp": datetime.datetime.utcnow()
-    })
+    pay_doc = {
+        "user_id": data.uid,
+        "method": data.method,
+        "trx_id": data.trx_id,
+        "amount": data.price,
+        "days": data.days,
+        "status": "pending",
+        "created_at": datetime.datetime.utcnow()
+    }
+    res = await db.payments.insert_one(pay_doc)
     
     try:
         builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Approve", callback_data=f"trx_approve_{str(res.inserted_id)}")
-        builder.button(text="❌ Reject", callback_data=f"trx_reject_{str(res.inserted_id)}")
+        builder.button(text="✅ Approve", callback_data=f"trx_approve_{res.inserted_id}")
+        builder.button(text="❌ Reject", callback_data=f"trx_reject_{res.inserted_id}")
         
-        await bot.send_message(
-            OWNER_ID, 
-            f"💰 <b>VIP Subscription Verification Pending</b>:\n\nUser: {data.first_name} (<code>{data.uid}</code>)\nAmount: ৳{data.amount}\nPackage: {data.days} Days\nTrxID: <code>{trx}</code>",
-            parse_mode="HTML", reply_markup=builder.as_markup()
-        )
-    except: pass
-    
-    return {"ok": True, "msg": "Transaction details logged under validation inspection queues successfully."}
-
-@app.post("/api/tasks/checkin")
-async def api_task_checkin(data: UserBaseModel):
-    now = datetime.datetime.utcnow()
-    user = await db.users.find_one({"user_id": data.uid})
-    if not user: return {"ok": False, "msg": "Invalid User"}
-    
-    last = user.get("last_checkin", now - datetime.timedelta(days=2))
-    if now - last < datetime.timedelta(days=1):
-        return {"ok": False, "msg": "Daily reward checkin already locked for today cycle status."}
+        pkg_name = f"{data.days} দিনের"
+        if data.days == 30: pkg_name = "১ মাসের"
+        elif data.days == 90: pkg_name = "৩ মাসের"
+        elif data.days == 180: pkg_name = "৬ মাসের"
         
-    await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 2}, "$set": {"last_checkin": now}})
-    return {"ok": True, "msg": "Daily login checkin success logged! (+2 coins added)"}
-
-@app.post("/api/tasks/ad-watched")
-async def api_ad_watched(data: UserBaseModel):
-    now = datetime.datetime.utcnow()
-    today = now.strftime("%Y-%m-%d")
+        msg = f"💰 <b>নতুন পেমেন্ট রিকোয়েস্ট!</b>\n\n👤 ইউজার ID: <code>{data.uid}</code>\n🏦 মেথড: {data.method.upper()}\n🧾 TrxID: <code>{data.trx_id}</code>\n💵 পরিমাণ: {data.price} BDT\n⏳ প্যাকেজ: {pkg_name} VIP"
+        await bot.send_message(OWNER_ID, msg, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception: pass
     
-    await db.tasks.update_one(
-        {"user_id": data.uid, "date": today},
-        {"$inc": {"ads": 1}},
-        upsert=True
-    )
-    
-    tasks = await db.tasks.find_one({"user_id": data.uid, "date": today})
-    ad_limit_cfg = await db.settings.find_one({"id": "ad_count"})
-    req_ads = ad_limit_cfg.get("count", 3) if ad_limit_cfg else 3
-    
-    if tasks.get("ads", 0) >= req_ads and not tasks.get("ads_claimed"):
-        await db.tasks.update_one({"user_id": data.uid, "date": today}, {"$set": {"ads_claimed": True}})
-        await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 15}})
-        return {"ok": True, "msg": "Milestone payout validated! Vault credited with 15 coins."}
-        
     return {"ok": True}
 
-class ClaimMissionSchema(BaseModel):
+@app.get("/api/trending")
+async def trending_movies(uid: int = 0):
+    if uid in banned_cache: return {"error": "banned"}
+    unlocked_movie_ids = []
+    if uid != 0:
+        time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+            unlocked_movie_ids.append(u["movie_id"])
+
+    pipeline = [
+        {"$group": {
+            "_id": "$title", 
+            "photo_id": {"$first": "$photo_id"}, 
+            "clicks": {"$sum": "$clicks"}, 
+            "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main File"]}}}
+        }},
+        {"$sort": {"clicks": -1}}, {"$limit": 10}
+    ]
+    movies = await db.movies.aggregate(pipeline).to_list(10)
+    for m in movies:
+        for f in m["files"]:
+            f["is_unlocked"] = f["id"] in unlocked_movie_ids
+    return movies
+
+@app.get("/api/upcoming")
+async def upcoming_movies():
+    pipeline = [{"$sort": {"added_at": -1}}, {"$limit": 10}]
+    movies = await db.upcoming.aggregate(pipeline).to_list(10)
+    return [{"photo_id": m["photo_id"], "title": m.get("title", "")} for m in movies]
+
+@app.get("/api/list")
+async def list_movies(page: int = 1, q: str = "", uid: int = 0):
+    if uid in banned_cache: return {"error": "banned"}
+    limit = 16
+    skip = (page - 1) * limit
+    unlocked_ids = []
+    
+    if uid != 0:
+        time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+            unlocked_ids.append(u["movie_id"])
+
+    match_stage = {"title": {"$regex": q, "$options": "i"}} if q else {}
+    pipeline = [
+        {"$match": match_stage},
+        {"$group": {
+            "_id": "$title", 
+            "photo_id": {"$first": "$photo_id"}, 
+            "clicks": {"$sum": "$clicks"}, 
+            "created_at": {"$max": "$created_at"}, 
+            "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main File"]}}}
+        }},
+        {"$sort": {"created_at": -1}}, {"$skip": skip}, {"$limit": limit}
+    ]
+    count_pipe = [{"$match": match_stage}, {"$group": {"_id": "$title"}}, {"$count": "total"}]
+    c_res = await db.movies.aggregate(count_pipe).to_list(1)
+    total_groups = c_res[0]["total"] if c_res else 0
+    total_pages = (total_groups + limit - 1) // limit
+
+    movies = await db.movies.aggregate(pipeline).to_list(limit)
+    for m in movies:
+        for f in m["files"]:
+            f["is_unlocked"] = f["id"] in unlocked_ids
+    return {"movies": movies, "total_pages": total_pages}
+
+@app.get("/api/image/{photo_id}")
+async def get_image(photo_id: str):
+    try:
+        cache = await db.file_cache.find_one({"photo_id": photo_id})
+        now = datetime.datetime.utcnow()
+        if cache and cache.get("expires_at", now) > now:
+            file_path = cache["file_path"]
+        else:
+            file_info = await bot.get_file(photo_id)
+            file_path = file_info.file_path
+            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(minutes=50)}}, upsert=True)
+            
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        async def stream_image():
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as resp:
+                    async for chunk in resp.content.iter_chunked(1024): yield chunk
+        return StreamingResponse(stream_image(), media_type="image/jpeg")
+    except Exception: return {"error": "not found"}
+
+class SendRequestModel(BaseModel):
+    userId: int
+    movieId: str
+    initData: str
+
+@app.post("/api/send")
+async def send_file(d: SendRequestModel):
+    if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData): return {"ok": False}
+    try:
+        m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
+        if m:
+            now = datetime.datetime.utcnow()
+            user_data = await db.users.find_one({"user_id": d.userId})
+            is_vip = False
+            if user_data and user_data.get("vip_until", now) > now: is_vip = True
+
+            time_cfg = await db.settings.find_one({"id": "del_time"})
+            del_minutes = time_cfg['minutes'] if time_cfg else 60
+            protect_cfg = await db.settings.find_one({"id": "protect_content"})
+            is_protected = protect_cfg['status'] if protect_cfg else True
+            q_text = m.get("quality", "")
+            title_text = f"{m['title']} [{q_text}]" if q_text else m['title']
+            
+            if is_vip:
+                caption = (f"🎥 <b>{title_text}</b>\n\n🌟 <b>VIP সুবিধা:</b> এই ফাইলটি আপনার ইনবক্স থেকে কখনো অটো-ডিলিট হবে না।\n\n📥 Join: https://t.me/lifetimebackup2026")
+            else:
+                caption = (f"🎥 <b>{title_text}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। "
+                           f"দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: https://t.me/lifetimebackup2026")
+            
+            if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            
+            await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
+            await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
+            
+            if sent_msg and not is_vip:
+                delete_at = now + datetime.timedelta(minutes=del_minutes)
+                await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
+    except Exception: pass
+    return {"ok": True}
+
+@app.get("/api/leaderboard")
+async def get_leaderboard():
+    users = await db.users.find().sort("refer_count", -1).limit(10).to_list(10)
+    return [{"name": u.get("first_name", "User"), "refers": u.get("refer_count", 0)} for u in users]
+
+class AdRewardModel(BaseModel):
+    uid: int
+    initData: str
+
+@app.post("/api/reward_ad")
+async def reward_ad(data: AdRewardModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    await db.users.update_one({"user_id": data.uid}, {"$inc": {"coins": 5}})
+    await update_daily_task(data.uid, "ads")
+    return {"ok": True}
+
+@app.get("/api/requests")
+async def get_requests():
+    reqs = await db.requests.find().sort("votes", -1).limit(20).to_list(20)
+    return [{"id": str(r["_id"]), "movie": r["movie"], "votes": r["votes"], "voters": r.get("voters", [])} for r in reqs]
+
+class VoteModel(BaseModel):
+    uid: int
+    req_id: str
+    initData: str
+
+@app.post("/api/requests/vote")
+async def vote_request(data: VoteModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    req = await db.requests.find_one({"_id": ObjectId(data.req_id)})
+    if not req: return {"ok": False}
+    if data.uid in req.get("voters", []): return {"ok": False, "msg": "Already voted"}
+    
+    await db.requests.update_one({"_id": ObjectId(data.req_id)}, {"$inc": {"votes": 1}, "$push": {"voters": data.uid}})
+    return {"ok": True}
+
+@app.delete("/api/requests/{req_id}")
+async def delete_request(req_id: str):
+    await db.requests.delete_one({"_id": ObjectId(req_id)})
+    return {"ok": True}
+
+class ReqModel(BaseModel):
+    uid: int
+    uname: str
+    movie: str
+    initData: str
+
+@app.post("/api/request")
+async def handle_request(data: ReqModel):
+    if data.uid in banned_cache or not validate_tg_data(data.initData): return {"ok": False}
+    
+    existing = await db.requests.find_one({"movie": {"$regex": f"^{data.movie}$", "$options": "i"}})
+    if existing:
+        if data.uid not in existing.get("voters", []):
+            await db.requests.update_one({"_id": existing["_id"]}, {"$inc": {"votes": 1}, "$push": {"voters": data.uid}})
+    else:
+        res = await db.requests.insert_one({
+            "user_id": data.uid, "uname": data.uname, "movie": data.movie,
+            "votes": 1, "voters": [data.uid], "created_at": datetime.datetime.utcnow()
+        })
+        req_id = str(res.inserted_id)
+        
+        try: 
+            now = datetime.datetime.utcnow()
+            user_data = await db.users.find_one({"user_id": data.uid})
+            is_vip = False
+            if user_data and user_data.get("vip_until", now) > now: is_vip = True
+                
+            vip_text = "🌟 <b>[VIP Member]</b>" if is_vip else "👤 [Free User]"
+            
+            builder = InlineKeyboardBuilder()
+            builder.button(text="✅ Approve", callback_data=f"req_acc_{req_id}")
+            builder.button(text="❌ Reject", callback_data=f"req_rej_{req_id}")
+            builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{data.uid}")
+            
+            await bot.send_message(OWNER_ID, f"🔔 <b>নতুন মুভি রিকোয়েস্ট!</b>\n\n{vip_text}\nইউজার: {data.uname} (<code>{data.uid}</code>)\n🎬 মুভির নাম: <b>{data.movie}</b>", parse_mode="HTML", reply_markup=builder.as_markup())
+        except Exception: pass
+    
+    return {"ok": True}
+
+class ChatMsgModel(BaseModel):
+    uid: int
+    name: str
+    text: str
+    initData: str
+
+@app.get("/api/chat")
+async def get_chat():
+    msgs = await db.chat.find().sort("timestamp", -1).limit(50).to_list(50)
+    msgs.reverse()
+    return [{"uid": m["uid"], "name": m.get("name", "User"), "text": m["text"]} for m in msgs]
+
+@app.post("/api/chat")
+async def post_chat(data: ChatMsgModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    await db.chat.insert_one({
+        "uid": data.uid,
+        "name": data.name,
+        "text": data.text,
+        "timestamp": datetime.datetime.utcnow()
+    })
+    return {"ok": True}
+
+class SpinModel(BaseModel):
+    uid: int
+    reward: int
+    initData: str
+
+@app.get("/api/spin/status/{uid}")
+async def get_spin_status(uid: int):
+    now_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    user = await db.users.find_one({"user_id": uid})
+    if not user: return {"spins_left": 0}
+    
+    spin_data = user.get("spin", {"date": "", "count": 0})
+    if spin_data["date"] != now_date:
+        return {"spins_left": 3}
+    return {"spins_left": max(0, 3 - spin_data["count"])}
+
+@app.post("/api/spin")
+async def handle_spin(data: SpinModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    now_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    user = await db.users.find_one({"user_id": data.uid})
+    
+    spin_data = user.get("spin", {"date": "", "count": 0})
+    if spin_data["date"] != now_date:
+        spin_data = {"date": now_date, "count": 0}
+        
+    if spin_data["count"] >= 3:
+        return {"ok": False, "msg": "আপনি আজকের স্পিন লিমিট শেষ করেছেন!"}
+        
+    spin_data["count"] += 1
+    await db.users.update_one(
+        {"user_id": data.uid}, 
+        {"$set": {"spin": spin_data}, "$inc": {"coins": data.reward}}
+    )
+    return {"ok": True, "spins_left": max(0, 3 - spin_data["count"])}
+
+class TaskClaimModel(BaseModel):
     uid: int
     task_type: str
+    initData: str
 
-@app.post("/api/tasks/claim-mission")
-async def api_claim_mission(data: ClaimMissionSchema):
-    now = datetime.datetime.utcnow()
-    now_date = now.strftime("%Y-%m-%d")
-    tasks = await db.tasks.find_one({"user_id": data.uid, "date": now_date})
-    if not tasks:
+@app.get("/api/tasks/{uid}")
+async def get_tasks(uid: int):
+    now_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    user = await db.users.find_one({"user_id": uid})
+    if not user: return {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
+    
+    tasks = user.get("tasks", {})
+    if tasks.get("date") != now_date:
+        return {"ads": 0, "reviews": 0, "ads_claimed": False, "reviews_claimed": False}
+    return tasks
+
+@app.post("/api/tasks/claim")
+async def claim_task(data: TaskClaimModel):
+    if not validate_tg_data(data.initData): return {"ok": False}
+    now_date = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    user = await db.users.find_one({"user_id": data.uid})
+    
+    tasks = user.get("tasks", {})
+    if tasks.get("date") != now_date:
         return {"ok": False, "msg": "মিশন সম্পূর্ণ হয়নি!"}
         
     if data.task_type == "ads" and tasks.get("ads", 0) >= 3 and not tasks.get("ads_claimed"):
@@ -1783,7 +2528,6 @@ async def api_claim_mission(data: ClaimMissionSchema):
         return {"ok": True}
         
     return {"ok": False, "msg": "ইতিমধ্যে ক্লেইম করা হয়েছে বা মিশন সম্পূর্ণ হয়নি!"}
-
 
 # ==========================================
 # 15. Main Application Startup
@@ -1801,14 +2545,12 @@ async def start():
     print("Starting Background Workers...")
     asyncio.create_task(auto_delete_worker())
     
-    print("Connecting to Telegram Bot...")
-    asyncio.create_task(dp.start_polling(bot))
+    print("Connecting to Telegram Bot API...")
+    await bot.delete_webhook(drop_pending_updates=True)
     
-    print(f"Serving web layout architecture engine module on port {port}...")
-    await server.serve()
+    print("Server is Running!")
+    await asyncio.gather(server.serve(), dp.start_polling(bot))
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(start())
-    except (KeyboardInterrupt, SystemExit):
-        print("Bot and Web Service stopped.")
+if __name__ == "__main__": 
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start())
