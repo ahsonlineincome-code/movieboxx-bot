@@ -1023,9 +1023,12 @@ async def web_ui():
         const data = await res.json(); 
         currentViewMovies = data; 
         list.innerHTML = data.length > 0 ? data.map(function(m, index) { 
-            return '<div class="movie-card" onclick="tg.showAlert('+"'🌟 এটি একটি আপকামিং মুভি! ডাউনলোড লিংক এখনো যুক্ত হয়নি।'"+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div><div class="movie-meta"><span style="color:#38bdf8;">'+m.release_date+'</span></div></div></div>'; 
+            let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
+            return '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি! রিলিজ: ' + releaseTxt + '\')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m.title+'</div><div class="movie-meta"><span style="color:#38bdf8;">'+releaseTxt+'</span></div></div></div>'; 
         }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; 
-    } catch(e) {} 
+    } catch(e) { 
+        console.error(e);
+    } 
 }
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
@@ -1089,7 +1092,8 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
 
 @app.get("/api/upcoming")
 async def upcoming_movies():
-    movies = await db.upcoming.find().sort("added_at", -1).to_list(20)
+    # _id দিয়ে সর্ট করলে added_at এরর আর হবে না এবং নতুন মুভি আগে আসবে
+    movies = await db.upcoming.find().sort("_id", -1).to_list(20)
     return movies
 
 @app.get("/api/image/{photo_id}")
