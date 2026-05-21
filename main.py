@@ -1,568 +1,903 @@
-from flask import Flask, render_template_string
+import os
+import asyncio
+import datetime
+import uvicorn
+import time
+import aiohttp
+import hmac
+import hashlib
+import urllib.parse
+import secrets
+import json
 
-app = Flask(__name__)
+# ==========================================
+# 🛑 FIX FOR EVENT LOOP ERROR
+# ==========================================
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+# ==========================================
 
-# --- HTML, CSS & JS Template (Single File) ---
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Movie Box</title>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --bg-color: #0b0f19;
-            --glass-bg: rgba(255, 255, 255, 0.05);
-            --glass-border: rgba(255, 255, 255, 0.1);
-            --neon-cyan: #00f3ff;
-            --neon-pink: #ff00de;
-            --text-color: #ffffff;
-        }
+from fastapi import FastAPI, Body, Request, Depends, HTTPException, status
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Poppins', sans-serif;
-        }
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.memory import MemoryStorage
 
-        body {
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            overflow-x: hidden;
-            min-height: 100vh;
-        }
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from pydantic import BaseModel
 
-        /* Background Neon Blobs */
-        .blob {
-            position: fixed;
-            width: 300px;
-            height: 300px;
-            border-radius: 50%;
-            filter: blur(100px);
-            opacity: 0.4;
-            z-index: -1;
-        }
-        .blob-1 { background: var(--neon-cyan); top: -50px; left: -50px; }
-        .blob-2 { background: var(--neon-pink); bottom: 100px; right: -50px; }
+# ==========================================
+# 1. Configuration & Global Variables
+# ==========================================
+TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URI")
+OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
+APP_URL = os.getenv("APP_URL")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
+ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 
-        /* 1. Welcome Animation */
-        #welcome-screen {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: var(--bg-color);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            transition: opacity 0.8s ease, visibility 0.8s ease;
-        }
-        #welcome-screen.hide {
-            opacity: 0;
-            visibility: hidden;
-        }
-        .welcome-text {
-            font-size: 2.5rem;
-            font-weight: 800;
-            text-align: center;
-            background: linear-gradient(to right, var(--neon-cyan), var(--neon-pink));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            animation: pulse 1.5s infinite;
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.05); opacity: 0.8; }
-            100% { transform: scale(1); opacity: 1; }
-        }
+BOT_USERNAME = ""
+db = None
+ADMINS = set()
+BANNED_USERS = set()
 
-        /* 2. Header */
-        #header {
-            position: fixed;
-            top: 0; left: 0; width: 100%;
-            height: 60px;
-            background: rgba(11, 15, 25, 0.8);
-            backdrop-filter: blur(15px);
-            border-bottom: 1px solid var(--glass-border);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        #header a {
-            text-decoration: none;
-            font-size: 1.8rem;
-            font-weight: 800;
-            background: linear-gradient(to right, var(--neon-cyan), var(--neon-pink));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: 2px;
-            cursor: pointer;
-        }
+app = FastAPI(title="Movie Box Web App API")
+bot = Bot(token=TOKEN) if TOKEN else None
+dp = Dispatcher(storage=MemoryStorage())
 
-        /* Pages Container */
-        .page {
-            display: none;
-            padding: 80px 15px 100px;
-            max-width: 600px;
-            margin: 0 auto;
-            animation: fadeIn 0.4s ease-in;
-        }
-        .page.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-        /* 3. Search & Category */
-        .search-box {
-            width: 100%;
-            padding: 12px 20px;
-            border-radius: 25px;
-            border: 1px solid var(--glass-border);
-            background: var(--glass-bg);
-            color: white;
-            outline: none;
-            margin-bottom: 15px;
-            backdrop-filter: blur(10px);
-        }
-        .categories {
-            display: flex;
-            gap: 10px;
-            overflow-x: auto;
-            padding-bottom: 10px;
-            scrollbar-width: none;
-        }
-        .categories::-webkit-scrollbar { display: none; }
-        .cat-btn {
-            padding: 8px 16px;
-            border-radius: 20px;
-            border: 1px solid var(--glass-border);
-            background: var(--glass-bg);
-            color: white;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: 0.3s;
-        }
-        .cat-btn:hover, .cat-btn.active {
-            background: var(--neon-cyan);
-            color: black;
-            box-shadow: 0 0 15px var(--neon-cyan);
-            border-color: var(--neon-cyan);
-        }
+security = HTTPBasic()
 
-        /* 5. Movie Card Design */
-        .movie-list {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            margin-top: 20px;
-        }
-        .movie-card {
-            display: flex;
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 12px;
-            overflow: hidden;
-            cursor: pointer;
-            transition: 0.3s;
-            backdrop-filter: blur(10px);
-        }
-        .movie-card:hover {
-            transform: scale(1.02);
-            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
-            border-color: var(--neon-cyan);
-        }
-        .movie-card img {
-            width: 100px;
-            height: 140px;
-            object-fit: cover;
-        }
-        .movie-info {
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-        }
-        .movie-info h3 { font-size: 1.1rem; margin-bottom: 5px; }
-        .movie-info p { font-size: 0.8rem; color: #aaa; }
+# ==========================================
+# 2. Database & Models
+# ==========================================
+async def init_db():
+    global db
+    client = AsyncIOMotorClient(MONGO_URL)
+    db = client.get_default_database()
+    print("MongoDB Connected Successfully.")
 
-        /* 6, 7, 4 Modals (Glassmorphism) */
-        .modal-overlay {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(8px);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
-            padding: 20px;
-        }
-        .modal-overlay.show { display: flex; }
-        .modal-content {
-            background: rgba(20, 25, 40, 0.9);
-            border: 1px solid var(--glass-border);
-            border-radius: 15px;
-            padding: 25px;
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-            box-shadow: 0 0 30px rgba(0, 243, 255, 0.1);
-            animation: fadeIn 0.3s ease;
-        }
-        .modal-content h2 { margin-bottom: 15px; font-size: 1.5rem; }
-        .modal-btn {
-            padding: 10px 20px;
-            border-radius: 8px;
-            border: none;
-            cursor: pointer;
-            font-weight: 600;
-            margin: 5px;
-            transition: 0.3s;
-        }
-        .btn-primary { background: var(--neon-cyan); color: black; }
-        .btn-primary:hover { box-shadow: 0 0 15px var(--neon-cyan); }
-        .btn-danger { background: var(--neon-pink); color: white; }
-        .btn-danger:hover { box-shadow: 0 0 15px var(--neon-pink); }
-        
-        /* Timer Bar */
-        .timer-bar { margin: 20px 0; }
-        .progress { width: 100%; background: #333; border-radius: 10px; overflow: hidden; height: 10px; }
-        .progress-fill { width: 0%; height: 100%; background: var(--neon-cyan); transition: width 1s linear; }
+async def load_admins():
+    global ADMINS
+    ADMINS.add(OWNER_ID)
+    async for admin in db.admins.find():
+        ADMINS.add(admin["user_id"])
 
-        /* 8. Bottom Nav */
-        #bottom-nav {
-            position: fixed;
-            bottom: 0; left: 0; width: 100%;
-            height: 65px;
-            background: rgba(11, 15, 25, 0.9);
-            backdrop-filter: blur(15px);
-            border-top: 1px solid var(--glass-border);
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            z-index: 1000;
-        }
-        .nav-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            color: #888;
-            text-decoration: none;
-            font-size: 0.75rem;
-            cursor: pointer;
-            transition: 0.3s;
-        }
-        .nav-item i { font-size: 1.2rem; margin-bottom: 3px; }
-        .nav-item.active { color: var(--neon-cyan); text-shadow: 0 0 10px var(--neon-cyan); }
+async def load_banned_users():
+    global BANNED_USERS
+    async for user in db.banned.find():
+        BANNED_USERS.add(user["user_id"])
 
-        /* 11. Profile Links */
-        .social-link {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding: 15px;
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 10px;
-            margin-bottom: 10px;
-            text-decoration: none;
-            color: white;
-            transition: 0.3s;
-        }
-        .social-link:hover { border-color: var(--neon-cyan); transform: translateX(5px); }
-        .social-link i { font-size: 1.5rem; color: var(--neon-cyan); }
+class MovieData(BaseModel):
+    title: str
+    caption: str
+    file_id: str
+    category: str = "All"
+    is_upcoming: bool = False
+    release_date: str = ""
+    language: str = "Bangla"
+    poster_url: str = "https://placehold.co/600x400/1a1a1a/fff?text=No+Poster"
 
-    </style>
-</head>
-<body>
+class ClaimData(BaseModel):
+    uid: int
+    task_type: str
 
-    <!-- 1. Welcome Screen -->
-    <div id="welcome-screen">
-        <div class="welcome-text">মুভি বক্স জগতে স্বাগতম</div>
-    </div>
+# ==========================================
+# 3. HTML/UI Interface (All Features Combined)
+# ==========================================
+@app.get("/", response_class=HTMLResponse)
+async def index_page():
+    return """
+    <!DOCTYPE html>
+    <html lang="bn">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Movie Box</title>
+        <script src="https://telegram.org/js/telegram-web-app.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700&family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <style>
+            :root {
+                --primary: #ff0055;
+                --primary-glow: #ff005588;
+                --bg: #0a0512;
+                --card-bg: rgba(255, 255, 255, 0.03);
+                --border: rgba(255, 255, 255, 0.08);
+                --text: #ffffff;
+                --text-muted: #b3b3b3;
+            }
 
-    <!-- Background Blobs -->
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
+            * {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+                user-select: none;
+                -webkit-tap-highlight-color: transparent;
+            }
 
-    <!-- 2. Header -->
-    <div id="header">
-        <a onclick="navigateTo('home')">Movie Box</a>
-    </div>
+            body {
+                font-family: 'Poppins', 'Hind Siliguri', sans-serif;
+                background-color: var(--bg);
+                color: var(--text);
+                overflow-x: hidden;
+                padding-bottom: 90px;
+                background-image: radial-gradient(circle at 50% 0%, #1e0b36 0%, var(--bg) 70%);
+            }
 
-    <!-- Main Pages -->
-    <div id="page-home" class="page active">
-        <input type="text" class="search-box" placeholder="সার্চ করুন..." onkeyup="filterMovies()">
-        <div class="categories" id="cat-container"></div>
-        <div class="movie-list" id="movie-container"></div>
-    </div>
+            /* 1. Welcome Animation Screen */
+            #welcome-screen {
+                position: fixed;
+                top: 0; left: 0; width: 100%; height: 100%;
+                background: var(--bg);
+                z-index: 9999;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+            }
+            .welcome-logo {
+                font-size: 2.5rem;
+                font-weight: 700;
+                color: #fff;
+                text-shadow: 0 0 20px var(--primary-glow);
+                animation: pulse 1.5s infinite alternate;
+                margin-bottom: 15px;
+            }
+            .welcome-text {
+                font-family: 'Hind Siliguri', sans-serif;
+                font-size: 1.2rem;
+                color: var(--text-muted);
+                letter-spacing: 1px;
+            }
+            @keyframes pulse {
+                0% { transform: scale(0.95); text-shadow: 0 0 10px var(--primary-glow); }
+                100% { transform: scale(1.05); text-shadow: 0 0 30px var(--primary); }
+            }
 
-    <div id="page-search" class="page">
-        <h2 style="margin-bottom:15px;">সার্চ</h2>
-        <input type="text" class="search-box" placeholder="মুভি খুঁজুন...">
-    </div>
+            /* 2. Clean Header Design */
+            header {
+                height: 60px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-bottom: 1px solid var(--border);
+                backdrop-filter: blur(20px);
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                background: rgba(10, 5, 18, 0.6);
+            }
+            .header-title {
+                font-size: 1.5rem;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                color: #fff;
+                text-shadow: 0 0 10px var(--primary-glow);
+                cursor: pointer;
+                text-decoration: none;
+            }
 
-    <div id="page-favorites" class="page">
-        <h2 style="margin-bottom:15px;">আমার ফেভারিট</h2>
-        <div class="movie-list" id="fav-container"></div>
-    </div>
+            /* Container */
+            .container {
+                padding: 15px;
+            }
 
-    <div id="page-upcoming" class="page">
-        <h2 style="margin-bottom:15px;">আসন্ন মুভি</h2>
-        <div class="movie-list" id="upcoming-container"></div>
-    </div>
+            /* 3. Search & Category System */
+            .search-box {
+                display: flex;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 12px;
+                margin-bottom: 20px;
+                align-items: center;
+                box-shadow: inset 0 1px 1px rgba(255,255,255,0.05);
+            }
+            .search-box i { color: var(--text-muted); margin-right: 10px; }
+            .search-box input {
+                background: none; border: none; color: #fff; width: 100%; outline: none; font-size: 1rem;
+            }
 
-    <div id="page-profile" class="page">
-        <div style="text-align:center; margin-bottom:20px;">
-            <img src="https://via.placeholder.com/100" style="border-radius:50%; border: 2px solid var(--neon-cyan);">
-            <h2 style="margin-top:10px;">Admin</h2>
+            .categories {
+                display: flex;
+                overflow-x: auto;
+                gap: 10px;
+                margin-bottom: 20px;
+                padding-bottom: 5px;
+            }
+            .categories::-webkit-scrollbar { display: none; }
+            .category-btn {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                color: var(--text-muted);
+                padding: 8px 16px;
+                border-radius: 20px;
+                white-space: nowrap;
+                font-size: 0.9rem;
+                cursor: pointer;
+                transition: all 0.3s;
+            }
+            .category-btn.active, .category-btn:hover {
+                background: var(--primary);
+                color: #fff;
+                border-color: var(--primary);
+                box-shadow: 0 0 15px var(--primary-glow);
+            }
+
+            /* Filter Bar for Upcoming */
+            .filter-bar {
+                display: none;
+                gap: 10px;
+                margin-bottom: 15px;
+            }
+
+            /* 5. Movie Card Design (Single Row Style Layout) */
+            .section-title {
+                font-size: 1.2rem;
+                margin-bottom: 15px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .movie-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+                gap: 15px;
+            }
+            .movie-card {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                overflow: hidden;
+                cursor: pointer;
+                transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+                position: relative;
+            }
+            .movie-card:hover {
+                transform: translateY(-5px);
+                border-color: var(--primary);
+                box-shadow: 0 5px 20px rgba(255, 0, 85, 0.2);
+            }
+            .poster-wrapper {
+                position: relative;
+                width: 100%;
+                padding-top: 145%;
+                background: #15101e;
+            }
+            .movie-poster {
+                position: absolute;
+                top: 0; left: 0; width: 100%; height: 100%;
+                object-fit: cover;
+                transition: transform 0.4s;
+            }
+            .movie-card:hover .movie-poster {
+                transform: scale(1.05);
+            }
+            .movie-info {
+                padding: 8px;
+            }
+            .movie-title {
+                font-size: 0.85rem;
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                color: #eaeaea;
+            }
+            .movie-meta {
+                font-size: 0.75rem;
+                color: var(--text-muted);
+                margin-top: 2px;
+            }
+
+            /* 4. 18+ Content Protection System & 6. Modal Popup UI */
+            .modal {
+                position: fixed;
+                top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(5, 2, 10, 0.8);
+                backdrop-filter: blur(20px);
+                z-index: 2000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                opacity: 0; pointer-events: none;
+                transition: opacity 0.3s ease;
+                padding: 20px;
+            }
+            .modal.active { opacity: 1; pointer-events: auto; }
+            .modal-content {
+                background: rgba(25, 15, 40, 0.75);
+                border: 1px solid var(--border);
+                border-radius: 24px;
+                width: 100%;
+                max-width: 400px;
+                padding: 25px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.1);
+                text-align: center;
+                transform: scale(0.9);
+                transition: transform 0.3s ease;
+            }
+            .modal.active .modal-content { transform: scale(1); }
+
+            .btn {
+                background: var(--primary);
+                color: #fff;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 12px;
+                font-size: 1rem;
+                font-weight: 600;
+                cursor: pointer;
+                width: 100%;
+                margin-top: 15px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                box-shadow: 0 4px 15px var(--primary-glow);
+                transition: all 0.3s;
+            }
+            .btn:active { transform: scale(0.98); }
+            .btn-secondary {
+                background: rgba(255,255,255,0.08);
+                box-shadow: none;
+                border: 1px solid var(--border);
+            }
+
+            /* 8. Bottom Navigation Bar */
+            .bottom-nav {
+                position: fixed;
+                bottom: 0; left: 0; width: 100%;
+                height: 70px;
+                background: rgba(15, 8, 25, 0.7);
+                backdrop-filter: blur(25px);
+                border-top: 1px solid var(--border);
+                display: flex;
+                justify-content: space-around;
+                align-items: center;
+                z-index: 1000;
+            }
+            .nav-item {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                color: var(--text-muted);
+                text-decoration: none;
+                font-size: 0.75rem;
+                gap: 5px;
+                cursor: pointer;
+                transition: color 0.3s;
+                width: 20%;
+            }
+            .nav-item i { font-size: 1.25rem; transition: transform 0.3s; }
+            .nav-item.active { color: var(--primary); }
+            .nav-item.active i { transform: translateY(-2px); text-shadow: 0 0 10px var(--primary-glow); }
+
+            /* 11. Profile Section UI */
+            .profile-card {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                padding: 20px;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            .profile-avatar {
+                width: 80px; height: 80px; border-radius: 50%;
+                background: linear-gradient(45deg, var(--primary), #8800ff);
+                margin: 0 auto 15px; display: flex; align-items: center; justify-content: center;
+                font-size: 2rem; font-weight: bold; box-shadow: 0 0 20px rgba(136,0,255,0.4);
+            }
+            .social-grid {
+                display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;
+            }
+            .social-btn {
+                padding: 10px; border-radius: 10px; border: 1px solid var(--border);
+                color: #fff; text-decoration: none; font-size: 0.85rem; display: flex;
+                align-items: center; justify-content: center; gap: 8px; background: rgba(255,255,255,0.02);
+            }
+
+            /* Dynamic Pages View Status */
+            .page { display: none; }
+            .page.active { display: block; }
+        </style>
+    </head>
+    <body>
+
+        <div id="welcome-screen">
+            <div class="welcome-logo">Movie Box</div>
+            <div class="welcome-text">মুভি বক্স জগতে স্বাগতম</div>
         </div>
-        <p style="text-align:center; margin-bottom:20px; color:#aaa;">এখানে আপনার কাস্টম টেক্সট বা About Me সেকশন থাকবে।</p>
-        
-        <a href="#" class="social-link"><i class="fab fa-telegram"></i> Telegram Channel</a>
-        <a href="#" class="social-link"><i class="fab fa-facebook"></i> Facebook Page</a>
-        <a href="#" class="social-link"><i class="fab fa-youtube"></i> YouTube Channel</a>
-        <a href="#" class="social-link"><i class="fas fa-globe"></i> Website Link</a>
-    </div>
 
-    <!-- 4. 18+ Age Modal -->
-    <div class="modal-overlay" id="age-modal">
-        <div class="modal-content">
-            <h2 style="color:var(--neon-pink);">⚠️ Adult Content</h2>
-            <p style="margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p>
-            <button class="modal-btn btn-danger" onclick="confirmAge(true)">হ্যাঁ</button>
-            <button class="modal-btn btn-primary" onclick="confirmAge(false)">না</button>
-        </div>
-    </div>
+        <header>
+            <div class="header-title" onclick="switchPage('home')">Movie Box</div>
+        </header>
 
-    <!-- 6. Movie Detail & Download Modal -->
-    <div class="modal-overlay" id="detail-modal">
-        <div class="modal-content">
-            <h2 id="modal-movie-name">Movie Name</h2>
-            <p id="modal-movie-cat" style="color:#aaa; font-size:0.9rem; margin-bottom:20px;">Category</p>
+        <div class="container">
             
-            <button class="modal-btn btn-primary" onclick="startDownload()" style="width:100%; margin-bottom:10px;">
-                <i class="fas fa-download"></i> ডাউনলোড করুন
-            </button>
-            <button class="modal-btn btn-danger" id="fav-btn" onclick="toggleFavorite()" style="width:100%;">
-                <i class="fas fa-heart"></i> ফেভারিট
-            </button>
-            
-            <div class="timer-bar" id="timer-section" style="display:none;">
-                <p id="timer-text">Please wait 15 seconds to unlock download</p>
-                <div class="progress"><div class="progress-fill" id="progress-bar"></div></div>
+            <div id="page-home" class="page active">
+                <div class="search-box">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="search-input" placeholder="মুভি খুঁজুন..." oninput="searchMovies()">
+                </div>
+
+                <div class="categories" id="category-bar">
+                    <div class="category-btn active" onclick="filterCategory('All', this)">All</div>
+                    <div class="category-btn" onclick="filterCategory('Bangla', this)">Bangla</div>
+                    <div class="category-btn" onclick="filterCategory('Bengali Dubbed', this)">Bengali Dubbed</div>
+                    <div class="category-btn" onclick="filterCategory('Hindi', this)">Hindi</div>
+                    <div class="category-btn" onclick="filterCategory('Hindi Dubbed', this)">Hindi Dubbed</div>
+                    <div class="category-btn" onclick="filterCategory('English', this)">English</div>
+                    <div class="category-btn" onclick="filterCategory('Web Series', this)">Web Series</div>
+                    <div class="category-btn" onclick="filterCategory('Korean', this)">Korean</div>
+                    <div class="category-btn" onclick="filterCategory('Anime', this)">Anime</div>
+                    <div class="category-btn" onclick="filterCategory('18+', this)">18+</div>
+                </div>
+
+                <div class="section-title"><span id="section-title-text">সব মুভি</span></div>
+                <div class="movie-grid" id="movie-container"></div>
             </div>
-            <a href="#" id="real-download-link" style="display:none; margin-top:15px;" class="modal-btn btn-primary">
-                <i class="fas fa-file-download"></i> ফাইল ডাউনলোড করুন
-            </a>
-            <br><br>
-            <button class="modal-btn" onclick="closeModal('detail-modal')" style="background:#333; color:white;">বন্ধ করুন</button>
+
+            <div id="page-search" class="page">
+                <div class="search-box">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" id="global-search-input" placeholder="সার্চ ইঞ্জিন..." oninput="globalSearch()">
+                </div>
+                <div class="movie-grid" id="search-container"></div>
+            </div>
+
+            <div id="page-favorites" class="page">
+                <div class="section-title">আমার ফেভারিটস</div>
+                <div class="movie-grid" id="favorites-container"></div>
+            </div>
+
+            <div id="page-upcoming" class="page">
+                <div class="section-title">আসন্ন মুভি সমূহ (Upcoming)</div>
+                <div class="categories">
+                    <div class="category-btn active" onclick="filterUpcomingLang('All', this)">All</div>
+                    <div class="category-btn" onclick="filterUpcomingLang('Bangla', this)">Bangla</div>
+                    <div class="category-btn" onclick="filterUpcomingLang('Hindi', this)">Hindi</div>
+                    <div class="category-btn" onclick="filterUpcomingLang('English', this)">English</div>
+                </div>
+                <div class="movie-grid" id="upcoming-container"></div>
+            </div>
+
+            <div id="page-profile" class="page">
+                <div class="profile-card">
+                    <div class="profile-avatar" id="prof-avatar">M</div>
+                    <h3 id="prof-name">User Profile</h3>
+                    <p style="color: var(--text-muted); font-size: 0.85rem; margin-top:5px;">মুভি বক্স মেম্বার</p>
+                </div>
+                <div class="section-title">কমিউনিটি ও সোশ্যাল লিঙ্ক</div>
+                <div class="social-grid">
+                    <a href="https://t.me/your_channel" target="_blank" class="social-btn" id="link-tg"><i class="fa-brands fa-telegram" style="color:#26a5e4;"></i> Telegram Channel</a>
+                    <a href="#" target="_blank" class="social-btn" id="link-fb"><i class="fa-brands fa-facebook" style="color:#1877f2;"></i> Facebook Page</a>
+                    <a href="#" target="_blank" class="social-btn" id="link-yt"><i class="fa-brands fa-youtube" style="color:#ff0000;"></i> YouTube Channel</a>
+                    <a href="#" target="_blank" class="social-btn" id="link-web"><i class="fa-solid fa-globe" style="color:#00ffcc;"></i> Website</a>
+                </div>
+                <div class="profile-card" style="margin-top: 15px; text-align: left;">
+                    <h4>About Me</h4>
+                    <p style="color:var(--text-muted); font-size:0.9rem; margin-top:8px;" id="about-text">স্বাগতম মুভি বক্সে। এখানে আপনি পাবেন লেটেস্ট সব প্রিমিয়াম মুভি কালেকশন।</p>
+                </div>
+            </div>
+
         </div>
-    </div>
 
-    <!-- 8. Bottom Navigation -->
-    <div id="bottom-nav">
-        <div class="nav-item active" onclick="navigateTo('home')"><i class="fas fa-home"></i><span>Home</span></div>
-        <div class="nav-item" onclick="navigateTo('search')"><i class="fas fa-search"></i><span>Search</span></div>
-        <div class="nav-item" onclick="navigateTo('favorites')"><i class="fas fa-heart"></i><span>Favorites</span></div>
-        <div class="nav-item" onclick="navigateTo('upcoming')"><i class="fas fa-clock"></i><span>Upcoming</span></div>
-        <div class="nav-item" onclick="navigateTo('profile')"><i class="fas fa-user"></i><span>Profile</span></div>
-    </div>
+        <div class="modal" id="modal-nsfw">
+            <div class="modal-content">
+                <i class="fa-solid fa-triangle-exclamation" style="font-size: 3rem; color: var(--primary); margin-bottom: 15px;"></i>
+                <h2>Adult Warning!</h2>
+                <p style="color: var(--text-muted); margin: 10px 0 20px; font-size: 0.95rem;">আপনার বয়স কি ১৮ বছরের বেশি? এই সেকশনে অ্যাডাল্ট কন্টেন্ট রয়েছে।</p>
+                <button class="btn" onclick="verifyNsfw(true)">হ্যাঁ, আমার বয়স ১৮+</button>
+                <button class="btn btn-secondary" onclick="verifyNsfw(false)">না, ফিরে যান</button>
+            </div>
+        </div>
 
-    <script>
-        // --- Data ---
-        const categories = ['All', 'Bangla', 'Bengali Dubbed', 'Hindi', 'Hindi Dubbed', 'English', 'Web Series', 'Korean', 'Anime', '18+'];
-        
-        const movies = [
-            { id: 1, title: "আওয়ারিয়া", cat: "Bangla", img: "https://via.placeholder.com/100x140/00f3ff/000000?text=Movie1", upcomming: false },
-            { id: 2, title: "প্রিয়া রে", cat: "Bangla", img: "https://via.placeholder.com/100x140/ff00de/ffffff?text=Movie2", upcomming: false },
-            { id: 3, title: "Jawan (Dubbed)", cat: "Bengali Dubbed", img: "https://via.placeholder.com/100x140/00f3ff/000000?text=Movie3", upcomming: false },
-            { id: 4, title: "Animal", cat: "Hindi", img: "https://via.placeholder.com/100x140/ff00de/ffffff?text=Movie4", upcomming: false },
-            { id: 5, title: "Oppenheimer", cat: "English", img: "https://via.placeholder.com/100x140/00f3ff/000000?text=Movie5", upcomming: false },
-            { id: 6, title: "Squid Game S2", cat: "Korean", img: "https://via.placeholder.com/100x140/ff00de/ffffff?text=Movie6", upcomming: true, date: "2024-12-25" },
-            { id: 7, title: "Demon Slayer", cat: "Anime", img: "https://via.placeholder.com/100x140/00f3ff/000000?text=Movie7", upcomming: false },
-            { id: 8, title: "XXX Uncut", cat: "18+", img: "https://via.placeholder.com/100x140/ff00de/ffffff?text=18+", upcomming: false },
-        ];
-
-        let currentCat = 'All';
-        let currentMovieId = null;
-        let favorites = JSON.parse(localStorage.getItem('movieBoxFav')) || [];
-
-        // --- Init ---
-        window.onload = () => {
-            setTimeout(() => document.getElementById('welcome-screen').classList.add('hide'), 2500);
-            renderCategories();
-            renderMovies();
-            renderUpcoming();
-        };
-
-        // --- Navigation ---
-        function navigateTo(pageId) {
-            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-            document.getElementById(`page-${pageId}`).classList.add('active');
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            
-            if(pageId === 'favorites') renderFavorites();
-        }
-
-        // --- 3. Categories ---
-        function renderCategories() {
-            const container = document.getElementById('cat-container');
-            container.innerHTML = categories.map(cat => 
-                `<div class="cat-btn ${cat === currentCat ? 'active' : ''}" onclick="selectCategory('${cat}')">${cat}</div>`
-            ).join('');
-        }
-
-        function selectCategory(cat) {
-            if(cat === '18+') {
-                document.getElementById('age-modal').classList.add('show');
-            } else {
-                currentCat = cat;
-                renderCategories();
-                renderMovies();
-            }
-        }
-
-        // --- 4. Age Verification ---
-        function confirmAge(isAdult) {
-            document.getElementById('age-modal').classList.remove('show');
-            if(isAdult) {
-                currentCat = '18+';
-                renderCategories();
-                renderMovies();
-            } else {
-                currentCat = 'All';
-                renderCategories();
-                renderMovies();
-            }
-        }
-
-        // --- 5. Movie Cards ---
-        function renderMovies() {
-            const container = document.getElementById('movie-container');
-            const filtered = currentCat === 'All' ? movies.filter(m => !m.upcomming) : movies.filter(m => m.cat === currentCat && !m.upcomming);
-            
-            container.innerHTML = filtered.map(movie => `
-                <div class="movie-card" onclick="openMovieModal(${movie.id})">
-                    <img src="${movie.img}" alt="${movie.title}">
-                    <div class="movie-info">
-                        <h3>${movie.title}</h3>
-                        <p>${movie.cat}</p>
-                    </div>
+        <div class="modal" id="modal-details">
+            <div class="modal-content" style="text-align: left;">
+                <div style="position: relative; border-radius: 14px; overflow:hidden; margin-bottom: 15px;">
+                    <img id="modal-movie-poster" src="" style="width:100%; max-height:220px; object-fit:cover;">
                 </div>
-            `).join('');
-        }
-
-        function filterMovies() {
-            // Simple search logic placeholder
-        }
-
-        // --- 6. Movie Modal ---
-        function openMovieModal(id) {
-            currentMovieId = id;
-            const movie = movies.find(m => m.id === id);
-            document.getElementById('modal-movie-name').innerText = movie.title;
-            document.getElementById('modal-movie-cat').innerText = movie.cat;
-            
-            document.getElementById('timer-section').style.display = 'none';
-            document.getElementById('real-download-link').style.display = 'none';
-            document.getElementById('detail-modal').classList.add('show');
-            
-            updateFavBtn();
-        }
-
-        function closeModal(id) {
-            document.getElementById(id).classList.remove('show');
-        }
-
-        // --- 7. Download & Adsterra Timer System ---
-        function startDownload() {
-            document.getElementById('timer-section').style.display = 'block';
-            document.getElementById('real-download-link').style.display = 'none';
-            
-            // Open Adsterra Ad (Replace '#' with your actual Adsterra link)
-            window.open('#', '_blank'); 
-
-            let timeLeft = 15;
-            const progressBar = document.getElementById('progress-bar');
-            const timerText = document.getElementById('timer-text');
-            
-            const interval = setInterval(() => {
-                timeLeft--;
-                progressBar.style.width = ((15 - timeLeft) / 15) * 100 + '%';
-                timerText.innerText = `Please wait ${timeLeft} seconds to unlock download`;
+                <h3 id="modal-movie-title" style="margin-bottom: 5px;">Movie Title</h3>
+                <p id="modal-movie-lang" style="font-size: 0.8rem; color: var(--primary); margin-bottom: 10px;">Language</p>
+                <p id="modal-movie-desc" style="color: var(--text-muted); font-size: 0.9rem; max-height: 100px; overflow-y: auto; margin-bottom: 20px;">Caption/Description</p>
                 
-                if(timeLeft <= 0) {
-                    clearInterval(interval);
-                    timerText.innerText = "Download Unlocked!";
-                    document.getElementById('real-download-link').style.display = 'inline-block';
+                <div style="display:flex; gap:10px;">
+                    <button class="btn btn-secondary" id="fav-toggle-btn" style="width:50px; margin-top:0;" onclick="toggleFavoriteCurrent()"><i class="fa-regular fa-heart"></i></button>
+                    <button class="btn" id="download-trigger-btn" style="margin-top:0; flex-grow:1;" onclick="startDownloadProcess()"><i class="fa-solid fa-download"></i> ডাউনলোড করুন</button>
+                </div>
+
+                <div id="timer-wrapper" style="display:none; margin-top:15px; text-align:center; background:rgba(0,0,0,0.2); padding:10px; border-radius:10px; border:1px solid var(--border);">
+                    <p style="font-size:0.9rem;" id="timer-text">Please wait 15 seconds to unlock download</p>
+                </div>
+                
+                <button class="btn btn-secondary" style="margin-top:15px; width:100%;" onclick="closeModal('modal-details')">বন্ধ করুন</button>
+            </div>
+        </div>
+
+        <div class="bottom-nav">
+            <div class="nav-item active" id="nav-home" onclick="switchPage('home')">
+                <i class="fa-solid fa-house"></i>Home
+            </div>
+            <div class="nav-item" id="nav-search" onclick="switchPage('search')">
+                <i class="fa-solid fa-magnifying-glass"></i>Search
+            </div>
+            <div class="nav-item" id="nav-favorites" onclick="switchPage('favorites')">
+                <i class="fa-solid fa-heart"></i>Favorites
+            </div>
+            <div class="nav-item" id="nav-upcoming" onclick="switchPage('upcoming')">
+                <i class="fa-solid fa-calendar-days"></i>Upcoming
+            </div>
+            <div class="nav-item" id="nav-profile" onclick="switchPage('profile')">
+                <i class="fa-solid fa-user"></i>Profile
+            </div>
+        </div>
+
+        <script>
+            let tg = window.Telegram.WebApp;
+            tg.expand();
+            
+            let allMovies = [];
+            let favorites = JSON.parse(localStorage.getItem('mb_favs')) || [];
+            let currentSelectedMovie = null;
+            let currentCategory = 'All';
+            let currentUpcomingLang = 'All';
+
+            // Hide Welcome Screen
+            window.addEventListener('DOMContentLoaded', () => {
+                setTimeout(() => {
+                    const ws = document.getElementById('welcome-screen');
+                    ws.style.opacity = '0';
+                    ws.style.transform = 'scale(1.1)';
+                    setTimeout(() => ws.style.display = 'none', 500);
+                }, 2000);
+                
+                // Load User info if available via TG
+                if(tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                    document.getElementById('prof-name').innerText = tg.initDataUnsafe.user.first_name;
+                    document.getElementById('prof-avatar').innerText = tg.initDataUnsafe.user.first_name[0].toUpperCase();
                 }
-            }, 1000);
-        }
+                
+                fetchMovies();
+            });
 
-        // --- 9. Favorites System ---
-        function toggleFavorite() {
-            if(favorites.includes(currentMovieId)) {
-                favorites = favorites.filter(id => id !== currentMovieId);
-            } else {
-                favorites.push(currentMovieId);
+            async function fetchMovies() {
+                try {
+                    let r = await fetch('/api/movies');
+                    allMovies = await r.json();
+                    renderHome();
+                    renderUpcoming();
+                } catch(e) { console.error("Error loading movies", e); }
             }
-            localStorage.setItem('movieBoxFav', JSON.stringify(favorites));
-            updateFavBtn();
-        }
 
-        function updateFavBtn() {
-            const btn = document.getElementById('fav-btn');
-            if(favorites.includes(currentMovieId)) {
-                btn.innerHTML = '<i class="fas fa-heart"></i> ফেভারিট থেকে সরান';
-            } else {
-                btn.innerHTML = '<i class="far fa-heart"></i> ফেভারিট যোগ করুন';
-            }
-        }
+            function renderHome() {
+                let container = document.getElementById('movie-container');
+                container.innerHTML = '';
+                let filtered = allMovies.filter(m => !m.is_upcoming);
+                
+                if(currentCategory !== 'All') {
+                    filtered = filtered.filter(m => m.category === currentCategory);
+                }
+                
+                if(filtered.length === 0) {
+                    container.innerHTML = '<p style="grid-column:1/-1; text-align:center; color:var(--text-muted);">কোনো মুভি পাওয়া যায়নি।</p>';
+                    return;
+                }
 
-        function renderFavorites() {
-            const container = document.getElementById('fav-container');
-            const favMovies = movies.filter(m => favorites.includes(m.id));
-            if(favMovies.length === 0) {
-                container.innerHTML = '<p style="text-align:center; color:#aaa;">কোনো ফেভারিট মুভি নেই।</p>';
-                return;
+                filtered.forEach(m => {
+                    container.appendChild(createMovieCard(m));
+                });
             }
-            container.innerHTML = favMovies.map(movie => `
-                <div class="movie-card" onclick="openMovieModal(${movie.id})">
-                    <img src="${movie.img}" alt="${movie.title}">
-                    <div class="movie-info">
-                        <h3>${movie.title}</h3>
-                        <p>${movie.cat}</p>
+
+            function renderUpcoming() {
+                let container = document.getElementById('upcoming-container');
+                container.innerHTML = '';
+                let filtered = allMovies.filter(m => m.is_upcoming);
+                
+                if(currentUpcomingLang !== 'All') {
+                    filtered = filtered.filter(m => m.language === currentUpcomingLang);
+                }
+
+                if(filtered.length === 0) {
+                    container.innerHTML = '<p style="grid-column:1/-1; text-align:center; color:var(--text-muted);">কোনো আপকামিং মুভি নেই।</p>';
+                    return;
+                }
+
+                filtered.forEach(m => {
+                    container.appendChild(createMovieCard(m, true));
+                });
+            }
+
+            function createMovieCard(m, isUpcoming=false) {
+                let card = document.createElement('div');
+                card.className = 'movie-card';
+                card.onclick = () => openMovieDetails(m);
+                
+                card.innerHTML = `
+                    <div class="poster-wrapper">
+                        <img class="movie-poster" src="${m.poster_url || 'https://placehold.co/600x400/1a1a1a/fff?text=Movie+Box'}" alt="">
                     </div>
-                </div>
-            `).join('');
-        }
-
-        // --- 10. Upcoming Movies ---
-        function renderUpcoming() {
-            const container = document.getElementById('upcoming-container');
-            const upMovies = movies.filter(m => m.upcomming);
-            container.innerHTML = upMovies.map(movie => `
-                <div class="movie-card">
-                    <img src="${movie.img}" alt="${movie.title}">
                     <div class="movie-info">
-                        <h3>${movie.title}</h3>
-                        <p>Release: ${movie.date}</p>
+                        <div class="movie-title">${m.title}</div>
+                        <div class="movie-meta">${isUpcoming ? (m.release_date || 'Coming Soon') : (m.language || 'Bangla')}</div>
                     </div>
-                </div>
-            `).join('');
-        }
-    </script>
-</body>
-</html>
-"""
+                `;
+                return card;
+            }
 
-@app.route('/')
-def home():
-    return render_template_string(HTML_TEMPLATE)
+            function filterCategory(cat, btn) {
+                if(cat === '18+') {
+                    document.getElementById('modal-nsfw').classList.add('active');
+                    window.pendingCategoryBtn = btn;
+                    return;
+                }
+                executeCategoryChange(cat, btn);
+            }
 
-if __name__ == '__main__':
-    app.run(debug=True)
+            function executeCategoryChange(cat, btn) {
+                currentCategory = cat;
+                document.querySelectorAll('#category-bar .category-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById('section-title-text').innerText = cat === 'All' ? 'সব মুভি' : cat;
+                renderHome();
+            }
+
+            function verifyNsfw(status) {
+                document.getElementById('modal-nsfw').classList.remove('active');
+                if(status) {
+                    executeCategoryChange('18+', window.pendingCategoryBtn);
+                } else {
+                    executeCategoryChange('All', document.querySelectorAll('#category-bar .category-btn')[0]);
+                }
+            }
+
+            function filterUpcomingLang(lang, btn) {
+                currentUpcomingLang = lang;
+                btn.parentNode.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                renderUpcoming();
+            }
+
+            // 6. Movie Details Modal Popup UI Engine
+            function openMovieDetails(m) {
+                currentSelectedMovie = m;
+                document.getElementById('modal-movie-title').innerText = m.title;
+                document.getElementById('modal-movie-lang').innerText = m.category + " | " + (m.language || "");
+                document.getElementById('modal-movie-desc').innerText = m.caption || "কোনো বিবরণী নেই।";
+                document.getElementById('modal-movie-poster').src = m.poster_url || "https://placehold.co/600x400/1a1a1a/fff?text=Movie+Box";
+                
+                let isFav = favorites.includes(m._id);
+                let favIcon = document.getElementById('fav-toggle-btn').querySelector('i');
+                if(isFav) {
+                    favIcon.className = "fa-solid fa-heart";
+                    favIcon.style.color = "var(--primary)";
+                } else {
+                    favIcon.className = "fa-regular fa-heart";
+                    favIcon.style.color = "#fff";
+                }
+
+                document.getElementById('timer-wrapper').style.display = 'none';
+                document.getElementById('download-trigger-btn').style.display = 'inline-flex';
+                
+                document.getElementById('modal-details').classList.add('active');
+            }
+
+            function closeModal(id) {
+                document.getElementById(id).classList.remove('active');
+            }
+
+            // 7. Download Protection & adsterra Ads Timer System
+            function startDownloadProcess() {
+                if(!currentSelectedMovie) return;
+                
+                // Open Adsterra or Ad provider page link safely
+                window.open("https://www.highratecpm.com/your-adsterra-direct-link", "_blank");
+                
+                let dlBtn = document.getElementById('download-trigger-btn');
+                let tw = document.getElementById('timer-wrapper');
+                let tt = document.getElementById('timer-text');
+                
+                dlBtn.style.display = 'none';
+                tw.style.display = 'block';
+                
+                let timeLeft = 15;
+                tt.innerText = `Please wait ${timeLeft} seconds to unlock download`;
+                
+                let timer = setInterval(() => {
+                    timeLeft--;
+                    if(timeLeft <= 0) {
+                        clearInterval(timer);
+                        tw.style.display = 'none';
+                        dlBtn.style.display = 'inline-flex';
+                        
+                        // Deep link redirect to telegram to forward/get file securely
+                        if(tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                            window.location.href = `https://t.me/${tg.bot_username}?start=file_${currentSelectedMovie._id}`;
+                        } else {
+                            alert("ফাইলটি প্রসেস করা হয়েছে! টেলিগ্রাম বট অপশনে ফাইলটি চেক করুন।");
+                        }
+                    } else {
+                        tt.innerText = `Please wait ${timeLeft} seconds to unlock download`;
+                    }
+                }, 1000);
+            }
+
+            // 9. Favorites System Architecture
+            function toggleFavoriteCurrent() {
+                if(!currentSelectedMovie) return;
+                let id = currentSelectedMovie._id;
+                if(favorites.includes(id)) {
+                    favorites = favorites.filter(f => f !== id);
+                } else {
+                    favorites.push(id);
+                }
+                localStorage.setItem('mb_favs', JSON.stringify(favorites));
+                openMovieDetails(currentSelectedMovie); // Refresh UI
+                renderFavorites();
+            }
+
+            function renderFavorites() {
+                let container = document.getElementById('favorites-container');
+                container.innerHTML = '';
+                let favList = allMovies.filter(m => favorites.includes(m._id));
+                if(favList.length === 0) {
+                    container.innerHTML = '<p style="text-align:center; color:var(--text-muted); grid-column:1/-1;">ফেভারিট লিস্ট ফাকা!</p>';
+                    return;
+                }
+                favList.forEach(m => {
+                    container.appendChild(createMovieCard(m));
+                });
+            }
+
+            // 8. Bottom Navigation & Navigation Engine
+            function switchPage(pageId) {
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+                
+                document.getElementById(`page-${pageId}`).classList.add('active');
+                document.getElementById(`nav-${pageId}`).classList.add('active');
+                
+                if(pageId === 'favorites') renderFavorites();
+            }
+
+            function searchMovies() {
+                let val = document.getElementById('search-input').value.toLowerCase();
+                let container = document.getElementById('movie-container');
+                container.innerHTML = '';
+                let filtered = allMovies.filter(m => !m.is_upcoming && m.title.toLowerCase().includes(val));
+                filtered.forEach(m => container.appendChild(createMovieCard(m)));
+            }
+
+            function globalSearch() {
+                let val = document.getElementById('global-search-input').value.toLowerCase();
+                let container = document.getElementById('search-container');
+                container.innerHTML = '';
+                let filtered = allMovies.filter(m => m.title.toLowerCase().includes(val));
+                filtered.forEach(m => container.appendChild(createMovieCard(m)));
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+# ==========================================
+# 4. REST API Endpoint Providers
+# ==========================================
+@app.get("/api/movies")
+async def get_movies_api():
+    movies = []
+    async for movie in db.movies.find():
+        movie["_id"] = str(movie["_id"])
+        movies.append(movie)
+    return movies
+
+# ==========================================
+# 5. Admin Panel (Protected Core Component)
+# ==========================================
+@app.post("/admin/add-movie")
+async def add_movie(data: MovieData, credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username != "admin" or credentials.password != ADMIN_PASS:
+        raise HTTPException(status_code=status.HTTP_41__UNAUTHORIZED, detail="Invalid Credentials")
+    
+    res = await db.movies.insert_one(data.dict())
+    return {"ok": True, "id": str(res.inserted_id)}
+
+@app.delete("/admin/delete-movie/{movie_id}")
+async def delete_movie(movie_id: str, credentials: HTTPBasicCredentials = Depends(security)):
+    if credentials.username != "admin" or credentials.password != ADMIN_PASS:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    
+    await db.movies.delete_one({"_id": ObjectId(movie_id)})
+    return {"ok": True}
+
+# ==========================================
+# 6. Telegram Bot Command Core Layer
+# ==========================================
+@dp.message(Command("start"))
+async def start_cmd(msg: types.Message):
+    uid = msg.from_user.id
+    if uid in BANNED_USERS:
+        return await msg.answer("দুঃখিত, আপনাকে এই বট থেকে ব্যান করা হয়েছে।")
+        
+    await db.users.update_one(
+        {"user_id": uid},
+        {"$set": {"username": msg.from_user.username, "last_seen": datetime.datetime.now()}},
+        upsert=True
+    )
+    
+    args = msg.text.split()
+    if len(args) > 1 and args[1].startswith("file_"):
+        movie_id = args[1].replace("file_", "")
+        movie = await db.movies.find_one({"_id": ObjectId(movie_id)})
+        if movie:
+            return await bot.send_document(
+                chat_id=msg.chat.id,
+                document=movie["file_id"],
+                caption=f"🎬 <b>{movie['title']}</b>\n\n{movie['caption']}\n\nDownloaded via Movie Box App.",
+                parse_mode="HTML"
+            )
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Open Movie Box Web App", web_app=types.WebAppInfo(url=APP_URL))
+    builder.adjust(1)
+    
+    await msg.answer(
+        f"👋 স্বাগতম <b>{msg.from_user.first_name}</b>!\n\nমুভি বক্স জগতে আপনাকে স্বাগতম। অ্যাপ ওপেন করে সরাসরি প্রিমিয়াম মুভি স্ট্রিম বা ডাউনলোড করতে নিচের বাটনে ক্লিক করুন।",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+# ==========================================
+# 7. Background System Worker Setup
+# ==========================================
+async def auto_delete_worker():
+    while True:
+        await asyncio.sleep(60)
+
+# ==========================================
+# 8. Main Application Startup Engine
+# ==========================================
+async def start():
+    print("Initializing Database & Core Systems...")
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    
+    global BOT_USERNAME
+    if bot:
+        bot_info = await bot.get_me()
+        BOT_USERNAME = bot_info.username
+        print(f"Connected to Telegram Bot: @{BOT_USERNAME}")
+        asyncio.create_task(dp.start_polling(bot))
+    
+    port = int(os.getenv("PORT", 8000))
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
+    server = uvicorn.Server(config)
+    
+    print("Starting Auto Background Workers...")
+    asyncio.create_task(auto_delete_worker())
+    
+    print(f"Starting Web Server UI on Port {port}...")
+    await server.serve()
+
+if __name__ == "__main__":
+    asyncio.run(start())
