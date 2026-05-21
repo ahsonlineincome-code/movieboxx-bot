@@ -402,7 +402,8 @@ async def upc_date_step(m: types.Message, state: FSMContext):
         "title": data["title"], 
         "release_date": m.text.strip(), 
         "language": "N/A", 
-        "genre": "N/A"
+        "genre": "N/A",
+        "added_at": datetime.datetime.utcnow() # <--- এই লাইনটি যুক্ত করা হয়েছে
     })
     await state.clear()
     await m.answer("✅ আপকামিং যুক্ত হয়েছে!")
@@ -1014,7 +1015,18 @@ async def web_ui():
                 try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} 
             }
             
-            async function loadUpcoming() { const list = document.getElementById('movieListUpcoming'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/upcoming'); const data = await res.json(); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div></div></div>'; }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; } catch(e) {} }
+            async function loadUpcoming() { 
+    const list = document.getElementById('movieListUpcoming'); 
+    list.innerHTML = '<div class="skeleton"></div>'; 
+    try { 
+        const res = await fetch('/api/upcoming'); 
+        const data = await res.json(); 
+        currentViewMovies = data; 
+        list.innerHTML = data.length > 0 ? data.map(function(m, index) { 
+            return '<div class="movie-card" onclick="tg.showAlert('+"'🌟 এটি একটি আপকামিং মুভি! ডাউনলোড লিংক এখনো যুক্ত হয়নি।'"+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div><div class="movie-meta"><span style="color:#38bdf8;">'+m.release_date+'</span></div></div></div>'; 
+        }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; 
+    } catch(e) {} 
+}
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(); loadFavorites();
