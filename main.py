@@ -462,7 +462,7 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
     return HTMLResponse("<h1>Admin Panel</h1>")
 
 # ==========================================
-# 11. Main Web App UI (Updated with Requests)
+# 11. Main Web App UI (Fixed Syntax Error)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -475,7 +475,7 @@ async def web_ui():
     direct_links = dl_cfg.get('links', []) if dl_cfg else []
     dl_json = json.dumps(direct_links)
 
-    html_code = r"""
+    html_code = """
     <!DOCTYPE html>
     <html lang="bn">
     <head>
@@ -567,7 +567,6 @@ async def web_ui():
             .profile-card { background: #1e293b; margin: 15px; border-radius: 16px; padding: 20px; border: 1px solid #334155; }
             body.oled-mode .profile-card { background: #0a0a0a; border-color: #1a1a1a; }
             
-            /* Profile Buttons Styles */
             .profile-action-btn { display: block; width: 100%; padding: 14px; border-radius: 12px; font-weight: 700; text-align: center; margin-bottom: 10px; border: none; color: white; text-decoration: none; cursor: pointer; font-size: 15px; transition: 0.2s; }
             .profile-action-btn:active { transform: scale(0.97); }
             .btn-dark-mode { background: #334155; display: flex; align-items: center; justify-content: center; gap: 10px; }
@@ -580,3 +579,184 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
         </style>
+    </head>
+    <body>
+        <div id="welcomeScreen"><div class="ws-brand">Movie Box</div><div class="ws-bn">মুভি বক্স জগতে স্বাগতম</div></div>
+        
+        <header onclick="switchTab('home')">
+            <div class="logo">
+                <svg width="35" height="35" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="margin-right: 8px; vertical-align: middle;">
+                    <defs>
+                        <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" style="stop-color:#ff416c;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#ff4b2b;stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
+                    <rect x="10" y="15" width="80" height="70" rx="15" ry="15" fill="none" stroke="url(#logoGrad)" stroke-width="6"/>
+                    <polygon points="40,32 40,68 72,50" fill="url(#logoGrad)"/>
+                    <path d="M 35 85 L 25 95 L 75 95 L 65 85" stroke="url(#logoGrad)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Movie Box
+            </div>
+        </header>
+
+        <div id="tabHome" class="page-section active">
+            <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
+            <div class="cat-row">
+                <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
+                <div class="cat-chip" onclick="filterCat('Bangla', this)">BANGLA</div>
+                <div class="cat-chip" onclick="filterCat('Hindi Dubbed', this)">HINDI DUBBED</div>
+                <div class="cat-chip" onclick="filterCat('Hollywood', this)">HOLLYWOOD</div>
+                <div class="cat-chip" onclick="filterCat('K-Drama', this)">K-DRAMA</div>
+                <div class="cat-chip" onclick="filterCat('Horror', this)">HORROR</div>
+                <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
+            </div>
+            <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
+        </div>
+
+        <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div></div>
+        <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
+        <div id="tabUpcoming" class="page-section"><h3 style="padding: 15px; color: #38bdf8;">🌟 আপকামিং</h3><div class="movie-list" id="movieListUpcoming"></div></div>
+        
+        <div id="tabProfile" class="page-section">
+            <div class="profile-card">
+                <div style="text-align: center; margin-bottom: 20px;"><h2 id="profileName">User</h2></div>
+                <button class="profile-action-btn btn-dark-mode" onclick="toggleOledMode()">🌙 ডার্ক মোড (OLED) <span id="darkModeStatus">OFF</span></button>
+                <a href="https://facebook.com/" class="profile-action-btn btn-fb" target="_blank">📘 Facebook Group</a>
+                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="profile-action-btn btn-main-ch" target="_blank">🚀 Main Channel</a>
+                <a href="https://t.me/+W5V9-mn08jMyYTE1" class="profile-action-btn btn-18-ch" target="_blank">🔴 18+ Channel</a>
+                <a href="#" class="profile-action-btn btn-sax-grp" target="_blank">🔥 Sax Group</a>
+            </div>
+        </div>
+
+        <!-- Floating Buttons -->
+        <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="floating-btn btn-tg"><i class="fa-brands fa-telegram"></i></a>
+        <a href="https://t.me/+W5V9-mn08jMyYTE1" class="floating-btn btn-18">18+</a>
+
+        <div class="bottom-nav">
+            <button class="nav-item active" onclick="switchTab('home', this)"><i class="fa-solid fa-house"></i>Home</button>
+            <button class="nav-item" onclick="switchTab('search', this)"><i class="fa-solid fa-magnifying-glass"></i>Search</button>
+            <button class="nav-item" onclick="switchTab('fav', this)"><i class="fa-solid fa-heart"></i>Favorites</button>
+            <button class="nav-item" onclick="switchTab('upcoming', this)"><i class="fa-solid fa-clock"></i>Upcoming</button>
+            <button class="nav-item" onclick="switchTab('profile', this)"><i class="fa-solid fa-user"></i>Profile</button>
+        </div>
+
+        <div id="ageModal" class="modal"><div class="modal-content age-box"><h2 style="color:#ef4444;">⚠️ বয়স সীমাবদ্ধতা</h2><p style="color:#cbd5e1; margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p><button class="age-btn age-yes" onclick="access18()">হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="closeModal('ageModal')">না</button></div></div>
+
+        <div id="detailModal" class="modal">
+            <div class="modal-content">
+                <button class="close-icon" onclick="closeModal('detailModal')"><i class="fa-solid fa-xmark"></i></button>
+                <img id="detailImg" class="detail-img" src="">
+                <h2 id="detailTitle" class="detail-title"></h2>
+                <div id="detailMeta" class="detail-meta"></div>
+                <div id="detailCats" style="margin-bottom: 15px;"></div>
+                <div id="fileButtonsContainer"></div>
+            </div>
+        </div>
+
+        <div id="adModal" class="modal">
+            <div class="modal-content ad-box">
+                <div class="ad-icon">⚠️</div>
+                <h2 class="ad-title">সতর্কতা!</h2>
+                <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
+                <div class="ad-box-black">ক্লিক করে কমপক্ষে <b>১৫ সেকেন্ড</b> অপেক্ষা করুন। আগে বন্ধ করলে বাতিল হবে!</div>
+                <p id="adTimerText" class="ad-timer-text">অপেক্ষা করুন... <span id="timerCount">15</span>s</p>
+                <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
+                <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="adTryAgainAction()" style="display:none;">TRY AGAIN</button>
+            </div>
+        </div>
+
+        <div id="successModal" class="modal"><div class="modal-content" style="text-align: center; padding-top: 40px;"><i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i><h2>ফাইল পাঠানো হয়েছে!</h2><br><button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button></div></div>
+
+        <script>
+            let tg = window.Telegram.WebApp; 
+            tg.expand();
+            const DIRECT_LINKS = __DL_JSON__; 
+            const INIT_DATA = tg.initData || ""; 
+            const BOT_UNAME = "__BOT_UNAME__";
+            let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
+            let isUserVip = false; 
+            let activeCat = "Home"; 
+            let userFavs = []; 
+            let active18Btn = null; 
+            let activeFileId = null;
+            let adInterval = null; 
+            let adTimeLeft = 15; 
+            let adCompleted = false; 
+            let adAborted = false;
+            let currentViewMovies = [];
+
+            setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
+            if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
+
+            async function fetchUserInfo() { 
+                try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} 
+            }
+            
+            function switchTab(tabName, btnEl) { 
+                document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); 
+                document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); 
+                
+                if(tabName === 'home') {
+                    activeCat = 'Home';
+                    document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); });
+                    var firstChip = document.querySelector('.cat-chip');
+                    if(firstChip) firstChip.classList.add('active'); 
+                }
+                
+                document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); 
+                if(btnEl) btnEl.classList.add('active'); 
+                if(tabName === 'home') loadHomeMovies(); 
+                if(tabName === 'fav') loadFavorites(); 
+                if(tabName === 'upcoming') loadUpcoming(); 
+                window.scrollTo({top:0, behavior:'smooth'}); 
+            }
+            
+            function filterCat(cat, btnEl) { activeCat = cat; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(); }
+            function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
+            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); filterCat('Adult Content', active18Btn); }
+            function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+            function toggleOledMode() {
+                document.body.classList.toggle('oled-mode');
+                let statusEl = document.getElementById('darkModeStatus');
+                if(document.body.classList.contains('oled-mode')) {
+                    statusEl.innerText = 'ON';
+                    localStorage.setItem('oledMode', 'true');
+                } else {
+                    statusEl.innerText = 'OFF';
+                    localStorage.setItem('oledMode', 'false');
+                }
+            }
+            
+            if(localStorage.getItem('oledMode') === 'true') {
+                document.body.classList.add('oled-mode');
+                document.getElementById('darkModeStatus').innerText = 'ON';
+            }
+
+            async function loadHomeMovies() { 
+                const list = document.getElementById('movieListHome'); 
+                list.innerHTML = '<div class="skeleton"></div>'; 
+                try { 
+                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
+                } catch(e) {} 
+            }
+            
+            async function searchMovies() { 
+                const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); 
+                if(!q) { list.innerHTML = ''; return; } 
+                try { 
+                    const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; 
+                } catch(e) {} 
+            }
+
+            function createMovieCard(m, index) { 
+                let isFav = userFavs.includes(m._id); 
+                let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
+                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span
