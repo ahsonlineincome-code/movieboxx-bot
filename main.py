@@ -856,22 +856,14 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
             }
             loadAdminData();
         </script>
-    
-<script>
-window.addEventListener("load",()=>{
-setTimeout(()=>{
-const s=document.getElementById("splash-screen");
-if(s){
-s.classList.add("hide-splash");
-setTimeout(()=>{
-s.remove();
-},1000);
-}
-},3000);
-});
-</script>
-
-</body>
+    <div class="bottom-nav">
+            <div class="nav-item" onclick="goHome()"><i class="fa-solid fa-house"></i><span>Home</span></div>
+            <div class="nav-item" onclick="document.getElementById('searchInput').focus()"><i class="fa-solid fa-magnifying-glass"></i><span>Search</span></div>
+            <div class="nav-item" onclick="document.getElementById('upcomingWrapper').scrollIntoView({behavior:'smooth'})"><i class="fa-solid fa-calendar-days"></i><span>Upcoming</span></div>
+            <div class="nav-item" onclick="openReqModal()"><i class="fa-solid fa-film"></i><span>Movies</span></div>
+            <div class="nav-item" onclick="window.open('{{TG_LINK}}')"><i class="fa-solid fa-user"></i><span>Profile</span></div>
+        </div>
+    </body>
     </html>
     """
     return HTMLResponse(content=html_content)
@@ -948,7 +940,7 @@ async def web_ui():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>MovieZone BD</title>
+        <title>Movie Box</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         
@@ -977,6 +969,14 @@ async def web_ui():
             .search-input { width: 100%; padding: 16px; border-radius: 25px; border: none; outline: none; text-align: center; background: #1e293b; color: #fff; font-size: 18px; font-weight: bold; transition: 0.3s; box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); }
             .search-input::placeholder { color: #94a3b8; font-weight: 500; font-size: 16px; }
             .search-input:focus { box-shadow: 0 0 15px rgba(248,113,113,0.7); }
+
+            .category-wrap { display:flex; gap:10px; flex-wrap:wrap; padding:0 15px 20px; justify-content:center; }
+            .category-btn { background:#1e293b; border:1px solid #334155; color:#fff; padding:10px 16px; border-radius:22px; font-weight:bold; cursor:pointer; transition:0.3s; }
+            .category-btn.active,.category-btn:active { background:#ff5b2e; border-color:#ff5b2e; }
+            .bottom-nav { position:fixed; bottom:0; left:0; width:100%; background:#111c33; border-top:1px solid #334155; display:flex; justify-content:space-around; padding:12px 5px; z-index:2000; }
+            .bottom-nav .nav-item { display:flex; flex-direction:column; align-items:center; color:#cbd5e1; font-size:12px; font-weight:bold; cursor:pointer; gap:4px; }
+            .bottom-nav .nav-item i { font-size:20px; }
+
             
             .section-title { padding: 5px 15px 15px; font-size: 22px; font-weight: 900; display: flex; align-items: center; gap: 8px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0px 4px 15px rgba(255, 75, 43, 0.4); }
             .section-title i { -webkit-text-fill-color: #ff416c; }
@@ -1104,70 +1104,11 @@ async def web_ui():
             .task-btn { padding: 8px 15px; border-radius: 8px; border: none; font-weight: bold; color: white; width: 100%; cursor: pointer; background: #3b82f6; transition: 0.2s; }
             .task-btn:disabled { background: #475569; color: #94a3b8; cursor: not-allowed; }
             .task-btn.claimed { background: #10b981; }
-        
-/* PREMIUM SPLASH */
-#splash-screen{
-position:fixed;
-top:0;
-left:0;
-width:100%;
-height:100%;
-background:#020617;
-z-index:999999;
-display:flex;
-justify-content:center;
-align-items:center;
-flex-direction:column;
-overflow:hidden;
-}
-
-.logo-text{
-font-size:48px;
-font-weight:900;
-letter-spacing:3px;
-background:linear-gradient(45deg,#ff00ff,#00ffff,#ffffff);
--webkit-background-clip:text;
--webkit-text-fill-color:transparent;
-animation:zoomGlow 3s infinite alternate;
-text-shadow:0 0 20px #00ffff;
-}
-
-.loading-text{
-margin-top:20px;
-color:white;
-letter-spacing:4px;
-}
-
-@keyframes zoomGlow{
-0%{
-transform:scale(.8);
-opacity:.4;
-}
-100%{
-transform:scale(1.1);
-opacity:1;
-}
-}
-
-.hide-splash{
-animation:fadeOut 1s forwards;
-}
-
-@keyframes fadeOut{
-to{
-opacity:0;
-visibility:hidden;
-}
-}
-
-</style>
+        </style>
     </head>
     <body onclick="closeMenu(event)">
         <header>
             <div class="logo">Movie Box</div>
-            
-                <div class="menu-btn" onclick="toggleMenu(event)"><i class="fa-solid fa-bars"></i></div>
-            </div>
         </header>
         
         <div id="dropdownMenu" class="dropdown-menu">
@@ -1185,6 +1126,16 @@ visibility:hidden;
         <div class="search-box">
             <input type="text" id="searchInput" class="search-input" placeholder="🔍 মুভি বা ওয়েব সিরিজ খুঁজুন...">
         </div>
+        <div class="category-wrap">
+            <button class="category-btn active" onclick="selectCategory('')">All</button>
+            <button class="category-btn" onclick="selectCategory('Bangla')">Bangla</button>
+            <button class="category-btn" onclick="selectCategory('Hindi')">Hindi</button>
+            <button class="category-btn" onclick="selectCategory('English')">English</button>
+            <button class="category-btn" onclick="selectCategory('Anime')">Anime</button>
+            <button class="category-btn" onclick="selectCategory('K Drama')">K Drama</button>
+            <button class="category-btn" onclick="selectCategory('Web Series')">Web Series</button>
+        </div>
+
 
         <div id="trendingWrapper">
             <div class="section-title"><i class="fa-solid fa-fire"></i> ট্রেন্ডিং মুভি</div>
@@ -1696,6 +1647,15 @@ visibility:hidden;
 
             function goToPage(p) { if (p < 1) return; loadMovies(p); window.scrollTo({ top: document.getElementById('movieGrid').offsetTop - 100, behavior: 'smooth' }); }
 
+            
+            function selectCategory(category) {
+                searchQuery = category;
+                document.getElementById('searchInput').value = category;
+                document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
+                event.target.classList.add('active');
+                loadMovies(1);
+            }
+
             let timeout = null;
             document.getElementById('searchInput').addEventListener('input', function(e) {
                 clearTimeout(timeout); searchQuery = e.target.value.trim();
@@ -2077,6 +2037,13 @@ visibility:hidden;
 
             fetchUserInfo(); loadTrending(); loadUpcoming(); loadMovies(1); 
         </script>
+    <div class="bottom-nav">
+            <div class="nav-item" onclick="goHome()"><i class="fa-solid fa-house"></i><span>Home</span></div>
+            <div class="nav-item" onclick="document.getElementById('searchInput').focus()"><i class="fa-solid fa-magnifying-glass"></i><span>Search</span></div>
+            <div class="nav-item" onclick="document.getElementById('upcomingWrapper').scrollIntoView({behavior:'smooth'})"><i class="fa-solid fa-calendar-days"></i><span>Upcoming</span></div>
+            <div class="nav-item" onclick="openReqModal()"><i class="fa-solid fa-film"></i><span>Movies</span></div>
+            <div class="nav-item" onclick="window.open('{{TG_LINK}}')"><i class="fa-solid fa-user"></i><span>Profile</span></div>
+        </div>
     </body>
     </html>
     """
