@@ -856,13 +856,6 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
             }
             loadAdminData();
         </script>
-    <div class="bottom-nav">
-            <div class="nav-item" onclick="goHome()"><i class="fa-solid fa-house"></i><span>Home</span></div>
-            <div class="nav-item" onclick="document.getElementById('searchInput').focus()"><i class="fa-solid fa-magnifying-glass"></i><span>Search</span></div>
-            <div class="nav-item" onclick="document.getElementById('upcomingWrapper').scrollIntoView({behavior:'smooth'})"><i class="fa-solid fa-calendar-days"></i><span>Upcoming</span></div>
-            <div class="nav-item" onclick="openReqModal()"><i class="fa-solid fa-film"></i><span>Movies</span></div>
-            <div class="nav-item" onclick="window.open('{{TG_LINK}}')"><i class="fa-solid fa-user"></i><span>Profile</span></div>
-        </div>
     </body>
     </html>
     """
@@ -940,7 +933,7 @@ async def web_ui():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <title>Movie Box</title>
+        <title>MovieBox</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         
@@ -949,10 +942,11 @@ async def web_ui():
             html { scroll-behavior: smooth; }
             body { background: #0f172a; font-family: sans-serif; color: #fff; -webkit-font-smoothing: antialiased; overscroll-behavior-y: none; } 
             
-            header { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); z-index: 1000; }
-            .logo { font-size: 24px; font-weight: bold; }
+            header { display:flex; justify-content:center; align-items:center; padding:15px; border-bottom:1px solid #1e293b; position:sticky; top:0; background:rgba(15,23,42,.95); z-index:1000; }
+            .logo { font-size:30px; font-weight:900; text-align:center; background:linear-gradient(90deg,#fff,#60a5fa,#fff); background-size:200% auto; -webkit-background-clip:text; -webkit-text-fill-color:transparent; animation:shine 3s linear infinite;}
+@keyframes shine { to { background-position:200% center; } }
             .logo span { background: red; color: #fff; padding: 2px 6px; border-radius: 5px; margin-left: 5px; font-size: 16px; }
-            .header-right { display: flex; align-items: center; gap: 10px; }
+            .header-right { display:none !important; }
             .user-info { display: flex; align-items: center; gap: 8px; background: #1e293b; padding: 6px 14px; border-radius: 25px; font-weight: bold; font-size: 14px; border: 1px solid #334155; }
             .user-info img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
             
@@ -965,18 +959,14 @@ async def web_ui():
             .dropdown-menu a:last-child { border-bottom: none; }
             .dropdown-menu i { width: 20px; text-align: center; margin-right: 8px; }
 
-            .search-box { padding: 15px; }
+            
+.category-bar{display:flex;gap:10px;flex-wrap:wrap;padding:10px 15px;justify-content:center}
+.cat-btn{background:#1e293b;border:1px solid #334155;color:#fff;padding:10px 14px;border-radius:20px;font-weight:700;cursor:pointer}
+.cat-btn.active{background:#ff5a36;border-color:#ff5a36}
+.search-box { padding: 15px; }
             .search-input { width: 100%; padding: 16px; border-radius: 25px; border: none; outline: none; text-align: center; background: #1e293b; color: #fff; font-size: 18px; font-weight: bold; transition: 0.3s; box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); }
             .search-input::placeholder { color: #94a3b8; font-weight: 500; font-size: 16px; }
             .search-input:focus { box-shadow: 0 0 15px rgba(248,113,113,0.7); }
-
-            .category-wrap { display:flex; gap:10px; flex-wrap:wrap; padding:0 15px 20px; justify-content:center; }
-            .category-btn { background:#1e293b; border:1px solid #334155; color:#fff; padding:10px 16px; border-radius:22px; font-weight:bold; cursor:pointer; transition:0.3s; }
-            .category-btn.active,.category-btn:active { background:#ff5b2e; border-color:#ff5b2e; }
-            .bottom-nav { position:fixed; bottom:0; left:0; width:100%; background:#111c33; border-top:1px solid #334155; display:flex; justify-content:space-around; padding:12px 5px; z-index:2000; }
-            .bottom-nav .nav-item { display:flex; flex-direction:column; align-items:center; color:#cbd5e1; font-size:12px; font-weight:bold; cursor:pointer; gap:4px; }
-            .bottom-nav .nav-item i { font-size:20px; }
-
             
             .section-title { padding: 5px 15px 15px; font-size: 22px; font-weight: 900; display: flex; align-items: center; gap: 8px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; text-shadow: 0px 4px 15px rgba(255, 75, 43, 0.4); }
             .section-title i { -webkit-text-fill-color: #ff416c; }
@@ -991,7 +981,7 @@ async def web_ui():
             .card { background: #1e293b; border-radius: 12px; overflow: hidden; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
             .card:active { transform: scale(0.95); }
             
-            .post-content { position: relative; padding: 3px; border-radius: 12px; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; }
+            .post-content { position: relative; padding: 3px; border-radius: 12px; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation:none; }
             @keyframes glowing { 0% { background-position: 0 0; } 50% { background-position: 400% 0; } 100% { background-position: 0 0; } }
             .post-content img { width: 100%; height: 230px; object-fit: cover; display: block; border-radius: 10px; }
             
@@ -1024,7 +1014,7 @@ async def web_ui():
 
             .instruction-text { color: #fbbf24; font-size: 15.5px; font-weight: bold; margin-bottom: 20px; line-height: 1.5; }
             
-            .rgb-border { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; padding: 3px; border-radius: 14px; margin-bottom: 12px; cursor: pointer; transition: 0.3s; width: 100%; box-shadow: 0 0 15px rgba(255,0,0,0.3); }
+            .rgb-border { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation:none; padding: 3px; border-radius: 14px; margin-bottom: 12px; cursor: pointer; transition: 0.3s; width: 100%; box-shadow: 0 0 15px rgba(255,0,0,0.3); }
             .rgb-border:active { transform: scale(0.98); }
             .rgb-inner { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 16px; border-radius: 12px; width: 100%; color: white; font-weight: bold; font-size: 16px; }
 
@@ -1037,7 +1027,7 @@ async def web_ui():
             .refer-box { background: #0f172a; padding: 15px; border-radius: 10px; border: 1px dashed #3b82f6; margin: 15px 0; font-size: 14px; word-break: break-all; color: #93c5fd; }
 
             /* Direct Link RGB Modal Custom CSS */
-            .dl-rgb-wrap { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation: glowing 8s linear infinite; padding: 4px; border-radius: 16px; width: 100%; max-width: 350px; margin: auto; }
+            .dl-rgb-wrap { position: relative; border: none; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000); background-size: 400%; animation:none; padding: 4px; border-radius: 16px; width: 100%; max-width: 350px; margin: auto; }
             .dl-inner-box { background: rgba(15, 23, 42, 0.98); border-radius: 12px; padding: 30px 20px; display: flex; flex-direction: column; align-items: center; gap: 15px; }
 
             .vip-tag { background: linear-gradient(45deg, #fbbf24, #f59e0b); color: #000; font-size: 12px; padding: 3px 8px; border-radius: 12px; font-weight: bold; display: none; margin-left:5px; box-shadow: 0 0 10px rgba(251,191,36,0.5); }
@@ -1108,7 +1098,19 @@ async def web_ui():
     </head>
     <body onclick="closeMenu(event)">
         <header>
-            <div class="logo">Movie Box</div>
+            <div class="logo">Latest Movie <span>BD</span></div>
+            <div class="header-right">
+                <div style="display: flex; flex-direction: column; align-items: flex-end;">
+                    <div class="user-info">
+                        <span id="uName">Guest</span>
+                        <span id="vipBadge" class="vip-tag"><i class="fa-solid fa-crown"></i> VIP</span>
+                        <span class="coin-tag"><i class="fa-solid fa-coins"></i> <span id="coinCount">0</span></span>
+                        <img id="uPic" src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png">
+                    </div>
+                    <div id="badgesContainer"></div>
+                </div>
+                <div class="menu-btn" onclick="toggleMenu(event)"><i class="fa-solid fa-bars"></i></div>
+            </div>
         </header>
         
         <div id="dropdownMenu" class="dropdown-menu">
@@ -1123,19 +1125,23 @@ async def web_ui():
             <a onclick="openReqModal()"><i class="fa-solid fa-code-pull-request text-green-400"></i> রিকোয়েস্ট ও ভোট 🗳️</a>
         </div>
 
-        <div class="search-box">
+        
+<div class="category-bar">
+<button class="cat-btn active">All</button>
+<button class="cat-btn">18+</button>
+<button class="cat-btn">Anime</button>
+<button class="cat-btn">Bangla</button>
+<button class="cat-btn">Bangla Dubbed</button>
+<button class="cat-btn">English</button>
+<button class="cat-btn">Hindi</button>
+<button class="cat-btn">Hindi Dubbed</button>
+<button class="cat-btn">Malayalam</button>
+<button class="cat-btn">Web Series</button>
+</div>
+
+<div class="search-box">
             <input type="text" id="searchInput" class="search-input" placeholder="🔍 মুভি বা ওয়েব সিরিজ খুঁজুন...">
         </div>
-        <div class="category-wrap">
-            <button class="category-btn active" onclick="selectCategory('')">All</button>
-            <button class="category-btn" onclick="selectCategory('Bangla')">Bangla</button>
-            <button class="category-btn" onclick="selectCategory('Hindi')">Hindi</button>
-            <button class="category-btn" onclick="selectCategory('English')">English</button>
-            <button class="category-btn" onclick="selectCategory('Anime')">Anime</button>
-            <button class="category-btn" onclick="selectCategory('K Drama')">K Drama</button>
-            <button class="category-btn" onclick="selectCategory('Web Series')">Web Series</button>
-        </div>
-
 
         <div id="trendingWrapper">
             <div class="section-title"><i class="fa-solid fa-fire"></i> ট্রেন্ডিং মুভি</div>
@@ -1647,15 +1653,6 @@ async def web_ui():
 
             function goToPage(p) { if (p < 1) return; loadMovies(p); window.scrollTo({ top: document.getElementById('movieGrid').offsetTop - 100, behavior: 'smooth' }); }
 
-            
-            function selectCategory(category) {
-                searchQuery = category;
-                document.getElementById('searchInput').value = category;
-                document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
-                event.target.classList.add('active');
-                loadMovies(1);
-            }
-
             let timeout = null;
             document.getElementById('searchInput').addEventListener('input', function(e) {
                 clearTimeout(timeout); searchQuery = e.target.value.trim();
@@ -2037,13 +2034,6 @@ async def web_ui():
 
             fetchUserInfo(); loadTrending(); loadUpcoming(); loadMovies(1); 
         </script>
-    <div class="bottom-nav">
-            <div class="nav-item" onclick="goHome()"><i class="fa-solid fa-house"></i><span>Home</span></div>
-            <div class="nav-item" onclick="document.getElementById('searchInput').focus()"><i class="fa-solid fa-magnifying-glass"></i><span>Search</span></div>
-            <div class="nav-item" onclick="document.getElementById('upcomingWrapper').scrollIntoView({behavior:'smooth'})"><i class="fa-solid fa-calendar-days"></i><span>Upcoming</span></div>
-            <div class="nav-item" onclick="openReqModal()"><i class="fa-solid fa-film"></i><span>Movies</span></div>
-            <div class="nav-item" onclick="window.open('{{TG_LINK}}')"><i class="fa-solid fa-user"></i><span>Profile</span></div>
-        </div>
     </body>
     </html>
     """
