@@ -670,7 +670,7 @@ async def web_ui():
     direct_links = dl_cfg.get('links', []) if dl_cfg else []
     dl_json = json.dumps(direct_links)
 
-    html_code = '''
+    html_code = """
     <!DOCTYPE html>
     <html lang="bn">
     <head>
@@ -953,21 +953,21 @@ async def web_ui():
 
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
-                let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
-                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav(\''+m._id+'\', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
+                let catsHtml = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(''); 
+                return `<div class="movie-card" onclick="openDetail(${index})"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m._id}</div><div class="movie-meta"><span>${m.year || 'N/A'}</span><span>${m.files ? m.files.length : 0} Files</span></div><div class="movie-cats">${catsHtml}</div></div><button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button></div>`; 
             }
 
             function openDetail(index) { 
                 let m = currentViewMovies[index];
                 if(!m) return;
                 
-                document.getElementById('detailImg').src = '/api/image/'+m.photo_id; 
+                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; 
                 document.getElementById('detailTitle').innerText = m._id; 
-                document.getElementById('detailMeta').innerHTML = '<span>'+(m.year || 'N/A')+'</span>'; 
-                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(' '); 
+                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
+                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
                 let btnsHtml = m.files.map(function(f) { 
                     let isFree = f.is_unlocked || isUserVip; 
-                    return '<button class="dl-file-btn '+(isFree ? 'unlocked' : '')+'" onclick="handleFileClick(\''+f.id+'\', '+(isFree ? 'true' : 'false')+')"><span><i class="fa-solid fa-'+(isFree ? 'lock-open' : 'lock')+'"></i> Download '+f.quality+'</span></button>'; 
+                    return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
                 }).join(''); 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
                 document.getElementById('detailModal').style.display = 'flex'; 
@@ -1023,10 +1023,7 @@ async def web_ui():
                         for(let i = 0; i < data.length; i++) {
                             let m = data[i];
                             let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
-                            html += '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি!\')">';
-                            html += '<img src="/api/image/' + m.photo_id + '" onerror="this.src=\'https://via.placeholder.com/110x160\'">';
-                            html += '<div class="movie-info"><div class="movie-title">' + m.title + '</div>';
-                            html += '<div class="movie-meta"><span style="color:#38bdf8;">' + releaseTxt + '</span></div></div></div>';
+                            html += `<div class="movie-card" onclick="tg.showAlert('🌟 এটি একটি আপকামিং মুভি! রিলিজ: ${releaseTxt}')"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m.title}</div><div class="movie-meta"><span style="color:#38bdf8;">${releaseTxt}</span></div></div></div>`;
                         }
                         list.innerHTML = html;
                     } else {
@@ -1043,7 +1040,7 @@ async def web_ui():
         </script>
     </body>
     </html>
-    '''
+    """
     html_code = html_code.replace("__DL_JSON__", dl_json).replace("__BOT_UNAME__", BOT_USERNAME)
     return html_code
 
