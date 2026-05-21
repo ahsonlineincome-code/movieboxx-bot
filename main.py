@@ -1093,7 +1093,7 @@ async def web_ui():
     </head>
     <body onclick="closeMenu(event)">
         <header>
-            <div class="logo">Latest Movie <span>BD</span></div>
+            <div class="logo">Movie Box</div>
             <div class="header-right">
                 <div style="display: flex; flex-direction: column; align-items: flex-end;">
                     <div class="user-info">
