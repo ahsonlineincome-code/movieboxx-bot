@@ -403,7 +403,7 @@ async def upc_date_step(m: types.Message, state: FSMContext):
         "release_date": m.text.strip(), 
         "language": "N/A", 
         "genre": "N/A",
-        "added_at": datetime.datetime.utcnow() # <--- এই লাইনটি যুক্ত করা হয়েছে
+        "added_at": datetime.datetime.utcnow()
     })
     await state.clear()
     await m.answer("✅ আপকামিং যুক্ত হয়েছে!")
@@ -460,9 +460,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
 @app.get("/admin", response_class=HTMLResponse)
 async def web_admin_panel(auth: bool = Depends(verify_admin)):
     return HTMLResponse("<h1>Admin Panel</h1>")
-# ==========================================
-# 14. Advanced Admin Panel & APIs
-# ==========================================
+
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
     html = """
@@ -481,11 +479,9 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .nav { display: flex; gap: 15px; background: #1e293b; padding: 15px 20px; }
             .nav-btn { padding: 10px 20px; background: #334155; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.3s; }
             .nav-btn.active, .nav-btn:hover { background: #ef4444; }
-            
             .container { padding: 20px; }
             .section { display: none; }
             .section.active { display: block; }
-            
             .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
             .stat-card { background: #1e293b; padding: 25px; border-radius: 12px; border-left: 5px solid; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
             .stat-card.blue { border-color: #3b82f6; }
@@ -494,7 +490,6 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .stat-card.yellow { border-color: #f59e0b; }
             .stat-title { font-size: 14px; color: #94a3b8; margin-bottom: 10px; text-transform: uppercase; }
             .stat-value { font-size: 32px; font-weight: bold; }
-            
             table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
             th, td { padding: 15px; text-align: left; border-bottom: 1px solid #334155; }
             th { background: #334155; color: #ef4444; font-weight: 600; }
@@ -611,14 +606,13 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                     const data = await res.json();
                     if(data.ok) {
                         document.getElementById('row-'+movieId).remove();
-                        loadDashboard(); // refresh stats
+                        loadDashboard(); 
                     } else {
                         alert('Failed to delete!');
                     }
                 }
             }
 
-            // Initial Load
             loadDashboard();
             loadUsers();
             loadMovies();
@@ -665,6 +659,8 @@ async def admin_api_delete_movie(movie_id: str, auth: bool = Depends(verify_admi
         return {"ok": True}
     except:
         return {"ok": False}
+
+
 # ==========================================
 # 11. Main Web App UI (Fixed Syntax Error)
 # ==========================================
@@ -867,7 +863,7 @@ async def web_ui():
 
         <div id="successModal" class="modal"><div class="modal-content" style="text-align: center; padding-top: 40px;"><i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i><h2>ফাইল পাঠানো হয়েছে!</h2><br><button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button></div></div>
 
-                <script>
+        <script>
             let tg = window.Telegram.WebApp; 
             tg.expand();
             const DIRECT_LINKS = __DL_JSON__; 
@@ -958,7 +954,7 @@ async def web_ui():
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
                 let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
-                return `<div class="movie-card" onclick="openDetail(${index})"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m._id}</div><div class="movie-meta"><span>${m.year || 'N/A'}</span><span>${m.files ? m.files.length : 0} Files</span></div><div class="movie-cats">${catsHtml}</div></div><button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button></div>`; 
+                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav(\''+m._id+'\', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
             }
 
             function openDetail(index) { 
@@ -971,7 +967,7 @@ async def web_ui():
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(' '); 
                 let btnsHtml = m.files.map(function(f) { 
                     let isFree = f.is_unlocked || isUserVip; 
-                    return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
+                    return '<button class="dl-file-btn '+(isFree ? 'unlocked' : '')+'" onclick="handleFileClick(\''+f.id+'\', '+(isFree ? 'true' : 'false')+')"><span><i class="fa-solid fa-'+(isFree ? 'lock-open' : 'lock')+'"></i> Download '+f.quality+'</span></button>'; 
                 }).join(''); 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
                 document.getElementById('detailModal').style.display = 'flex'; 
@@ -1015,7 +1011,7 @@ async def web_ui():
                 try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} 
             }
             
-                       async function loadUpcoming() { 
+            async function loadUpcoming() { 
                 const list = document.getElementById('movieListUpcoming'); 
                 list.innerHTML = '<div class="skeleton"></div>'; 
                 try { 
@@ -1027,7 +1023,7 @@ async def web_ui():
                         for(let i = 0; i < data.length; i++) {
                             let m = data[i];
                             let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
-                            html += '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি! রিলিজ: ' + releaseTxt + '\')">';
+                            html += '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি!\')">';
                             html += '<img src="/api/image/' + m.photo_id + '" onerror="this.src=\'https://via.placeholder.com/110x160\'">';
                             html += '<div class="movie-info"><div class="movie-title">' + m.title + '</div>';
                             html += '<div class="movie-meta"><span style="color:#38bdf8;">' + releaseTxt + '</span></div></div></div>';
@@ -1041,6 +1037,9 @@ async def web_ui():
                     list.innerHTML = '<p style="text-align:center; color:#ef4444;">লোড করতে সমস্যা হয়েছে!</p>';
                 } 
             }
+
+            document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
+            fetchUserInfo(); loadHomeMovies(); loadFavorites();
         </script>
     </body>
     </html>
@@ -1100,7 +1099,6 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
 
 @app.get("/api/upcoming")
 async def upcoming_movies():
-    # _id দিয়ে সর্ট করলে added_at এর এরর আর হবে না, এবং নতুন মুভি সবার আগে আসবে
     movies = await db.upcoming.find().sort("_id", -1).to_list(20)
     return movies
 
@@ -1145,10 +1143,13 @@ async def send_file(d: SendRequestModel):
             del_minutes = time_cfg['minutes'] if time_cfg else 60
             caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
             
+            prot_cfg = await db.settings.find_one({"id": "protect"})
+            is_protected = prot_cfg.get("status", False) if prot_cfg else False
+            
             if m.get("file_type") == "video":
-                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             else:
-                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
                 
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
