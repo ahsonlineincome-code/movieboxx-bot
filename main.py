@@ -1015,7 +1015,7 @@ async def web_ui():
                 try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} 
             }
             
-            async function loadUpcoming() { 
+                       async function loadUpcoming() { 
                 const list = document.getElementById('movieListUpcoming'); 
                 list.innerHTML = '<div class="skeleton"></div>'; 
                 try { 
@@ -1023,20 +1023,24 @@ async def web_ui():
                     const data = await res.json(); 
                     currentViewMovies = data; 
                     if(data.length > 0) {
-                        list.innerHTML = data.map(function(m, index) { 
+                        let html = '';
+                        for(let i = 0; i < data.length; i++) {
+                            let m = data[i];
                             let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
-                            return `<div class="movie-card" onclick="tg.showAlert('🌟 এটি একটি আপকামিং মুভি! রিলিজ: ${releaseTxt}')"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m.title}</div><div class="movie-meta"><span style="color:#38bdf8;">${releaseTxt}</span></div></div></div>`; 
-                        }).join('');
+                            html += '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি! রিলিজ: ' + releaseTxt + '\')">';
+                            html += '<img src="/api/image/' + m.photo_id + '" onerror="this.src=\'https://via.placeholder.com/110x160\'">';
+                            html += '<div class="movie-info"><div class="movie-title">' + m.title + '</div>';
+                            html += '<div class="movie-meta"><span style="color:#38bdf8;">' + releaseTxt + '</span></div></div></div>';
+                        }
+                        list.innerHTML = html;
                     } else {
                         list.innerHTML = '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>';
                     }
                 } catch(e) { 
-                    console.error(e);
+                    console.error('Upcoming Error:', e);
+                    list.innerHTML = '<p style="text-align:center; color:#ef4444;">লোড করতে সমস্যা হয়েছে!</p>';
                 } 
             }
-
-            document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
-            fetchUserInfo(); loadHomeMovies(); loadFavorites();
         </script>
     </body>
     </html>
@@ -1096,7 +1100,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
 
 @app.get("/api/upcoming")
 async def upcoming_movies():
-    # _id দিয়ে সর্ট করলে added_at এরর আর হবে না এবং নতুন মুভি আগে আসবে
+    # _id দিয়ে সর্ট করলে added_at এর এরর আর হবে না, এবং নতুন মুভি সবার আগে আসবে
     movies = await db.upcoming.find().sort("_id", -1).to_list(20)
     return movies
 
