@@ -1108,7 +1108,17 @@ async def web_ui():
             </div>
         </header>
         
-        <div id="dropdownMenu" class="dropdown-menu"></div>
+        <div id="dropdownMenu" class="dropdown-menu">
+            <a onclick="goHome()"><i class="fa-solid fa-house text-green-400"></i> হোম পেইজ</a>
+            <a onclick="openCheckinModal()"><i class="fa-solid fa-gift text-pink-400"></i> ডেইলি চেক-ইন 🪙</a>
+            <a onclick="openTasksModal()"><i class="fa-solid fa-bullseye text-red-400"></i> ডেইলি মিশন 🎯</a>
+            <a onclick="openSpinModal()"><i class="fa-solid fa-dharmachakra text-yellow-400"></i> লাকি স্পিন 🎡</a>
+            <a onclick="openChatModal()"><i class="fa-solid fa-comments text-blue-400"></i> গ্লোবাল চ্যাট 💬</a>
+            <a onclick="openVipModal()"><i class="fa-solid fa-crown text-yellow-400"></i> VIP প্যাকেজ কিনুন</a>
+            <a onclick="openReferModal()"><i class="fa-solid fa-share-nodes text-blue-400"></i> রেফার ও ইনকাম</a>
+            <a onclick="openLeaderboard()"><i class="fa-solid fa-trophy text-yellow-400"></i> লিডারবোর্ড 🏆</a>
+            <a onclick="openReqModal()"><i class="fa-solid fa-code-pull-request text-green-400"></i> রিকোয়েস্ট ও ভোট 🗳️</a>
+        </div>
 
         <div class="search-box">
             <input type="text" id="searchInput" class="search-input" placeholder="🔍 মুভি বা ওয়েব সিরিজ খুঁজুন...">
