@@ -67,7 +67,7 @@ banned_cache = set()
 
 
 # ==========================================
-# 2. FSM States (For Uploading Flow)
+# 2. FSM States (Description Removed)
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
@@ -76,7 +76,6 @@ class AdminStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_quality = State() 
     waiting_for_year = State()
-    waiting_for_desc = State()
     waiting_for_cats = State()
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
@@ -192,7 +191,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
                         await db.users.update_one({"user_id": referrer_id}, {"$set": {"vip_until": new_vip}})
                         
                         try:
-                            await bot.send_message(referrer_id, "🎉 <b>অভিনন্দন!</b> আপনার ৫ জন রেফার পূর্ণ হয়েছে। আপনাকে ২৪ ঘণ্টার জন্য <b>VIP</b> দেওয়া হয়েছে!", parse_mode="HTML")
+                            await bot.send_message(referrer_id, "🎉 <b>অভিনন্দন!</b> আপনাকে ২৪ ঘণ্টার জন্য <b>VIP</b> দেওয়া হয়েছে!", parse_mode="HTML")
                         except: pass
             except Exception: pass
 
@@ -465,7 +464,7 @@ async def handle_request_approval(c: types.CallbackQuery):
 
 
 # ==========================================
-# 9. Movie Upload Logic (UPDATED FOR CATEGORIES)
+# 9. Movie Upload Logic (Description Removed)
 # ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
@@ -496,12 +495,6 @@ async def receive_movie_quality(m: types.Message, state: FSMContext):
 @dp.message(AdminStates.waiting_for_year, F.text)
 async def receive_movie_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_desc)
-    await m.answer("✅ এবার মুভির <b>সংক্ষিপ্ত বিবরণ (Description)</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_desc, F.text)
-async def receive_movie_desc(m: types.Message, state: FSMContext):
-    await state.update_data(description=m.text.strip())
     await state.set_state(AdminStates.waiting_for_cats)
     await m.answer("✅ এবার মুভির <b>ক্যাটাগরি</b> লিখুন।\n<i>একাধিক হলে কমা (,) দিয়ে লিখুন।</i>\n<b>উদাহরণ:</b> Hindi, Action, 18+", parse_mode="HTML")
 
@@ -519,7 +512,6 @@ async def receive_movie_cats(m: types.Message, state: FSMContext):
         "file_id": data["file_id"], 
         "file_type": data["file_type"],
         "year": data.get("year", "N/A"),
-        "description": data.get("description", "No description available."),
         "categories": cats,
         "clicks": 0, 
         "created_at": datetime.datetime.utcnow()
@@ -538,7 +530,7 @@ async def receive_movie_cats(m: types.Message, state: FSMContext):
 
 
 # ==========================================
-# 10. Upcoming Movies Logic (UPDATED)
+# 10. Upcoming Movies Logic
 # ==========================================
 @dp.message(Command("addupcoming"))
 async def add_upc_cmd(m: types.Message, state: FSMContext):
@@ -663,7 +655,7 @@ async def delete_movie_api(title: str, auth: bool = Depends(verify_admin)):
 
 
 # ==========================================
-# 13. Main Web App UI (FIXED & FINAL)
+# 13. Main Web App UI (Anti-Cheat Ad & No Desc)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -712,14 +704,14 @@ async def web_ui():
             .page-section { display: none; padding-bottom: 80px; }
             .page-section.active { display: block; }
 
-            /* Categories - FIXED LAYOUT (Flex Wrap) */
+            /* Categories */
             .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
             .cat-chip { background: #1e293b; padding: 5px 10px; border-radius: 12px; white-space: nowrap; cursor: pointer; border: 1px solid #334155; font-weight: 500; font-size: 11px; transition: 0.3s; }
-            .cat-chip.active { background: linear-gradient(45deg, #ff416c, #ff4b2b); border-color: #ff416c; color: white; box-shadow: 0 0 10px rgba(255,65,108,0.2); }
+            .cat-chip.active { background: linear-gradient(45deg, #ff416c, #ff4b2b); border-color: #ff416c; color: white; }
 
             /* Movie List Layout */
             .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
-            .movie-card { display: flex; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; backdrop-filter: blur(5px); position: relative; }
+            .movie-card { display: flex; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
             .movie-card:active { transform: scale(0.98); }
             .movie-card img { width: 110px; height: 160px; object-fit: cover; flex-shrink: 0; }
             .movie-info { padding: 12px; display: flex; flex-direction: column; justify-content: center; flex: 1; }
@@ -736,7 +728,7 @@ async def web_ui():
 
             /* Bottom Navigation */
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
-            .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; transition: 0.3s; border: none; background: none; }
+            .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
             .nav-item i { font-size: 20px; margin-bottom: 3px; }
             .nav-item.active { color: #ff416c; }
 
@@ -745,8 +737,7 @@ async def web_ui():
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             .detail-img { width: 100%; height: 250px; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
             .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
-            .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 10px; }
-            .detail-desc { font-size: 14px; color: #cbd5e1; line-height: 1.5; margin-bottom: 20px; text-align: justify; }
+            .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .dl-btn { width: 100%; padding: 15px; border-radius: 12px; background: linear-gradient(45deg, #ff416c, #ff4b2b); color: white; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
             .share-btn { width: 100%; padding: 15px; border-radius: 12px; background: #334155; color: white; font-weight: 700; border: none; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 100; border: none; }
@@ -757,15 +748,22 @@ async def web_ui():
             .age-yes { background: #ef4444; color: white; }
             .age-no { background: #334155; color: white; }
 
-            /* Ad Timer Modal */
-            .ad-box { text-align: center; padding: 30px; }
-            .ad-timer { font-size: 50px; font-weight: 900; color: #fbbf24; margin: 20px 0; }
+            /* Ad Warning Modal UI (Based on Image) */
+            .ad-box { text-align: center; padding: 20px; }
+            .ad-icon { font-size: 60px; margin-bottom: 10px; color: #fbbf24; }
+            .ad-title { color: #fbbf24; font-size: 20px; font-weight: 800; margin-bottom: 15px; }
+            .ad-box-orange { background: #ea580c; color: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: 600; font-size: 15px; }
+            .ad-box-black { background: #000000; color: #e2e8f0; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; line-height: 1.4; }
+            .ad-timer-text { color: #94a3b8; margin-bottom: 15px; font-size: 14px; display: none; }
+            .ad-action-btn { width: 100%; padding: 15px; border-radius: 8px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; text-transform: uppercase; transition: 0.2s; }
+            .btn-ad-open { background: #ea580c; color: white; margin-bottom: 10px; }
+            .btn-ad-wait { background: #334155; color: #94a3b8; cursor: not-allowed; margin-bottom: 10px; }
+            .btn-ad-unlock { background: #10b981; color: white; margin-bottom: 10px; }
+            .btn-ad-tryagain { background: #ef4444; color: white; }
 
-            /* Search */
+            /* Search & Profile */
             .search-box { padding: 0 15px 15px; }
             .search-input { width: 100%; padding: 14px; border-radius: 12px; border: none; outline: none; background: #1e293b; color: #fff; font-size: 15px; border: 1px solid #334155; }
-
-            /* Profile */
             .profile-card { background: #1e293b; margin: 15px; border-radius: 16px; padding: 20px; border: 1px solid #334155; }
             .profile-link { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #334155; color: white; text-decoration: none; font-weight: 600; }
             .profile-link:last-child { border: none; }
@@ -865,19 +863,29 @@ async def web_ui():
                 <img id="detailImg" class="detail-img" src="">
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
-                <div id="detailCats" style="margin-bottom: 15px;"></div>
-                <p id="detailDesc" class="detail-desc"></p>
+                <div id="detailCats" style="margin-bottom: 20px;"></div>
+                <!-- Description Removed Here -->
                 <button class="dl-btn" id="dlBtn" onclick="startDownload()"><i class="fa-solid fa-download"></i> Download Now</button>
                 <button class="share-btn" onclick="shareMovie()"><i class="fa-solid fa-share-nodes"></i> Share on Telegram</button>
             </div>
         </div>
 
+        <!-- AD MODAL LIKE THE IMAGE -->
         <div id="adModal" class="modal">
             <div class="modal-content ad-box">
-                <h2 style="color:#fbbf24;">📢 বিজ্ঞাপন দেখুন</h2>
-                <p style="color:#94a3b8; font-size:14px; margin-top:10px;">ডাউনলোড আনলক করতে সম্পূর্ণ বিজ্ঞাপন দেখুন</p>
-                <div class="ad-timer" id="adTimerText">15</div>
-                <button class="dl-btn" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
+                <div class="ad-icon">⚠️</div>
+                <h2 class="ad-title">সতর্কতা!</h2>
+                <div class="ad-box-orange">
+                    ডাউনলোড করতে হলে আপনাকে অবশ্যই বিজ্ঞাপন দেখতে হবে!
+                </div>
+                <div class="ad-box-black">
+                    বিজ্ঞাপনে ক্লিক করে কমপক্ষে <b>১৫ সেকেন্ড</b> অপেক্ষা করতে হবে। আগে বন্ধ করলে ডাউনলোড বাতিল হয়ে যাবে!
+                </div>
+                
+                <p id="adTimerText" class="ad-timer-text">অপেক্ষা করুন... <span id="timerCount">15</span>s</p>
+                
+                <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
+                <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="adTryAgainAction()" style="display:none;">TRY AGAIN</button>
             </div>
         </div>
 
@@ -885,7 +893,7 @@ async def web_ui():
             <div class="modal-content" style="text-align: center; padding-top: 40px;">
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2 style="margin-bottom:10px; font-size: 22px;">ফাইল পাঠানো হয়েছে!</h2>
-                <p style="color:#94a3b8; margin-bottom:20px;">বটের ইনবক্স চেক করুন। ফাইলটি কিছুক্ষণ পর অটো-ডিলিট হয়ে যাবে।</p>
+                <p style="color:#94a3b8; margin-bottom:20px;">বটের ইনবক্স চেক করুন।</p>
                 <button class="dl-btn" onclick="closeModal('successModal'); tg.close();">বটে যান</button>
             </div>
         </div>
@@ -904,7 +912,12 @@ async def web_ui():
             let userFavs = [];
             let active18Btn = null;
 
-            // Welcome Screen Timer
+            // Ad Anti-Cheat Variables
+            let adInterval = null;
+            let adTimeLeft = 15;
+            let adCompleted = false;
+            let adWindowOpened = false;
+
             setTimeout(() => { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
 
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) {
@@ -926,14 +939,13 @@ async def web_ui():
                     const res = await fetch('/api/profile');
                     const data = await res.json();
                     let html = '';
-                    if(data.tg_link) html += `<a href="${data.tg_link}" class="profile-link"><i class="fa-brands fa-telegram"></i> Telegram Channel</a>`;
-                    if(data.fb_link) html += `<a href="${data.fb_link}" class="profile-link"><i class="fa-brands fa-facebook"></i> Facebook Page</a>`;
-                    if(data.yt_link) html += `<a href="${data.yt_link}" class="profile-link"><i class="fa-brands fa-youtube"></i> YouTube Channel</a>`;
-                    document.getElementById('profileLinksContainer').innerHTML = html || '<p style="color:#64748b; text-align:center;">কোনো লিংক যুক্ত করা হয়নি।</p>';
+                    if(data.tg_link) html += `<a href="${data.tg_link}" class="profile-link"><i class="fa-brands fa-telegram"></i> Telegram</a>`;
+                    if(data.fb_link) html += `<a href="${data.fb_link}" class="profile-link"><i class="fa-brands fa-facebook"></i> Facebook</a>`;
+                    if(data.yt_link) html += `<a href="${data.yt_link}" class="profile-link"><i class="fa-brands fa-youtube"></i> YouTube</a>`;
+                    document.getElementById('profileLinksContainer').innerHTML = html || '<p style="color:#64748b; text-align:center;">কোনো লিংক নেই।</p>';
                 } catch(e) {}
             }
 
-            // Tabs Logic
             function switchTab(tabName, btnEl) {
                 document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
                 document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -947,7 +959,6 @@ async def web_ui():
                 window.scrollTo({top:0, behavior:'smooth'});
             }
 
-            // Categories Logic
             function filterCat(cat, btnEl) {
                 activeCat = cat;
                 document.querySelectorAll('.cat-chip').forEach(el => el.classList.remove('active'));
@@ -972,7 +983,6 @@ async def web_ui():
 
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
-            // Load Movies (Home) - FIXED BUG
             async function loadHomeMovies() {
                 const list = document.getElementById('movieListHome');
                 list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
@@ -987,7 +997,6 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            // Search Movies - FIXED BUG
             async function searchMovies() {
                 const q = document.getElementById('searchInputMain').value.trim();
                 const list = document.getElementById('movieListSearch');
@@ -1003,7 +1012,6 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            // FIXED BUG: Added fallback for undefined categories/year
             function createMovieCard(m) {
                 let isFav = userFavs.includes(m._id);
                 let catsHtml = (m.categories || []).map(c => `<span class="movie-cat-tag">${c}</span>`).join('');
@@ -1022,61 +1030,76 @@ async def web_ui():
                 </div>`;
             }
 
-            // Detail Modal
             function openDetail(m) {
                 activeMovieData = m;
                 document.getElementById('detailImg').src = `/api/image/${m.photo_id}`;
                 document.getElementById('detailTitle').innerText = m._id;
                 document.getElementById('detailMeta').innerHTML = `<span>Year: ${m.year || 'N/A'}</span> • <span>Files: ${m.files ? m.files.length : 0}</span>`;
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(c => `<span class="movie-cat-tag">${c}</span>`).join(' ');
-                document.getElementById('detailDesc').innerText = m.description || 'No description available.';
                 document.getElementById('detailModal').style.display = 'flex';
             }
 
-            // Download & Ad Logic
             function startDownload() {
                 if(isUserVip || !activeMovieData.files || activeMovieData.files.length === 0) {
                     sendFileRequest(activeMovieData.files[0].id);
                 } else {
                     document.getElementById('detailModal').style.display = 'none';
+                    resetAdModal();
                     document.getElementById('adModal').style.display = 'flex';
-                    startAdTimer();
                 }
             }
 
-            let adInterval;
-            let adTimeLeft = 15;
-            let adClicked = false;
-
-            function startAdTimer() {
-                adTimeLeft = 15; adClicked = false;
-                document.getElementById('adTimerText').innerText = adTimeLeft;
-                document.getElementById('adClickBtn').disabled = false;
-                document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
-                
+            // ANTI-CHEAT AD SYSTEM
+            function resetAdModal() {
                 clearInterval(adInterval);
-                adInterval = setInterval(() => {
-                    if(adClicked) {
-                        adTimeLeft--;
-                        document.getElementById('adTimerText').innerText = adTimeLeft;
-                        if(adTimeLeft <= 0) {
-                            clearInterval(adInterval);
-                            closeModal('adModal');
-                            sendFileRequest(activeMovieData.files[0].id);
-                        }
-                    }
-                }, 1000);
+                adTimeLeft = 15;
+                adCompleted = false;
+                adWindowOpened = false;
+                document.getElementById('adTimerText').style.display = 'none';
+                document.getElementById('adClickBtn').style.display = 'block';
+                document.getElementById('adClickBtn').className = 'ad-action-btn btn-ad-open';
+                document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
+                document.getElementById('adTryAgainBtn').style.display = 'none';
             }
 
             function openAdLink() {
                 if (DIRECT_LINKS && DIRECT_LINKS.length > 0) {
                     const randomLink = DIRECT_LINKS[Math.floor(Math.random() * DIRECT_LINKS.length)];
                     tg.openLink(randomLink);
-                    adClicked = true;
-                    document.getElementById('adClickBtn').disabled = true;
-                    document.getElementById('adClickBtn').innerText = 'অপেক্ষা করুন...';
+                    adWindowOpened = true;
                 } else {
-                    adClicked = true; 
+                    adWindowOpened = true; // Bypass if no link
+                }
+
+                document.getElementById('adClickBtn').style.display = 'none';
+                document.getElementById('adTimerText').style.display = 'block';
+                
+                adInterval = setInterval(() => {
+                    adTimeLeft--;
+                    document.getElementById('timerCount').innerText = adTimeLeft;
+                    if(adTimeLeft <= 0) {
+                        clearInterval(adInterval);
+                        adCompleted = true;
+                        document.getElementById('adTimerText').style.display = 'none';
+                        
+                        document.getElementById('adTryAgainBtn').style.display = 'block';
+                        document.getElementById('adTryAgainBtn').innerText = 'ডাউনলোড আনলক করুন';
+                        document.getElementById('adTryAgainBtn').className = 'ad-action-btn btn-ad-unlock';
+                    }
+                }, 1000);
+            }
+
+            function adTryAgainAction() {
+                if(adCompleted) {
+                    closeModal('adModal');
+                    sendFileRequest(activeMovieData.files[0].id);
+                } else {
+                    // If somehow bypassed and clicked early
+                    document.getElementById('adTryAgainBtn').innerText = 'TRY AGAIN';
+                    document.getElementById('adTryAgainBtn').className = 'ad-action-btn btn-ad-tryagain';
+                    setTimeout(() => {
+                        resetAdModal();
+                    }, 2000);
                 }
             }
 
@@ -1095,14 +1118,12 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            // Share Logic
             function shareMovie() {
                 if(!activeMovieData) return;
                 const shareText = `🎬 ${activeMovieData._id}\n\nডাউনলোড করতে নিচের লিংকে ক্লিক করুন: https://t.me/${BOT_UNAME}?start=new`;
                 tg.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(shareText)}&text=${encodeURIComponent('Watch on Movie Box!')}`);
             }
 
-            // Favorites Logic
             async function loadFavorites() {
                 const list = document.getElementById('movieListFav');
                 list.innerHTML = '<div class="skeleton"></div>';
@@ -1127,7 +1148,6 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            // Upcoming Logic
             async function loadUpcoming() {
                 const list = document.getElementById('movieListUpcoming');
                 list.innerHTML = '<div class="skeleton"></div>';
@@ -1171,7 +1191,6 @@ async def web_ui():
                 });
             }
 
-            // Search Input Home Redirect
             document.getElementById('searchInput').addEventListener('focus', function() {
                 document.querySelector('.nav-item:nth-child(2)').click();
                 setTimeout(() => document.getElementById('searchInputMain').focus(), 100);
@@ -1187,7 +1206,7 @@ async def web_ui():
 
 
 # ==========================================
-# 14. Main Web App APIs (FIXED)
+# 14. Main Web App APIs
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
@@ -1227,7 +1246,6 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
             "clicks": {"$sum": "$clicks"}, 
             "created_at": {"$max": "$created_at"}, 
             "year": {"$first": "$year"},
-            "description": {"$first": "$description"},
             "categories": {"$first": "$categories"},
             "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main File"]}}}
         }},
@@ -1282,7 +1300,7 @@ async def send_file(d: SendRequestModel):
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
             
-            # FIXED: Forwarding protection disabled by default so users can forward
+            # Forwarding protection is FALSE so users can forward/save easily
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
             is_protected = protect_cfg.get('status', False) if protect_cfg else False
             
@@ -1315,7 +1333,6 @@ async def get_favs(uid: int):
             "_id": "$title", 
             "photo_id": {"$first": "$photo_id"}, 
             "year": {"$first": "$year"},
-            "description": {"$first": "$description"},
             "categories": {"$first": "$categories"},
             "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}
         }}
@@ -1341,7 +1358,7 @@ async def toggle_fav(data: FavModel):
         await db.users.update_one({"user_id": data.uid}, {"$push": {"favorites": data.title}})
         return {"isFav": True}
 
-# Payment APIs
+# Payment & Checkin APIs
 class CheckinModel(BaseModel):
     uid: int
     action: str
