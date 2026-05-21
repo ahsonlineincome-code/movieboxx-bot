@@ -65,7 +65,7 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
-CATEGORIES = ["Bangla", "Hindi", "English", "Dubbed", "K-Drama", "Horror", "Action", "Web Series", "18+"]
+CATEGORIES = ["Bangla", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
 
 # ==========================================
 # 2. FSM States
@@ -154,7 +154,7 @@ async def auto_delete_worker():
         await asyncio.sleep(60)
 
 # ==========================================
-# 6. Telegram Bot Commands (Start Menu UI Updated)
+# 6. Telegram Bot Commands (Hardcoded Links)
 # ==========================================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -198,10 +198,9 @@ async def start_cmd(message: types.Message, state: FSMContext):
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
 
-    tg_cfg = await db.settings.find_one({"id": "profile"})
-    tg_link = tg_cfg.get("tg_link", "https://t.me/MovieeBD") if tg_cfg else "https://t.me/MovieeBD"
-    b18_cfg = await db.settings.find_one({"id": "link_18"})
-    link_18 = b18_cfg.get("url", "https://t.me/MovieeBD") if b18_cfg else "https://t.me/MovieeBD"
+    # Hardcoded Channel Links Provided by User
+    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
+    link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
     kb = [
         [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
@@ -240,17 +239,6 @@ async def add_direct_link(m: types.Message):
     except:
         await m.answer("⚠️ /addlink url", parse_mode="HTML")
 
-@dp.message(Command("dellink"))
-async def del_direct_link(m: types.Message):
-    if m.from_user.id not in admin_cache:
-        return
-    try:
-        url = m.text.split(" ", 1)[1].strip()
-        await db.settings.update_one({"id": "direct_links"}, {"$pull": {"links": url}})
-        await m.answer(f"❌ লিংক ডিলিট হয়েছে।", parse_mode="HTML")
-    except:
-        await m.answer("⚠️ /dellink url", parse_mode="HTML")
-
 @dp.message(Command("delmovie"))
 async def del_movie_cmd(m: types.Message):
     if m.from_user.id not in admin_cache:
@@ -284,39 +272,6 @@ async def add_vip_cmd(m: types.Message):
         await m.answer(f"✅ <code>{target_uid}</code> কে {days} দিনের VIP দেওয়া হয়েছে!", parse_mode="HTML")
     except:
         await m.answer("⚠️ /addvip ID দিন", parse_mode="HTML")
-
-@dp.message(Command("settg"))
-async def set_tg_link(m: types.Message):
-    if m.from_user.id not in admin_cache:
-        return
-    try:
-        link = m.text.split(" ")[1]
-        await db.settings.update_one({"id": "profile"}, {"$set": {"tg_link": link}}, upsert=True)
-        await m.answer(f"✅ TG Link Set!", parse_mode="HTML")
-    except:
-        pass
-
-@dp.message(Command("set18"))
-async def set_18_link(m: types.Message):
-    if m.from_user.id not in admin_cache:
-        return
-    try:
-        link = m.text.split(" ")[1]
-        await db.settings.update_one({"id": "link_18"}, {"$set": {"url": link}}, upsert=True)
-        await m.answer(f"✅ 18+ Link Set!", parse_mode="HTML")
-    except:
-        pass
-
-@dp.message(Command("setbkash"))
-async def set_bkash(m: types.Message):
-    if m.from_user.id not in admin_cache:
-        return
-    try:
-        num = m.text.split(" ")[1]
-        await db.settings.update_one({"id": "bkash_no"}, {"$set": {"number": num}}, upsert=True)
-        await m.answer(f"✅ বিকাশ: {num}", parse_mode="HTML")
-    except:
-        pass
 
 # ==========================================
 # 8. Movie Upload Logic & Category Buttons
@@ -401,7 +356,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 9. Upcoming, Broadcast & Payment Callbacks
+# 9. Upcoming & Broadcast
 # ==========================================
 @dp.message(Command("addupcoming"))
 async def add_upc_cmd(m: types.Message, state: FSMContext):
@@ -424,25 +379,13 @@ async def upc_title_step(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_upc_date, F.text)
 async def upc_date_step(m: types.Message, state: FSMContext):
-    await state.update_data(release_date=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_upc_lang)
-    await m.answer("✅ এবার <b>ভাষা</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_upc_lang, F.text)
-async def upc_lang_step(m: types.Message, state: FSMContext):
-    await state.update_data(language=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_upc_genre)
-    await m.answer("✅ এবার <b>জেনার</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_upc_genre, F.text)
-async def upc_genre_step(m: types.Message, state: FSMContext):
     data = await state.get_data()
     await db.upcoming.insert_one({
         "photo_id": data["photo_id"], 
         "title": data["title"], 
-        "release_date": data.get("release_date", "Unknown"), 
-        "language": data.get("language", "Unknown"), 
-        "genre": data.get("genre", "Unknown")
+        "release_date": m.text.strip(), 
+        "language": "N/A", 
+        "genre": "N/A"
     })
     await state.clear()
     await m.answer("✅ আপকামিং যুক্ত হয়েছে!")
@@ -501,7 +444,7 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
     return HTMLResponse("<h1>Admin Panel</h1>")
 
 # ==========================================
-# 11. Main Web App UI
+# 11. Main Web App UI (Fixed Clicks + UI Updates)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -541,9 +484,10 @@ async def web_ui():
             .page-section { display: none; padding-bottom: 80px; }
             .page-section.active { display: block; }
 
+            /* Category Styling Like Image 2 */
             .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
-            .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #334155; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
-            .cat-chip.active { background: linear-gradient(45deg, #6366f1, #8b5cf6); border-color: #6366f1; color: white; box-shadow: 0 0 12px rgba(99, 102, 241, 0.5); }
+            .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
+            .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
 
             .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
             .movie-card { display: flex; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
@@ -554,13 +498,18 @@ async def web_ui():
             .movie-meta { font-size: 12px; color: #94a3b8; margin-bottom: 8px; display: flex; gap: 10px; }
             .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
             .movie-cat-tag { background: rgba(255,255,255,0.1); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #cbd5e1; }
-            .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+            .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
+
+            /* Floating Buttons */
+            .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
+            .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
+            .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
 
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
             .nav-item i { font-size: 20px; margin-bottom: 3px; }
-            .nav-item.active { color: #6366f1; }
+            .nav-item.active { color: #ef4444; }
 
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
@@ -611,11 +560,11 @@ async def web_ui():
             <div class="cat-row">
                 <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
                 <div class="cat-chip" onclick="filterCat('Bangla', this)">BANGLA</div>
-                <div class="cat-chip" onclick="filterCat('Hindi', this)">HINDI</div>
-                <div class="cat-chip" onclick="filterCat('English', this)">ENGLISH</div>
+                <div class="cat-chip" onclick="filterCat('Hindi Dubbed', this)">HINDI DUBBED</div>
+                <div class="cat-chip" onclick="filterCat('Hollywood', this)">HOLLYWOOD</div>
                 <div class="cat-chip" onclick="filterCat('K-Drama', this)">K-DRAMA</div>
                 <div class="cat-chip" onclick="filterCat('Horror', this)">HORROR</div>
-                <div class="cat-chip" onclick="verify18(this)">18+</div>
+                <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
         </div>
@@ -624,6 +573,10 @@ async def web_ui():
         <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
         <div id="tabUpcoming" class="page-section"><h3 style="padding: 15px; color: #38bdf8;">🌟 আপকামিং</h3><div class="movie-list" id="movieListUpcoming"></div></div>
         <div id="tabProfile" class="page-section"><div class="profile-card"><div style="text-align: center;"><h2 id="profileName">User</h2></div><div id="profileLinksContainer"></div></div></div>
+
+        <!-- Floating Buttons Provided By User -->
+        <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="floating-btn btn-tg"><i class="fa-brands fa-telegram"></i></a>
+        <a href="https://t.me/+W5V9-mn08jMyYTE1" class="floating-btn btn-18">18+</a>
 
         <div class="bottom-nav">
             <button class="nav-item active" onclick="switchTab('home', this)"><i class="fa-solid fa-house"></i>Home</button>
@@ -678,6 +631,9 @@ async def web_ui():
             let adCompleted = false; 
             let adAborted = false;
 
+            // FIX: Caching Array to prevent onclick JSON parse errors
+            let currentViewMovies = [];
+
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
 
@@ -686,7 +642,7 @@ async def web_ui():
             }
             
             async function fetchProfileLinks() { 
-                try { const res = await fetch('/api/profile'); const data = await res.json(); let html = ''; if(data.tg_link) html += '<a href="'+data.tg_link+'" class="profile-link"><i class="fa-brands fa-telegram"></i> Join Channel</a>'; if(data.link_18) html += '<a href="'+data.link_18+'" class="profile-link"><i class="fa-solid fa-ban"></i> 18+ Channel</a>'; document.getElementById('profileLinksContainer').innerHTML = html || '<p style="color:#64748b; text-align:center;">কোনো লিংক নেই।</p>'; } catch(e) {} 
+                try { const res = await fetch('/api/profile'); const data = await res.json(); let html = ''; if(data.tg_link) html += '<a href="'+data.tg_link+'" class="profile-link"><i class="fa-brands fa-telegram"></i> Join Channel</a>'; document.getElementById('profileLinksContainer').innerHTML = html || '<p style="color:#64748b; text-align:center;">কোনো লিংক নেই।</p>'; } catch(e) {} 
             }
 
             function switchTab(tabName, btnEl) { 
@@ -702,29 +658,44 @@ async def web_ui():
             }
             
             function filterCat(cat, btnEl) { activeCat = cat; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(); }
-            function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { filterCat('18+', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
-            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); filterCat('18+', active18Btn); }
+            function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
+            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); filterCat('Adult Content', active18Btn); }
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
             async function loadHomeMovies() { 
                 const list = document.getElementById('movieListHome'); 
                 list.innerHTML = '<div class="skeleton"></div>'; 
-                try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); list.innerHTML = data.movies && data.movies.length > 0 ? data.movies.map(m => createMovieCard(m)).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) {} 
+                try { 
+                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
+                } catch(e) {} 
             }
             
             async function searchMovies() { 
                 const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); 
                 if(!q) { list.innerHTML = ''; return; } 
-                try { const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); const data = await res.json(); list.innerHTML = data.movies && data.movies.length > 0 ? data.movies.map(m => createMovieCard(m)).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; } catch(e) {} 
+                try { 
+                    const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; 
+                } catch(e) {} 
             }
 
-            function createMovieCard(m) { 
+            function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
                 let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
-                return '<div class="movie-card" onclick="openDetail('+JSON.stringify(m).replace(/'/g, "&#39;")+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav(\''+m._id+'\', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
+                // FIX: Passing index instead of JSON object to prevent quote syntax errors
+                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav(\''+m._id+'\', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
             }
 
-            function openDetail(m) { 
+            // FIX: Using index to safely get data
+            function openDetail(index) { 
+                let m = currentViewMovies[index];
+                if(!m) return;
+                
                 document.getElementById('detailImg').src = '/api/image/'+m.photo_id; 
                 document.getElementById('detailTitle').innerText = m._id; 
                 document.getElementById('detailMeta').innerHTML = '<span>'+(m.year || 'N/A')+'</span>'; 
@@ -771,13 +742,13 @@ async def web_ui():
             
             function shareMovie() { const t = document.getElementById('detailTitle').innerText; tg.openTelegramLink('https://t.me/share/url?url=https://t.me/'+BOT_UNAME+'?start=new&text=Watch '+t); }
 
-            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); list.innerHTML = data.length > 0 ? data.map(m => createMovieCard(m)).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
+            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
             
             async function toggleFav(title, btnEl) { 
                 try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} 
             }
             
-            async function loadUpcoming() { const list = document.getElementById('movieListUpcoming'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/upcoming'); const data = await res.json(); list.innerHTML = data.length > 0 ? data.map(function(m) { return '<div class="movie-card" style="cursor:default;"><img src="/api/image/'+m.photo_id+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div><div class="movie-meta"><span>'+(m.language || '')+'</span></div></div></div>'; }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; } catch(e) {} }
+            async function loadUpcoming() { const list = document.getElementById('movieListUpcoming'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/upcoming'); const data = await res.json(); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div></div></div>'; }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; } catch(e) {} }
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(); loadFavorites();
@@ -805,15 +776,13 @@ async def get_user_info(uid: int):
 @app.get("/api/profile")
 async def get_profile_links():
     cfg = await db.settings.find_one({"id": "profile"})
-    b18 = await db.settings.find_one({"id": "link_18"})
     tg_link = cfg.get("tg_link", "") if cfg else ""
-    link_18 = b18.get("url", "") if b18 else ""
-    return {"tg_link": tg_link, "link_18": link_18}
+    return {"tg_link": tg_link}
 
 @app.get("/api/list")
 async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home"):
     if uid in banned_cache:
-        return {"error": "banned"}
+        return {"movies": []}
     limit = 20
     unlocked_ids = []
     if uid != 0:
