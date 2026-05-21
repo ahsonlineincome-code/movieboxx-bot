@@ -459,7 +459,211 @@ async def handle_trx_approval(c: types.CallbackQuery):
 @app.get("/admin", response_class=HTMLResponse)
 async def web_admin_panel(auth: bool = Depends(verify_admin)):
     return HTMLResponse("<h1>Admin Panel</h1>")
+# ==========================================
+# 14. Advanced Admin Panel & APIs
+# ==========================================
+@app.get("/panel", response_class=HTMLResponse)
+async def admin_panel_ui(auth: bool = Depends(verify_admin)):
+    html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Movie Box - Admin Panel</title>
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+            body { background: #0f172a; color: #e2e8f0; }
+            .header { background: #1e293b; padding: 20px; border-bottom: 2px solid #ef4444; display: flex; justify-content: space-between; align-items: center; }
+            .header h1 { color: #ef4444; font-size: 24px; }
+            .nav { display: flex; gap: 15px; background: #1e293b; padding: 15px 20px; }
+            .nav-btn { padding: 10px 20px; background: #334155; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.3s; }
+            .nav-btn.active, .nav-btn:hover { background: #ef4444; }
+            
+            .container { padding: 20px; }
+            .section { display: none; }
+            .section.active { display: block; }
+            
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
+            .stat-card { background: #1e293b; padding: 25px; border-radius: 12px; border-left: 5px solid; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+            .stat-card.blue { border-color: #3b82f6; }
+            .stat-card.red { border-color: #ef4444; }
+            .stat-card.green { border-color: #10b981; }
+            .stat-card.yellow { border-color: #f59e0b; }
+            .stat-title { font-size: 14px; color: #94a3b8; margin-bottom: 10px; text-transform: uppercase; }
+            .stat-value { font-size: 32px; font-weight: bold; }
+            
+            table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
+            th, td { padding: 15px; text-align: left; border-bottom: 1px solid #334155; }
+            th { background: #334155; color: #ef4444; font-weight: 600; }
+            tr:hover { background: #263348; }
+            .btn-del { background: #dc2626; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+            .btn-del:hover { background: #b91c1c; }
+            .badge { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+            .badge-vip { background: #f59e0b; color: #000; }
+            .badge-free { background: #64748b; color: #fff; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1><i class="fa-solid fa-clapperboard"></i> Movie Box Admin</h1>
+            <p style="color:#94a3b8;">Welcome, Owner</p>
+        </div>
+        <div class="nav">
+            <button class="nav-btn active" onclick="switchSection('dashboard', this)"><i class="fa-solid fa-chart-line"></i> Dashboard</button>
+            <button class="nav-btn" onclick="switchSection('users', this)"><i class="fa-solid fa-users"></i> Users</button>
+            <button class="nav-btn" onclick="switchSection('movies', this)"><i class="fa-solid fa-film"></i> Movies</button>
+        </div>
+        
+        <div class="container">
+            <div id="sec-dashboard" class="section active">
+                <div class="stats-grid">
+                    <div class="stat-card blue"><div class="stat-title">Total Users</div><div class="stat-value" id="statUsers">0</div></div>
+                    <div class="stat-card red"><div class="stat-title">Total Movies</div><div class="stat-value" id="statMovies">0</div></div>
+                    <div class="stat-card green"><div class="stat-title">Total Clicks</div><div class="stat-value" id="statClicks">0</div></div>
+                    <div class="stat-card yellow"><div class="stat-title">VIP Users</div><div class="stat-value" id="statVip">0</div></div>
+                </div>
+            </div>
 
+            <div id="sec-users" class="section">
+                <h2 style="margin-bottom:15px;">👥 All Users</h2>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>ID</th><th>Name</th><th>Join Date</th><th>Status</th></tr></thead>
+                        <tbody id="userTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="sec-movies" class="section">
+                <h2 style="margin-bottom:15px;">🎬 All Movies (Clicks & Delete)</h2>
+                <div style="overflow-x:auto;">
+                    <table>
+                        <thead><tr><th>Title</th><th>Quality</th><th>Year</th><th>Clicks</th><th>Action</th></tr></thead>
+                        <tbody id="movieTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const baseAPI = '/panel/api';
+            let currentAuth = btoa("admin:__ADMIN_PASS__");
+
+            async function apiCall(endpoint) {
+                const res = await fetch(baseAPI + endpoint, { headers: { 'Authorization': 'Basic ' + currentAuth } });
+                return await res.json();
+            }
+
+            function switchSection(secId, btnEl) {
+                document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+                document.getElementById('sec-'+secId).classList.add('active');
+                btnEl.classList.add('active');
+            }
+
+            async function loadDashboard() {
+                const data = await apiCall('/stats');
+                document.getElementById('statUsers').innerText = data.users;
+                document.getElementById('statMovies').innerText = data.movies;
+                document.getElementById('statClicks').innerText = data.clicks;
+                document.getElementById('statVip').innerText = data.vip;
+            }
+
+            async function loadUsers() {
+                const users = await apiCall('/users');
+                const tbody = document.getElementById('userTableBody');
+                tbody.innerHTML = '';
+                users.forEach(u => {
+                    const isVip = u.vip;
+                    tbody.innerHTML += `<tr>
+                        <td>${u.user_id}</td>
+                        <td>${u.first_name}</td>
+                        <td>${u.joined_at}</td>
+                        <td><span class="badge ${isVip ? 'badge-vip' : 'badge-free'}">${isVip ? 'VIP' : 'FREE'}</span></td>
+                    </tr>`;
+                });
+            }
+
+            async function loadMovies() {
+                const movies = await apiCall('/movies');
+                const tbody = document.getElementById('movieTableBody');
+                tbody.innerHTML = '';
+                movies.forEach(m => {
+                    tbody.innerHTML += `<tr id="row-${m._id}">
+                        <td><b>${m.title}</b></td>
+                        <td>${m.quality}</td>
+                        <td>${m.year}</td>
+                        <td><b style="color:#10b981;">${m.clicks}</b> views</td>
+                        <td><button class="btn-del" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td>
+                    </tr>`;
+                });
+            }
+
+            async function deleteMovie(movieId) {
+                if(confirm('Are you sure you want to delete this movie?')) {
+                    const res = await fetch(baseAPI + '/delete_movie/' + movieId, { 
+                        method: 'DELETE',
+                        headers: { 'Authorization': 'Basic ' + currentAuth } 
+                    });
+                    const data = await res.json();
+                    if(data.ok) {
+                        document.getElementById('row-'+movieId).remove();
+                        loadDashboard(); // refresh stats
+                    } else {
+                        alert('Failed to delete!');
+                    }
+                }
+            }
+
+            // Initial Load
+            loadDashboard();
+            loadUsers();
+            loadMovies();
+        </script>
+    </body>
+    </html>
+    """
+    html = html.replace("__ADMIN_PASS__", ADMIN_PASS)
+    return HTMLResponse(html)
+
+@app.get("/panel/api/stats")
+async def admin_api_stats(auth: bool = Depends(verify_admin)):
+    total_users = await db.users.count_documents({})
+    total_movies = await db.movies.count_documents({})
+    total_vip = await db.users.count_documents({"vip_until": {"$gt": datetime.datetime.utcnow()}})
+    
+    pipeline = [{"$group": {"_id": None, "total_clicks": {"$sum": "$clicks"}}}]
+    res = await db.movies.aggregate(pipeline).to_list(1)
+    total_clicks = res[0]["total_clicks"] if res else 0
+    
+    return {"users": total_users, "movies": total_movies, "clicks": total_clicks, "vip": total_vip}
+
+@app.get("/panel/api/users")
+async def admin_api_users(auth: bool = Depends(verify_admin)):
+    users = await db.users.find().sort("joined_at", -1).to_list(1000)
+    for u in users:
+        u["_id"] = str(u["_id"])
+        u["joined_at"] = u["joined_at"].strftime("%Y-%m-%d %H:%M")
+        u["vip"] = u.get("vip_until", datetime.datetime.utcnow()) > datetime.datetime.utcnow()
+    return users
+
+@app.get("/panel/api/movies")
+async def admin_api_movies(auth: bool = Depends(verify_admin)):
+    movies = await db.movies.find().sort("created_at", -1).to_list(1000)
+    for m in movies:
+        m["_id"] = str(m["_id"])
+        m["created_at"] = m["created_at"].strftime("%Y-%m-%d %H:%M")
+    return movies
+
+@app.delete("/panel/api/delete_movie/{movie_id}")
+async def admin_api_delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
+    try:
+        await db.movies.delete_one({"_id": ObjectId(movie_id)})
+        return {"ok": True}
+    except:
+        return {"ok": False}
 # ==========================================
 # 11. Main Web App UI (Fixed Syntax Error)
 # ==========================================
