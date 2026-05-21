@@ -867,7 +867,7 @@ async def web_ui():
 
         <div id="successModal" class="modal"><div class="modal-content" style="text-align: center; padding-top: 40px;"><i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i><h2>ফাইল পাঠানো হয়েছে!</h2><br><button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button></div></div>
 
-        <script>
+                <script>
             let tg = window.Telegram.WebApp; 
             tg.expand();
             const DIRECT_LINKS = __DL_JSON__; 
@@ -958,7 +958,7 @@ async def web_ui():
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
                 let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
-                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav('+"'"+m._id+"'"+', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
+                return `<div class="movie-card" onclick="openDetail(${index})"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m._id}</div><div class="movie-meta"><span>${m.year || 'N/A'}</span><span>${m.files ? m.files.length : 0} Files</span></div><div class="movie-cats">${catsHtml}</div></div><button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button></div>`; 
             }
 
             function openDetail(index) { 
@@ -971,7 +971,7 @@ async def web_ui():
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(' '); 
                 let btnsHtml = m.files.map(function(f) { 
                     let isFree = f.is_unlocked || isUserVip; 
-                    return '<button class="dl-file-btn '+(isFree ? 'unlocked' : '')+'" onclick="handleFileClick('+"'"+f.id+"'"+', '+(isFree ? 'true' : 'false')+')"><span><i class="fa-solid fa-'+(isFree ? 'lock-open' : 'lock')+'"></i> Download '+f.quality+'</span></button>'; 
+                    return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
                 }).join(''); 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
                 document.getElementById('detailModal').style.display = 'flex'; 
@@ -1016,20 +1016,24 @@ async def web_ui():
             }
             
             async function loadUpcoming() { 
-    const list = document.getElementById('movieListUpcoming'); 
-    list.innerHTML = '<div class="skeleton"></div>'; 
-    try { 
-        const res = await fetch('/api/upcoming'); 
-        const data = await res.json(); 
-        currentViewMovies = data; 
-        list.innerHTML = data.length > 0 ? data.map(function(m, index) { 
-            let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
-            return '<div class="movie-card" onclick="tg.showAlert(\'🌟 এটি একটি আপকামিং মুভি! রিলিজ: ' + releaseTxt + '\')"><img src="/api/image/'+m.photo_id+'" onerror="this.src=\'https://via.placeholder.com/110x160\'"><div class="movie-info"><div class="movie-title">'+m.title+'</div><div class="movie-meta"><span style="color:#38bdf8;">'+releaseTxt+'</span></div></div></div>'; 
-        }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; 
-    } catch(e) { 
-        console.error(e);
-    } 
-}
+                const list = document.getElementById('movieListUpcoming'); 
+                list.innerHTML = '<div class="skeleton"></div>'; 
+                try { 
+                    const res = await fetch('/api/upcoming'); 
+                    const data = await res.json(); 
+                    currentViewMovies = data; 
+                    if(data.length > 0) {
+                        list.innerHTML = data.map(function(m, index) { 
+                            let releaseTxt = m.release_date ? m.release_date : 'Coming Soon';
+                            return `<div class="movie-card" onclick="tg.showAlert('🌟 এটি একটি আপকামিং মুভি! রিলিজ: ${releaseTxt}')"><img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/110x160'"><div class="movie-info"><div class="movie-title">${m.title}</div><div class="movie-meta"><span style="color:#38bdf8;">${releaseTxt}</span></div></div></div>`; 
+                        }).join('');
+                    } else {
+                        list.innerHTML = '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>';
+                    }
+                } catch(e) { 
+                    console.error(e);
+                } 
+            }
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(); loadFavorites();
