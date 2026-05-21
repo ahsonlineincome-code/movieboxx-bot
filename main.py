@@ -215,7 +215,6 @@ async def start_cmd(message: types.Message, state: FSMContext):
         text += "\n\n⚙️ <b>অ্যাডমিন মোড অন.</b>"
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
-# Admin Stats Command
 @dp.message(Command("stats"))
 async def bot_stats(m: types.Message):
     if m.from_user.id not in admin_cache:
@@ -467,15 +466,10 @@ async def web_admin_panel(auth: bool = Depends(verify_admin)):
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
     dl_cfg = await db.settings.find_one({"id": "direct_links"})
-    bkash_cfg = await db.settings.find_one({"id": "bkash_no"})
-    nagad_cfg = await db.settings.find_one({"id": "nagad_no"})
-    
-    bkash_no = bkash_cfg['number'] if bkash_cfg else "Not Set"
-    nagad_no = nagad_cfg['number'] if nagad_cfg else "Not Set"
     direct_links = dl_cfg.get('links', []) if dl_cfg else []
     dl_json = json.dumps(direct_links)
 
-    html_code = """
+    html_code = '''
     <!DOCTYPE html>
     <html lang="bn">
     <head>
@@ -759,4 +753,255 @@ async def web_ui():
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
                 let catsHtml = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(''); 
-                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span
+                return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'" onerror="this.src='+"'https://via.placeholder.com/110x160'"+'"><div class="movie-info"><div class="movie-title">'+m._id+'</div><div class="movie-meta"><span>'+(m.year || 'N/A')+'</span><span>'+(m.files ? m.files.length : 0)+' Files</span></div><div class="movie-cats">'+catsHtml+'</div></div><button class="fav-btn '+(isFav ? 'active' : '')+'" onclick="event.stopPropagation(); toggleFav('+"'"+m._id+"'"+', this)"><i class="fa-solid fa-heart"></i></button></div>'; 
+            }
+
+            function openDetail(index) { 
+                let m = currentViewMovies[index];
+                if(!m) return;
+                
+                document.getElementById('detailImg').src = '/api/image/'+m.photo_id; 
+                document.getElementById('detailTitle').innerText = m._id; 
+                document.getElementById('detailMeta').innerHTML = '<span>'+(m.year || 'N/A')+'</span>'; 
+                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return '<span class="movie-cat-tag">'+c+'</span>'; }).join(' '); 
+                let btnsHtml = m.files.map(function(f) { 
+                    let isFree = f.is_unlocked || isUserVip; 
+                    return '<button class="dl-file-btn '+(isFree ? 'unlocked' : '')+'" onclick="handleFileClick('+"'"+f.id+"'"+', '+(isFree ? 'true' : 'false')+')"><span><i class="fa-solid fa-'+(isFree ? 'lock-open' : 'lock')+'"></i> Download '+f.quality+'</span></button>'; 
+                }).join(''); 
+                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
+                document.getElementById('detailModal').style.display = 'flex'; 
+            }
+
+            function handleFileClick(fileId, isFree) { 
+                activeFileId = fileId; 
+                if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } 
+            }
+
+            function resetAdModal() { clearInterval(adInterval); adTimeLeft = 15; adCompleted = false; adAborted = false; document.getElementById('adTimerText').style.display = 'none'; document.getElementById('adClickBtn').style.display = 'block'; document.getElementById('adClickBtn').className = 'ad-action-btn btn-ad-open'; document.getElementById('adTryAgainBtn').style.display = 'none'; }
+            
+            function handleAppFocus() { 
+                if(!adCompleted && !adAborted && adTimeLeft > 0) { 
+                    clearInterval(adInterval); adAborted = true; 
+                    document.getElementById('adTimerText').style.display = 'none'; document.getElementById('adClickBtn').style.display = 'none'; 
+                    document.getElementById('adTryAgainBtn').style.display = 'block'; document.getElementById('adTryAgainBtn').innerText = 'TRY AGAIN'; document.getElementById('adTryAgainBtn').className = 'ad-action-btn btn-ad-tryagain'; 
+                    window.removeEventListener('focus', handleAppFocus); 
+                } 
+            }
+            
+            function openAdLink() { 
+                if (DIRECT_LINKS && DIRECT_LINKS.length > 0) { tg.openLink(DIRECT_LINKS[Math.floor(Math.random() * DIRECT_LINKS.length)]); } 
+                document.getElementById('adClickBtn').style.display = 'none'; document.getElementById('adTimerText').style.display = 'block'; 
+                window.addEventListener('focus', handleAppFocus); 
+                adInterval = setInterval(function() { 
+                    adTimeLeft--; document.getElementById('timerCount').innerText = adTimeLeft; 
+                    if(adTimeLeft <= 0) { clearInterval(adInterval); adCompleted = true; window.removeEventListener('focus', handleAppFocus); document.getElementById('adTimerText').style.display = 'none'; document.getElementById('adTryAgainBtn').style.display = 'block'; document.getElementById('adTryAgainBtn').innerText = 'UNLOCK FILE'; document.getElementById('adTryAgainBtn').className = 'ad-action-btn btn-ad-unlock'; } 
+                }, 1000); 
+            }
+            
+            function adTryAgainAction() { if(adCompleted) { closeModal('adModal'); sendFileRequest(activeFileId); } else { resetAdModal(); } }
+
+            async function sendFileRequest(fileId) { 
+                try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} 
+            }
+            
+            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
+            
+            async function toggleFav(title, btnEl) { 
+                try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} 
+            }
+            
+            async function loadUpcoming() { const list = document.getElementById('movieListUpcoming'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/upcoming'); const data = await res.json(); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return '<div class="movie-card" onclick="openDetail('+index+')"><img src="/api/image/'+m.photo_id+'"><div class="movie-info"><div class="movie-title">'+m.title+'</div></div></div>'; }).join('') : '<p style="text-align:center; color:#64748b;">কোনো আপকামিং নেই!</p>'; } catch(e) {} }
+
+            document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
+            fetchUserInfo(); loadHomeMovies(); loadFavorites();
+        </script>
+    </body>
+    </html>
+    '''
+    html_code = html_code.replace("__DL_JSON__", dl_json).replace("__BOT_UNAME__", BOT_USERNAME)
+    return html_code
+
+
+# ==========================================
+# 12. Main Web App APIs
+# ==========================================
+@app.get("/api/user/{uid}")
+async def get_user_info(uid: int):
+    user = await db.users.find_one({"user_id": uid})
+    if not user:
+        return {"vip": False}
+    now = datetime.datetime.utcnow()
+    vip_until = user.get("vip_until")
+    is_vip = vip_until and vip_until > now
+    return {"vip": is_vip}
+
+@app.get("/api/profile")
+async def get_profile_links():
+    cfg = await db.settings.find_one({"id": "profile"})
+    tg_link = cfg.get("tg_link", "") if cfg else ""
+    return {"tg_link": tg_link}
+
+@app.get("/api/list")
+async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home"):
+    if uid in banned_cache:
+        return {"movies": []}
+    limit = 20
+    unlocked_ids = []
+    if uid != 0:
+        time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+            unlocked_ids.append(u["movie_id"])
+            
+    match_stage = {}
+    if q:
+        match_stage["title"] = {"$regex": q, "$options": "i"}
+    if cat and cat != "Home":
+        match_stage["categories"] = {"$in": [cat]}
+        
+    pipeline = [
+        {"$match": match_stage}, 
+        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
+        {"$sort": {"created_at": -1}}, 
+        {"$skip": (page - 1) * limit}, 
+        {"$limit": limit}
+    ]
+    movies = await db.movies.aggregate(pipeline).to_list(limit)
+    for m in movies:
+        for f in m["files"]:
+            f["is_unlocked"] = f["id"] in unlocked_ids
+    return {"movies": movies}
+
+@app.get("/api/upcoming")
+async def upcoming_movies():
+    movies = await db.upcoming.find().sort("added_at", -1).to_list(20)
+    return movies
+
+@app.get("/api/image/{photo_id}")
+async def get_image(photo_id: str):
+    try:
+        cache = await db.file_cache.find_one({"photo_id": photo_id})
+        now = datetime.datetime.utcnow()
+        if cache and cache.get("expires_at", now) > now:
+            file_path = cache["file_path"]
+        else:
+            file_info = await bot.get_file(photo_id)
+            file_path = file_info.file_path
+            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(minutes=50)}}, upsert=True)
+            
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        async def stream():
+            async with aiohttp.ClientSession() as s:
+                async with s.get(file_url) as r:
+                    async for c in r.content.iter_chunked(1024):
+                        yield c
+        return StreamingResponse(stream(), media_type="image/jpeg")
+    except:
+        return {"error": "not found"}
+
+class SendRequestModel(BaseModel):
+    userId: int
+    movieId: str
+    initData: str
+
+@app.post("/api/send")
+async def send_file(d: SendRequestModel):
+    if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData):
+        return {"ok": False}
+    try:
+        m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
+        if m:
+            now = datetime.datetime.utcnow()
+            user_data = await db.users.find_one({"user_id": d.userId})
+            is_vip = user_data and user_data.get("vip_until", now) > now
+            time_cfg = await db.settings.find_one({"id": "del_time"})
+            del_minutes = time_cfg['minutes'] if time_cfg else 60
+            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            
+            if m.get("file_type") == "video":
+                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+            else:
+                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+                
+            await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
+            await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
+            
+            if sent_msg and not is_vip:
+                delete_at = now + datetime.timedelta(minutes=del_minutes)
+                await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
+        return {"ok": True}
+    except:
+        return {"ok": False}
+
+@app.get("/api/favs/{uid}")
+async def get_favs(uid: int):
+    user = await db.users.find_one({"user_id": uid})
+    if not user:
+        return []
+    fav_titles = user.get("favorites", [])
+    if not fav_titles:
+        return []
+    pipeline = [
+        {"$match": {"title": {"$in": fav_titles}}}, 
+        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
+    ]
+    return await db.movies.aggregate(pipeline).to_list(len(fav_titles))
+
+class FavModel(BaseModel):
+    uid: int
+    title: str
+    initData: str
+
+@app.post("/api/fav/toggle")
+async def toggle_fav(data: FavModel):
+    if not validate_tg_data(data.initData):
+        return {"isFav": False}
+    user = await db.users.find_one({"user_id": data.uid})
+    favs = user.get("favorites", []) if user else []
+    if data.title in favs:
+        await db.users.update_one({"user_id": data.uid}, {"$pull": {"favorites": data.title}})
+        return {"isFav": False}
+    else:
+        await db.users.update_one({"user_id": data.uid}, {"$push": {"favorites": data.title}})
+        return {"isFav": True}
+
+class PaymentModel(BaseModel):
+    uid: int
+    method: str
+    trx_id: str
+    days: int
+    price: int
+    initData: str
+
+@app.post("/api/payment/submit")
+async def submit_payment(data: PaymentModel):
+    if not validate_tg_data(data.initData):
+        return {"ok": False}
+    if await db.payments.find_one({"trx_id": data.trx_id}):
+        return {"ok": False, "msg": "TrxID used!"}
+    res = await db.payments.insert_one({"user_id": data.uid, "method": data.method, "trx_id": data.trx_id, "amount": data.price, "days": data.days, "status": "pending"})
+    try:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Approve", callback_data=f"trx_approve_{res.inserted_id}")
+        builder.button(text="❌ Reject", callback_data=f"trx_reject_{res.inserted_id}")
+        await bot.send_message(OWNER_ID, f"💰 <b>Payment!</b>\n👤 <code>{data.uid}</code>\n🏦 {data.method.upper()}\n🧾 <code>{data.trx_id}</code>\n💵 {data.price} BDT", parse_mode="HTML", reply_markup=builder.as_markup())
+    except:
+        pass
+    return {"ok": True}
+
+# ==========================================
+# 13. Main Application Startup
+# ==========================================
+async def start():
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    port = int(os.getenv("PORT", 8000))
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
+    server = uvicorn.Server(config)
+    asyncio.create_task(auto_delete_worker())
+    await bot.delete_webhook(drop_pending_updates=True)
+    await asyncio.gather(server.serve(), dp.start_polling(bot))
+
+if __name__ == "__main__": 
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start())
