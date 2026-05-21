@@ -16,7 +16,8 @@ import json
 try:
     asyncio.get_running_loop()
 except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())\n# ==========================================
+    asyncio.set_event_loop(asyncio.new_event_loop())
+# ==========================================
 
 from fastapi import FastAPI, Body, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -28,7 +29,8 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.storage.memory import MemoryStorage\n
+from aiogram.fsm.storage.memory import MemoryStorage
+
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pydantic import BaseModel
