@@ -66,6 +66,7 @@ admin_cache = set([OWNER_ID])
 banned_cache = set() 
 
 CATEGORIES = ["Bangla", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
+JOIN_LINK = "https://t.me/addlist/MwbWNafSFK4yZjhl"
 
 # ==========================================
 # 2. FSM States
@@ -179,7 +180,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
 
-    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
+    tg_link = JOIN_LINK
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
     kb = [
@@ -210,8 +211,30 @@ async def forward_to_admin(m: types.Message):
     except: pass
 
 # ==========================================
-# 7. Admin Commands & Movie Upload
+# 7. Admin Commands, Reply & Movie Upload
 # ==========================================
+@dp.callback_query(F.data.startswith("reply_"))
+async def reply_callback(c: types.CallbackQuery, state: FSMContext):
+    if c.from_user.id not in admin_cache: 
+        return await c.answer("⚠️ Only Admins!", show_alert=True)
+    target_id = int(c.data.split("_")[1])
+    await state.set_state(AdminStates.waiting_for_reply)
+    await state.update_data(target_user_id=target_id)
+    await c.message.answer("✍️ রিপ্লাই মেসেজ লিখুন:")
+    await c.answer()
+
+@dp.message(AdminStates.waiting_for_reply, F.text)
+async def send_admin_reply(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    target_id = data.get("target_user_id")
+    if target_id:
+        try:
+            await bot.send_message(target_id, f"📩 <b>Admin Reply:</b>\n\n{m.text}", parse_mode="HTML")
+            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
+        except:
+            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ।")
+    await state.clear()
+
 @dp.message(Command("addlink"))
 async def add_direct_link(m: types.Message):
     if m.from_user.id not in admin_cache: return
@@ -343,14 +366,45 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API
+# 8. Web Admin Panel API (Fixed & UI Added)
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    return HTMLResponse("<h1>Admin Panel Active</h1>")
+    total_users = await db.users.count_documents({})
+    total_movies = await db.movies.count_documents({})
+    vip_users = await db.users.count_documents({"vip_until": {"$gt": datetime.datetime.utcnow()}})
+    pending_payments = await db.payments.count_documents({"status": "pending"})
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Admin Panel - Movie Box</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; }}
+            .header {{ text-align: center; margin-bottom: 30px; }}
+            .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }}
+            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; }}
+            .card h2 {{ margin: 0; font-size: 32px; color: #ef4444; }}
+            .card p {{ margin: 5px 0 0; color: #94a3b8; }}
+        </style>
+    </head>
+    <body>
+        <div class="header"><h1>🎬 Movie Box Admin</h1></div>
+        <div class="cards">
+            <div class="card"><h2>{total_users}</h2><p>Total Users</p></div>
+            <div class="card"><h2>{total_movies}</h2><p>Total Movies</p></div>
+            <div class="card"><h2>{vip_users}</h2><p>VIP Users</p></div>
+            <div class="card"><h2>{pending_payments}</h2><p>Pending Payments</p></div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
 
 # ==========================================
-# 9. Main Web App UI (Shuffle & Join Channel Added)
+# 9. Main Web App UI (Join Banner Added)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -447,6 +501,11 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
+            
+            /* Join Banner CSS */
+            .join-banner { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(45deg, #24A1DE, #1b7ba8); margin: 10px 15px; border-radius: 10px; padding: 8px 15px; font-weight: 600; font-size: 13px; }
+            .join-banner-btn { background: #fff; color: #24A1DE; padding: 5px 15px; border-radius: 8px; text-decoration: none; font-weight: 800; font-size: 12px; margin: 0 10px; }
+            .join-banner-close { background: none; border: none; color: white; font-size: 20px; cursor: pointer; line-height: 1; }
         </style>
     </head>
     <body>
@@ -465,6 +524,11 @@ async def web_ui():
         </header>
 
         <div id="tabHome" class="page-section active">
+            <div id="joinBanner" class="join-banner">
+                <span>🚀 নতুন মুভি পেতে জয়েন করুন!</span>
+                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="join-banner-btn" target="_blank">Join</a>
+                <button class="join-banner-close" onclick="closeJoinBanner()">&times;</button>
+            </div>
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             <div class="cat-row">
                 <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
@@ -566,6 +630,9 @@ async def web_ui():
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
+
+            function closeJoinBanner() { document.getElementById('joinBanner').style.display = 'none'; localStorage.setItem('joinBannerClosed', 'true'); }
+            if(localStorage.getItem('joinBannerClosed') === 'true') { document.getElementById('joinBanner').style.display = 'none'; }
 
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
             
@@ -720,16 +787,25 @@ async def send_file(d: SendRequestModel):
             is_vip = user_data and user_data.get("vip_until", now) > now
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
-            if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
-            else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+            
+            # Modified Caption with Join Link and Auto-Delete Time
+            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n⚠️ এই ফাইলটি <b>{del_minutes} মিনিট</b> পর অটোমেটিক ডিলিট হয়ে যাবে!\n🚀 নতুন মুভি পেতে চ্যানেলে জয়েন করুন।"
+            join_kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🚀 Join Channel", url=JOIN_LINK)]])
+            
+            if m.get("file_type") == "video": 
+                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
+            else: 
+                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
+                
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
             if sent_msg and not is_vip:
                 delete_at = now + datetime.timedelta(minutes=del_minutes)
                 await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
         return {"ok": True}
-    except: return {"ok": False}
+    except Exception as e:
+        print(f"Send Error: {e}")
+        return {"ok": False}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
