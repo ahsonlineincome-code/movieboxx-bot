@@ -46,7 +46,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439")
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
 
-bot = Bot(token=TOKEN if TOKEN else "dummy_token")
+bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 security = HTTPBasic()
@@ -59,7 +59,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-client = AsyncIOMotorClient(MONGO_URL if MONGO_URL else "mongodb://localhost:27017")
+client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_database']
 
 admin_cache = set([OWNER_ID]) 
@@ -97,16 +97,13 @@ async def load_banned_users():
         banned_cache.add(b_user["user_id"])
 
 async def init_db():
-    try:
-        await db.movies.create_index([("title", "text")])
-        await db.movies.create_index("title")
-        await db.movies.create_index("created_at")
-        await db.movies.create_index("categories")
-        await db.auto_delete.create_index("delete_at")
-        await db.users.create_index("joined_at")
-        await db.payments.create_index("trx_id", unique=True)
-    except Exception as e:
-        print(f"DB Index Error: {e}")
+    await db.movies.create_index([("title", "text")])
+    await db.movies.create_index("title")
+    await db.movies.create_index("created_at")
+    await db.movies.create_index("categories")
+    await db.auto_delete.create_index("delete_at")
+    await db.users.create_index("joined_at")
+    await db.payments.create_index("trx_id", unique=True)
 
 # ==========================================
 # 4. Security & Authentication Methods
@@ -184,10 +181,9 @@ async def start_cmd(message: types.Message, state: FSMContext):
 
     tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-    final_app_url = APP_URL if APP_URL else "https://google.com"
 
     kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=final_app_url))],
+        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
         [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
@@ -214,30 +210,8 @@ async def forward_to_admin(m: types.Message):
     except: pass
 
 # ==========================================
-# 7. Admin Commands, Reply & Movie Upload
+# 7. Admin Commands & Movie Upload
 # ==========================================
-@dp.callback_query(F.data.startswith("reply_"))
-async def reply_callback(c: types.CallbackQuery, state: FSMContext):
-    if c.from_user.id not in admin_cache: 
-        return await c.answer("⚠️ Only Admins!", show_alert=True)
-    target_id = int(c.data.split("_")[1])
-    await state.set_state(AdminStates.waiting_for_reply)
-    await state.update_data(target_user_id=target_id)
-    await c.message.answer("✍️ রিপ্লাই মেসেজ লিখুন:")
-    await c.answer()
-
-@dp.message(AdminStates.waiting_for_reply, F.text)
-async def send_admin_reply(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-    target_id = data.get("target_user_id")
-    if target_id:
-        try:
-            await bot.send_message(target_id, f"📩 <b>Admin Reply:</b>\n\n{m.text}", parse_mode="HTML")
-            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
-        except:
-            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ।")
-    await state.clear()
-
 @dp.message(Command("addlink"))
 async def add_direct_link(m: types.Message):
     if m.from_user.id not in admin_cache: return
@@ -369,140 +343,14 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API (Fully Fixed)
+# 8. Web Admin Panel API
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Admin Panel - Movie Box</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <style>
-            body { font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; }
-            .header { text-align: center; margin-bottom: 30px; color: #ef4444; }
-            .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 30px; }
-            .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; }
-            .card h2 { margin: 0; font-size: 32px; color: #ef4444; }
-            .card p { margin: 5px 0 0; color: #94a3b8; font-size: 14px; }
-            table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; margin-top: 20px; }
-            th, td { padding: 15px; text-align: left; border-bottom: 1px solid #334155; }
-            th { background: #0f172a; color: #94a3b8; }
-            .del-btn { background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
-            .del-btn:active { transform: scale(0.95); }
-            @media (max-width: 768px) { th, td { padding: 10px; font-size: 12px; } }
-        </style>
-    </head>
-    <body>
-        <div class="header"><h1>🎬 Admin Dashboard</h1></div>
-        <div class="cards" id="statsCards"></div>
-        <h2 style="margin-bottom: 15px;">🎬 Movies Stats & Delete</h2>
-        <table>
-            <thead><tr><th>Title</th><th>Episodes</th><th>Quality</th><th>Real Views</th><th>Action</th></tr></thead>
-            <tbody id="movieTable"></tbody>
-        </table>
-
-        <script>
-            async function loadAdminData() {
-                try {
-                    const res = await fetch('/api/admin/stats');
-                    const data = await res.json();
-                    
-                    document.getElementById('statsCards').innerHTML = `
-                        <div class="card"><h2>${data.total_users}</h2><p>Total Users</p></div>
-                        <div class="card"><h2>${data.today_joined}</h2><p>Today Joined</p></div>
-                        <div class="card"><h2>${data.total_clicks}</h2><p>Total Ad Clicks</p></div>
-                        <div class="card"><h2>${data.today_clicks}</h2><p>Today Ad Clicks</p></div>
-                    `;
-
-                    let rows = '';
-                    data.movies.forEach(m => {
-                        rows += `<tr>
-                            <td><b>${m.title}</b></td>
-                            <td>${m.episodes} File(s)</td>
-                            <td>${m.qualities}</td>
-                            <td><b style="color:#4ade80">${m.clicks} Views</b></td>
-                            <td><button class="del-btn" onclick="deleteMovie('${m.title}', this)">Delete All</button></td>
-                        </tr>`;
-                    });
-                    document.getElementById('movieTable').innerHTML = rows;
-                } catch(e) {
-                    console.error(e);
-                }
-            }
-
-            async function deleteMovie(title, btn) {
-                if(confirm('Are you sure you want to delete all episodes of: ' + title + '?')) {
-                    try {
-                        const res = await fetch('/api/admin/delmovie/' + encodeURIComponent(title), {method: 'POST'});
-                        if(res.ok) {
-                            btn.closest('tr').remove();
-                        } else {
-                            alert('Failed to delete');
-                        }
-                    } catch(e) {}
-                }
-            }
-
-            loadAdminData();
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(html)
-
-@app.get("/api/admin/stats")
-async def admin_stats():
-    now = datetime.datetime.utcnow()
-    today_start = datetime.datetime(now.year, now.month, now.day)
-    
-    total_users = await db.users.count_documents({})
-    today_joined = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    total_clicks = await db.user_unlocks.count_documents({})
-    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
-    
-    # Aggregating movies to count episodes and total views per title
-    pipeline = [
-        {"$group": {
-            "_id": "$title",
-            "totalClicks": {"$sum": "$clicks"},
-            "episodeCount": {"$sum": 1},
-            "qualities": {"$push": "$quality"}
-        }},
-        {"$sort": {"totalClicks": -1}},
-        {"$limit": 100}
-    ]
-    
-    movies_raw = await db.movies.aggregate(pipeline).to_list(100)
-    movie_list = []
-    for m in movies_raw:
-        movie_list.append({
-            "title": m["_id"],
-            "clicks": m["totalClicks"],
-            "episodes": m["episodeCount"],
-            "qualities": ", ".join(m["qualities"])
-        })
-    
-    return {
-        "total_users": total_users,
-        "today_joined": today_joined,
-        "total_clicks": total_clicks,
-        "today_clicks": today_clicks,
-        "movies": movie_list
-    }
-
-@app.post("/api/admin/delmovie/{movie_title}")
-async def admin_delete_movie(movie_title: str):
-    try:
-        # Deletes all files/episodes related to this movie title
-        await db.movies.delete_many({"title": movie_title})
-        return {"ok": True}
-    except:
-        return {"ok": False}
+    return HTMLResponse("<h1>Admin Panel Active</h1>")
 
 # ==========================================
-# 9. Main Web App UI
+# 9. Main Web App UI (Shuffle & Join Channel Added)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -525,7 +373,7 @@ async def web_ui():
             body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; } 
             body.oled-mode { background: #000000; }
             #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }
-            #welcomeScreen.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+            #welcomeScreen.hide { opacity: 0; visibility: hidden; }
             .ws-brand { font-size: 48px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: pulse 1.5s infinite; }
             .ws-bn { font-size: 18px; color: #94a3b8; margin-top: 10px; opacity: 0; animation: fadeUp 1s 0.5s forwards; }
             @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
@@ -553,7 +401,6 @@ async def web_ui():
             .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
-            .btn-dna { bottom: 220px; background: linear-gradient(45deg, #8B5CF6, #6D28D9); font-weight: bold; font-size: 22px; }
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
             body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
@@ -600,17 +447,6 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
-            
-            /* DNA Scanner CSS */
-            .dna-spinner { border: 6px solid #334155; border-top: 6px solid #8B5CF6; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin: 0 auto; }
-            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            .dna-progress-bg { background: #334155; border-radius: 10px; height: 10px; margin-top: 20px; overflow: hidden; }
-            .dna-progress-fill { background: linear-gradient(45deg, #8B5CF6, #ec4899); height: 100%; width: 0%; border-radius: 10px; transition: width 0.3s; }
-            .dna-bar-box { background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #334155; text-align: left; }
-            body.oled-mode .dna-bar-box { background: #0a0a0a; border-color: #1a1a1a; }
-            .dna-bar-title { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 8px; }
-            .dna-bar-bg { background: #0f172a; height: 12px; border-radius: 6px; overflow: hidden; }
-            .dna-bar-fill { height: 100%; border-radius: 6px; transition: width 1.5s ease; }
         </style>
     </head>
     <body>
@@ -665,7 +501,6 @@ async def web_ui():
             </div>
         </div>
 
-        <button class="floating-btn btn-dna" onclick="startDnaScanner()"><i class="fa-solid fa-dna"></i></button>
         <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="floating-btn btn-tg"><i class="fa-brands fa-telegram"></i></a>
         <a href="https://t.me/+W5V9-mn08jMyYTE1" class="floating-btn btn-18">18+</a>
 
@@ -712,14 +547,9 @@ async def web_ui():
             </div>
         </div>
 
-        <div id="dnaModal" class="modal">
-            <div class="modal-content ad-box" id="dnaModalContent"></div>
-        </div>
-
         <script>
-            let tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : { expand: function(){}, initDataUnsafe: {user: {id: 0, first_name: "User"}}, close: function(){}, openLink: function(url){ window.open(url,'_blank'); } }; 
-            try { tg.expand(); } catch(e) {}
-            
+            let tg = window.Telegram.WebApp; 
+            tg.expand();
             const DIRECT_LINKS = __DL_JSON__; 
             const INIT_DATA = tg.initData || ""; 
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
@@ -734,7 +564,7 @@ async def web_ui():
             let adAborted = false;
             let currentViewMovies = [];
 
-            setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 3000);
+            setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
 
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
@@ -758,7 +588,7 @@ async def web_ui():
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
 
-            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); if(!res.ok) throw new Error('API Error'); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) { list.innerHTML = '<p style="text-align:center; color:#ef4444; padding:30px;">Server Error! Check Env Vars</p>'; } }
+            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) {} }
             async function searchMovies() { const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); if(!q) { list.innerHTML = ''; return; } try { const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; } catch(e) {} }
 
             function createMovieCard(m, index) { 
@@ -807,59 +637,6 @@ async def web_ui():
                 } 
             }
 
-            // DNA Scanner JS
-            function startDnaScanner() { 
-                document.getElementById('dnaModal').style.display = 'flex';
-                document.getElementById('dnaModalContent').innerHTML = `
-                    <button class="close-icon" onclick="closeModal('dnaModal')"><i class="fa-solid fa-xmark"></i></button>
-                    <div class="dna-spinner"></div>
-                    <h3 id="dnaScanText" style="color: #8B5CF6; margin-top: 30px;">AI হিস্ট্রি স্ক্যান করছে...</h3>
-                    <div class="dna-progress-bg"><div id="dnaProgressBar" class="dna-progress-fill"></div></div>
-                `;
-                
-                let progress = 0;
-                const progressBar = document.getElementById('dnaProgressBar');
-                const scanText = document.getElementById('dnaScanText');
-                
-                let dnaInterval = setInterval(() => {
-                    progress += Math.random() * 15;
-                    if(progress > 90) progress = 90;
-                    progressBar.style.width = progress + '%';
-                    if(progress < 30) scanText.innerText = "AI হিস্ট্রি স্ক্যান করছে...";
-                    else if(progress < 60) scanText.innerText = "ডাউনলোড প্যাটার্ন বিশ্লেষণ করছে...";
-                    else scanText.innerText = "Cinema DNA তৈরি করছে...";
-                }, 500);
-
-                fetch('/api/dna/' + uid).then(res => res.json()).then(data => {
-                    clearInterval(dnaInterval);
-                    progressBar.style.width = '100%';
-                    scanText.innerText = "সম্পন্ন!";
-                    
-                    setTimeout(() => {
-                        if(data.dna && data.dna.length > 0) {
-                            let resultHtml = '<button class="close-icon" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i></button><h2 style="color: #4ade80; margin-bottom: 20px;">✅ এআই এনালাইসিস সম্পন্ন!</h2>';
-                            const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8B5CF6'];
-                            data.dna.forEach((d, i) => {
-                                resultHtml += `
-                                    <div class="dna-bar-box">
-                                        <div class="dna-bar-title"><span>${d.trait}</span><span>${d.percentage}%</span></div>
-                                        <div class="dna-bar-bg"><div class="dna-bar-fill" style="width: ${d.percentage}%; background: ${colors[i % colors.length]};"></div></div>
-                                    </div>
-                                `;
-                            });
-                            resultHtml += '<div style="margin-top: 20px; background: linear-gradient(45deg, #8B5CF6, #ec4899); padding: 15px; border-radius: 12px; color: white;"><h3>📸 স্ক্রিনশট নিয়ে বন্ধুদের শেয়ার করুন!</h3></div>';
-                            resultHtml += '<button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="margin-top: 15px; justify-content: center;"><i class="fa-solid fa-check"></i> বন্ধ করুন</button>';
-                            document.getElementById('dnaModalContent').innerHTML = resultHtml;
-                        } else {
-                            document.getElementById('dnaModalContent').innerHTML = '<button class="close-icon" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i></button><h2>⚠️ ডাটা নেই</h2><p style="color:#94a3b8; margin: 15px 0;">কিছু মুভি আনলক করুন এবং আবার ট্রাই করুন।</p><button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="justify-content: center;"><i class="fa-solid fa-xmark"></i> বন্ধ করুন</button>';
-                        }
-                    }, 1000);
-                }).catch(e => {
-                    clearInterval(dnaInterval);
-                    closeModal('dnaModal');
-                }); 
-            }
-
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(); loadFavorites();
         </script>
@@ -870,7 +647,7 @@ async def web_ui():
     return html_code
 
 # ==========================================
-# 10. Main Web App APIs & DNA Backend
+# 10. Main Web App APIs (Random API Added)
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
@@ -909,49 +686,6 @@ async def random_movie():
     if not movies: return {"movie": None}
     m = movies[0]
     return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
-
-@app.get("/api/dna/{uid}")
-async def get_cinema_dna(uid: int):
-    unlocks = await db.user_unlocks.find({"user_id": uid}).to_list(1000)
-    if not unlocks:
-        return {"dna": None}
-    
-    movie_ids = [ObjectId(u["movie_id"]) for u in unlocks]
-    movies = await db.movies.find({"_id": {"$in": movie_ids}}).to_list(1000)
-    
-    cat_counts = {}
-    for m in movies:
-        for cat in m.get("categories", []):
-            cat_counts[cat] = cat_counts.get(cat, 0) + 1
-            
-    trait_map = {
-        "Action": "⚔️ Action Hero",
-        "Horror": "👻 Horror Lover",
-        "K-Drama": "🇰🇷 K-Drama Addict",
-        "Bangla": "🇧🇩 Deshi Boss",
-        "Hollywood": "🌍 Hollywood Fanatic",
-        "Hindi Dubbed": "🇮🇳 Masala King",
-        "Web Series": "📺 Binge Watcher",
-        "Adult Content": "🌶️ Spicy Explorer"
-    }
-    
-    total = sum(cat_counts.values())
-    if total == 0: return {"dna": None}
-    
-    sorted_cats = sorted(cat_counts.items(), key=lambda item: item[1], reverse=True)
-    
-    dna_results = []
-    for cat, count in sorted_cats[:2]:
-        percentage = int((count / total) * 100)
-        trait_name = trait_map.get(cat, cat)
-        dna_results.append({"trait": trait_name, "percentage": percentage})
-        
-    if len(dna_results) == 2:
-        dna_results[0]["percentage"] = 100 - dna_results[1]["percentage"]
-    elif len(dna_results) == 1:
-        dna_results[0]["percentage"] = 100
-        
-    return {"dna": dna_results}
 
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
