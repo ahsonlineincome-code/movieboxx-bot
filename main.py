@@ -966,6 +966,21 @@ async def submit_payment(data: PaymentModel):
     return {"ok": True}
 
 # ==========================================
+# Admin Delete API (New)
+# ==========================================
+@app.delete("/api/admin/movie/{movie_id}")
+async def admin_delete_movie_api(movie_id: str, auth: bool = Depends(verify_admin)):
+    try:
+        # Check if the ID format is valid for MongoDB
+        if not ObjectId.is_valid(movie_id):
+            return {"ok": False, "msg": "Invalid Movie ID format!"}
+            
+        result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
+        if result.deleted_count > 0:
+            return {"ok": True, "msg": "Deleted successfully"}
+        return {"ok": False, "msg": "Movie not found in database!"}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
 # 11. Main Application Startup
 # ==========================================
 async def start():
