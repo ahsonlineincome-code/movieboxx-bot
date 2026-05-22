@@ -36,7 +36,7 @@ from bson import ObjectId
 from pydantic import BaseModel
 
 # ==========================================
-# 1. Configuration & Global Variables (CHECK ADDED)
+# 1. Configuration & Global Variables
 # ==========================================
 TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URI")
@@ -45,10 +45,6 @@ APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
-
-if not TOKEN or not MONGO_URL or not APP_URL:
-    print("🚨 CRITICAL ERROR: BOT_TOKEN, MONGO_URI, or APP_URL is missing in Environment Variables!")
-    # You can exit here if you want: exit(1)
 
 bot = Bot(token=TOKEN if TOKEN else "dummy_token")
 dp = Dispatcher(storage=MemoryStorage())
@@ -188,9 +184,8 @@ async def start_cmd(message: types.Message, state: FSMContext):
 
     tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-
     final_app_url = APP_URL if APP_URL else "https://google.com"
-    
+
     kb = [
         [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=final_app_url))],
         [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
@@ -374,7 +369,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API
+# 8. Web Admin Panel API (Fully Fixed)
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
@@ -396,6 +391,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             th { background: #0f172a; color: #94a3b8; }
             .del-btn { background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
             .del-btn:active { transform: scale(0.95); }
+            @media (max-width: 768px) { th, td { padding: 10px; font-size: 12px; } }
         </style>
     </head>
     <body>
@@ -403,7 +399,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <div class="cards" id="statsCards"></div>
         <h2 style="margin-bottom: 15px;">🎬 Movies Stats & Delete</h2>
         <table>
-            <thead><tr><th>Title</th><th>Clicks</th><th>Action</th></tr></thead>
+            <thead><tr><th>Title</th><th>Episodes</th><th>Quality</th><th>Real Views</th><th>Action</th></tr></thead>
             <tbody id="movieTable"></tbody>
         </table>
 
@@ -422,7 +418,13 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
 
                     let rows = '';
                     data.movies.forEach(m => {
-                        rows += `<tr><td>${m.title}</td><td>${m.clicks}</td><td><button class="del-btn" onclick="deleteMovie('${m._id}', this)">Delete</button></td></tr>`;
+                        rows += `<tr>
+                            <td><b>${m.title}</b></td>
+                            <td>${m.episodes} File(s)</td>
+                            <td>${m.qualities}</td>
+                            <td><b style="color:#4ade80">${m.clicks} Views</b></td>
+                            <td><button class="del-btn" onclick="deleteMovie('${m.title}', this)">Delete All</button></td>
+                        </tr>`;
                     });
                     document.getElementById('movieTable').innerHTML = rows;
                 } catch(e) {
@@ -430,10 +432,10 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                 }
             }
 
-            async function deleteMovie(id, btn) {
-                if(confirm('Are you sure you want to delete this movie?')) {
+            async function deleteMovie(title, btn) {
+                if(confirm('Are you sure you want to delete all episodes of: ' + title + '?')) {
                     try {
-                        const res = await fetch('/api/admin/delmovie/' + id, {method: 'POST'});
+                        const res = await fetch('/api/admin/delmovie/' + encodeURIComponent(title), {method: 'POST'});
                         if(res.ok) {
                             btn.closest('tr').remove();
                         } else {
@@ -460,8 +462,27 @@ async def admin_stats():
     total_clicks = await db.user_unlocks.count_documents({})
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
     
-    movies = await db.movies.find({}).sort("clicks", -1).to_list(100)
-    movie_list = [{"_id": str(m["_id"]), "title": m["title"], "clicks": m.get("clicks", 0)} for m in movies]
+    # Aggregating movies to count episodes and total views per title
+    pipeline = [
+        {"$group": {
+            "_id": "$title",
+            "totalClicks": {"$sum": "$clicks"},
+            "episodeCount": {"$sum": 1},
+            "qualities": {"$push": "$quality"}
+        }},
+        {"$sort": {"totalClicks": -1}},
+        {"$limit": 100}
+    ]
+    
+    movies_raw = await db.movies.aggregate(pipeline).to_list(100)
+    movie_list = []
+    for m in movies_raw:
+        movie_list.append({
+            "title": m["_id"],
+            "clicks": m["totalClicks"],
+            "episodes": m["episodeCount"],
+            "qualities": ", ".join(m["qualities"])
+        })
     
     return {
         "total_users": total_users,
@@ -471,10 +492,11 @@ async def admin_stats():
         "movies": movie_list
     }
 
-@app.post("/api/admin/delmovie/{movie_id}")
-async def admin_delete_movie(movie_id: str):
+@app.post("/api/admin/delmovie/{movie_title}")
+async def admin_delete_movie(movie_title: str):
     try:
-        await db.movies.delete_one({"_id": ObjectId(movie_id)})
+        # Deletes all files/episodes related to this movie title
+        await db.movies.delete_many({"title": movie_title})
         return {"ok": True}
     except:
         return {"ok": False}
@@ -736,7 +758,7 @@ async def web_ui():
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
 
-            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) { list.innerHTML = '<p style="color:red; text-align:center;">Failed to load</p>'; } }
+            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); if(!res.ok) throw new Error('API Error'); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) { list.innerHTML = '<p style="text-align:center; color:#ef4444; padding:30px;">Server Error! Check Env Vars</p>'; } }
             async function searchMovies() { const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); if(!q) { list.innerHTML = ''; return; } try { const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; } catch(e) {} }
 
             function createMovieCard(m, index) { 
