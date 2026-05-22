@@ -42,7 +42,6 @@ TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URI")
 OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
 
@@ -51,13 +50,7 @@ dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 security = HTTPBasic()
 
-app.add_middleware(
-    CORSMiddleware, 
-    allow_origins=["*"], 
-    allow_credentials=True, 
-    allow_methods=["*"], 
-    allow_headers=["*"]
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_database']
@@ -72,37 +65,28 @@ CATEGORIES = ["Bangla", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Actio
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
-    waiting_for_reply = State()
+    waiting_for_reply = State() # New: For replying to users
     waiting_for_photo = State()
     waiting_for_title = State()
     waiting_for_quality = State() 
     waiting_for_year = State()
     waiting_for_cats = State()
-    waiting_for_upc_photo = State()
-    waiting_for_upc_title = State()
-    waiting_for_upc_date = State()
 
 # ==========================================
 # 3. Database Initialization & Caching
 # ==========================================
 async def load_admins():
-    admin_cache.clear()
-    admin_cache.add(OWNER_ID)
-    async for admin in db.admins.find():
-        admin_cache.add(admin["user_id"])
+    admin_cache.clear(); admin_cache.add(OWNER_ID)
+    async for admin in db.admins.find(): admin_cache.add(admin["user_id"])
 
 async def load_banned_users():
     banned_cache.clear()
-    async for b_user in db.banned.find():
-        banned_cache.add(b_user["user_id"])
+    async for b_user in db.banned.find(): banned_cache.add(b_user["user_id"])
 
 async def init_db():
-    await db.movies.create_index([("title", "text")])
-    await db.movies.create_index("title")
-    await db.movies.create_index("created_at")
-    await db.movies.create_index("categories")
-    await db.auto_delete.create_index("delete_at")
-    await db.users.create_index("joined_at")
+    await db.movies.create_index([("title", "text")]); await db.movies.create_index("title")
+    await db.movies.create_index("created_at"); await db.movies.create_index("categories")
+    await db.auto_delete.create_index("delete_at"); await db.users.create_index("joined_at")
     await db.payments.create_index("trx_id", unique=True)
 
 # ==========================================
@@ -111,21 +95,16 @@ async def init_db():
 def validate_tg_data(init_data: str) -> bool:
     try:
         parsed_data = dict(urllib.parse.parse_qsl(init_data))
-        hash_val = parsed_data.pop('hash', None)
-        auth_date = int(parsed_data.get('auth_date', 0))
-        if not hash_val or time.time() - auth_date > 86400:
-            return False
+        hash_val = parsed_data.pop('hash', None); auth_date = int(parsed_data.get('auth_date', 0))
+        if not hash_val or time.time() - auth_date > 86400: return False
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
         secret_key = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
         return calculated_hash == hash_val
-    except:
-        return False
+    except: return False
 
 def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
-    correct_username = secrets.compare_digest(credentials.username, "admin")
-    correct_password = secrets.compare_digest(credentials.password, ADMIN_PASS)
-    if not (correct_username and correct_password):
+    if not (secrets.compare_digest(credentials.username, "admin") and secrets.compare_digest(credentials.password, ADMIN_PASS)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect", headers={"WWW-Authenticate": "Basic"})
     return True
 
@@ -137,28 +116,21 @@ async def auto_delete_worker():
         try:
             now = datetime.datetime.utcnow()
             async for msg in db.auto_delete.find({"delete_at": {"$lte": now}}):
-                try:
-                    await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
-                except:
-                    pass
+                try: await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
+                except: pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
-        except:
-            pass
+        except: pass
         await asyncio.sleep(60)
 
 # ==========================================
-# 6. Telegram Bot Commands
+# 6. Telegram Bot Commands & User Reply
 # ==========================================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
     uid = message.from_user.id
-    if uid in banned_cache:
-        return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
-        
-    await state.clear()
-    now = datetime.datetime.utcnow()
+    if uid in banned_cache: return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
+    await state.clear(); now = datetime.datetime.utcnow()
     user = await db.users.find_one({"user_id": uid})
-    
     if not user:
         args = message.text.split(" ")
         if len(args) > 1 and args[1].startswith("ref_"):
@@ -168,39 +140,28 @@ async def start_cmd(message: types.Message, state: FSMContext):
                     await db.users.update_one({"user_id": referrer_id}, {"$inc": {"refer_count": 1}})
                     ref_user = await db.users.find_one({"user_id": referrer_id})
                     if ref_user and ref_user.get("refer_count", 0) % 5 == 0:
-                        current_vip = ref_user.get("vip_until", now)
+                        current_vip = ref_user.get("vip_until", now); 
                         if current_vip < now: current_vip = now
                         await db.users.update_one({"user_id": referrer_id}, {"$set": {"vip_until": current_vip + datetime.timedelta(days=1)}})
-                        try: await bot.send_message(referrer_id, "🎉 ৫ জন রেফারের জন্য ২৪ ঘণ্টা VIP!", parse_mode="HTML")
-                        except: pass
             except: pass
-
         await db.users.insert_one({"user_id": uid, "first_name": message.from_user.first_name, "joined_at": now, "refer_count": 0, "coins": 0, "last_checkin": now - datetime.timedelta(days=2), "vip_until": now - datetime.timedelta(days=1)})
-    else:
-        await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
+    else: await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
 
-    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
-    link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-
-    kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
-        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
-    ]
+    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"; link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
+    kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-    
-    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।"
+    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম।"
     if uid in admin_cache: text += "\n\n⚙️ <b>অ্যাডমিন মোড অন.</b>"
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
 @dp.message(Command("stats"))
 async def bot_stats(m: types.Message):
     if m.from_user.id not in admin_cache: return
-    total_users = await db.users.count_documents({})
-    total_movies = await db.movies.count_documents({})
-    vip_users = await db.users.count_documents({"vip_until": {"$gt": datetime.datetime.utcnow()}})
-    text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
+    total_users = await db.users.count_documents({}); total_movies = await db.movies.count_documents({})
+    text = f"📊 <b>Bot Statistics</b>\n\n👥 Users: <b>{total_users}</b>\n🎬 Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
+# Forward User Messages to Admin
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def forward_to_admin(m: types.Message):
     try:
@@ -209,39 +170,46 @@ async def forward_to_admin(m: types.Message):
         await bot.send_message(OWNER_ID, f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n{m.text or 'Media'}", parse_mode="HTML", reply_markup=builder.as_markup())
     except: pass
 
+# Handle Admin Reply to User
+@dp.callback_query(F.data.startswith("reply_"))
+async def reply_callback(c: types.CallbackQuery, state: FSMContext):
+    if c.from_user.id not in admin_cache: return
+    target_id = int(c.data.split("_")[1])
+    await state.set_state(AdminStates.waiting_for_reply)
+    await state.update_data(target_id=target_id)
+    await c.answer(); await bot.send_message(c.from_user.id, "✍️ রিপ্লাই মেসেজ লিখুন:")
+
+@dp.message(AdminStates.waiting_for_reply)
+async def send_admin_reply(m: types.Message, state: FSMContext):
+    data = await state.get_data(); target_id = data.get("target_id")
+    if target_id:
+        try: await m.copy_to(target_id); await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
+        except: await m.answer("⚠️ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে!")
+    await state.clear()
+
 # ==========================================
 # 7. Admin Commands & Movie Upload
 # ==========================================
 @dp.message(Command("addlink"))
 async def add_direct_link(m: types.Message):
     if m.from_user.id not in admin_cache: return
-    try:
-        url = m.text.split(" ", 1)[1].strip()
-        await db.settings.update_one({"id": "direct_links"}, {"$addToSet": {"links": url}}, upsert=True)
-        await m.answer("✅ লিংক অ্যাড হয়েছে।", parse_mode="HTML")
+    try: url = m.text.split(" ", 1)[1].strip(); await db.settings.update_one({"id": "direct_links"}, {"$addToSet": {"links": url}}, upsert=True); await m.answer("✅ লিংক অ্যাড হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /addlink url", parse_mode="HTML")
 
 @dp.message(Command("delmovie"))
 async def del_movie_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
-    try:
-        title = m.text.split(" ", 1)[1].strip()
-        result = await db.movies.delete_many({"title": title})
-        if result.deleted_count > 0: await m.answer(f"✅ '<b>{title}</b>' ডিলিট হয়েছে!", parse_mode="HTML")
-        else: await m.answer("⚠️ পাওয়া যায়নি")
+    try: title = m.text.split(" ", 1)[1].strip(); result = await db.movies.delete_many({"title": title}); await m.answer(f"✅ '<b>{title}</b>' ডিলিট হয়েছে!" if result.deleted_count > 0 else "⚠️ পাওয়া যায়নি", parse_mode="HTML")
     except: await m.answer("⚠️ /delmovie নাম", parse_mode="HTML")
 
 @dp.message(Command("addvip"))
 async def add_vip_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
     try:
-        args = m.text.split()
-        target_uid = int(args[1])
-        days = int(args[2]) if len(args) > 2 else 30 
-        now = datetime.datetime.utcnow()
+        args = m.text.split(); target_uid = int(args[1]); days = int(args[2]) if len(args) > 2 else 30; now = datetime.datetime.utcnow()
         user = await db.users.find_one({"user_id": target_uid})
         if not user: return await m.answer("⚠️ ইউজার নেই।")
-        current_vip = user.get("vip_until", now)
+        current_vip = user.get("vip_until", now); 
         if current_vip < now: current_vip = now
         await db.users.update_one({"user_id": target_uid}, {"$set": {"vip_until": current_vip + datetime.timedelta(days=days)}})
         await m.answer(f"✅ <code>{target_uid}</code> কে {days} দিনের VIP দেওয়া হয়েছে!", parse_mode="HTML")
@@ -249,61 +217,40 @@ async def add_vip_cmd(m: types.Message):
 
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
-    fid = m.video.file_id if m.video else m.document.file_id
-    ftype = "video" if m.video else "document"
-    await state.set_state(AdminStates.waiting_for_photo)
-    await state.update_data(file_id=fid, file_type=ftype, categories=[])
+    fid = m.video.file_id if m.video else m.document.file_id; ftype = "video" if m.video else "document"
+    await state.set_state(AdminStates.waiting_for_photo); await state.update_data(file_id=fid, file_type=ftype, categories=[])
     await m.answer("✅ ফাইল পেয়েছি! এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_photo, F.photo)
-async def receive_movie_photo(m: types.Message, state: FSMContext):
-    await state.update_data(photo_id=m.photo[-1].file_id)
-    await state.set_state(AdminStates.waiting_for_title)
-    await m.answer("✅ এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
+async def receive_movie_photo(m: types.Message, state: FSMContext): await state.update_data(photo_id=m.photo[-1].file_id); await state.set_state(AdminStates.waiting_for_title); await m.answer("✅ এবার <b>নাম</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title, F.text)
-async def receive_movie_title(m: types.Message, state: FSMContext):
-    await state.update_data(title=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_quality)
-    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
+async def receive_movie_title(m: types.Message, state: FSMContext): await state.update_data(title=m.text.strip()); await state.set_state(AdminStates.waiting_for_quality); await m.answer("✅ এবার <b>কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_quality, F.text)
-async def receive_movie_quality(m: types.Message, state: FSMContext):
-    await state.update_data(quality=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_year)
-    await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
+async def receive_movie_quality(m: types.Message, state: FSMContext): await state.update_data(quality=m.text.strip()); await state.set_state(AdminStates.waiting_for_year); await m.answer("✅ এবার <b>সাল</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_year, F.text)
 async def receive_movie_year(m: types.Message, state: FSMContext):
-    await state.update_data(year=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_cats)
+    await state.update_data(year=m.text.strip()); await state.set_state(AdminStates.waiting_for_cats)
     builder = InlineKeyboardBuilder()
     for cat in CATEGORIES: builder.button(text=cat, callback_data=f"selcat_{cat}")
-    builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
-    await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
+    builder.button(text="✅ Done", callback_data="cats_done"); builder.adjust(2)
+    await m.answer("✅ এবার <b>ক্যাটাগরি</b> সিলেক্ট করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
-    cat = c.data.split("_")[1]
-    data = await state.get_data()
-    selected_cats = data.get("categories", [])
+    cat = c.data.split("_")[1]; data = await state.get_data(); selected_cats = data.get("categories", [])
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
-    await state.update_data(categories=selected_cats)
-    builder = InlineKeyboardBuilder()
-    for ct in CATEGORIES:
-        prefix = "✅ " if ct in selected_cats else ""
-        builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{ct}")
-    builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
-    await c.message.edit_reply_markup(reply_markup=builder.as_markup())
-    await c.answer()
+    await state.update_data(categories=selected_cats); builder = InlineKeyboardBuilder()
+    for ct in CATEGORIES: prefix = "✅ " if ct in selected_cats else ""; builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{ct}")
+    builder.button(text="✅ Done", callback_data="cats_done"); builder.adjust(2)
+    await c.message.edit_reply_markup(reply_markup=builder.as_markup()); await c.answer()
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
 async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    selected_cats = data.get("categories", [])
+    data = await state.get_data(); selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
@@ -312,45 +259,18 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 @dp.message(Command("cast"))
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
-    await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান।")
+    await state.set_state(AdminStates.waiting_for_bcast); await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান।")
 
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
-    await state.clear()
-    success = 0
+    await state.clear(); success = 0
     async for u in db.users.find():
         try: await m.copy_to(chat_id=u['user_id']); success += 1; await asyncio.sleep(0.05)
         except: pass
     await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
 
-@dp.callback_query(F.data.startswith("trx_"))
-async def handle_trx_approval(c: types.CallbackQuery):
-    if c.from_user.id not in admin_cache: return
-    action = c.data.split("_")[1]; pay_id = c.data.split("_")[2]
-    payment = await db.payments.find_one({"_id": ObjectId(pay_id)})
-    if not payment or payment["status"] != "pending": return await c.answer("⚠️ প্রসেস করা হয়েছে!", show_alert=True)
-    user_id = payment["user_id"]; days = payment["days"]
-    if action == "approve":
-        now = datetime.datetime.utcnow(); user = await db.users.find_one({"user_id": user_id})
-        current_vip = user.get("vip_until", now) if user else now
-        if current_vip < now: current_vip = now
-        await db.users.update_one({"user_id": user_id}, {"$set": {"vip_until": current_vip + datetime.timedelta(days=days)}})
-        await db.payments.update_one({"_id": ObjectId(pay_id)}, {"$set": {"status": "approved"}})
-        await c.message.edit_text(c.message.text + "\n\n✅ <b>অ্যাপ্রুভ!</b>", parse_mode="HTML")
-    else:
-        await db.payments.update_one({"_id": ObjectId(pay_id)}, {"$set": {"status": "rejected"}})
-        await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
-
 # ==========================================
-# 8. Web Admin Panel API
-# ==========================================
-@app.get("/panel", response_class=HTMLResponse)
-async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    return HTMLResponse("<h1>Admin Panel Active</h1>")
-
-# ==========================================
-# 9. Main Web App UI (Shuffle & Join Channel Added)
+# 8. Main Web App UI (Cinema DNA, Shuffle & Fixes)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -447,6 +367,9 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
+            .dna-close { position: absolute; top: 5px; right: 10px; background: none; border: none; color: #94a3b8; font-size: 18px; cursor: pointer; }
+            .dna-bar-bg { background: #334155; height: 6px; border-radius: 3px; margin-top: 3px; }
+            .dna-bar-fill { background: linear-gradient(45deg, #ff416c, #ff4b2b); height: 100%; border-radius: 3px; }
         </style>
     </head>
     <body>
@@ -493,6 +416,7 @@ async def web_ui():
         <div id="tabProfile" class="page-section">
             <div class="profile-card">
                 <div style="text-align: center; margin-bottom: 20px;"><h2 id="profileName">User</h2></div>
+                <div id="dnaContainer"></div>
                 <button class="profile-action-btn btn-dark-mode" onclick="toggleOledMode()">🌙 ডার্ক মোড (OLED) <span id="darkModeStatus">OFF</span></button>
                 <a href="https://facebook.com/" class="profile-action-btn btn-fb" target="_blank">📘 Facebook Group</a>
                 <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="profile-action-btn btn-main-ch" target="_blank">🚀 Main Channel</a>
@@ -527,8 +451,7 @@ async def web_ui():
 
         <div id="adModal" class="modal">
             <div class="modal-content ad-box">
-                <div class="ad-icon">⚠️</div>
-                <h2 class="ad-title">সতর্কতা!</h2>
+                <div class="ad-icon">⚠️</div><h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
                 <div class="ad-box-black">ক্লিক করে কমপক্ষে <b>১৫ সেকেন্ড</b> অপেক্ষা করুন।</div>
                 <p id="adTimerText" class="ad-timer-text">অপেক্ষা করুন... <span id="timerCount">15</span>s</p>
@@ -548,21 +471,11 @@ async def web_ui():
         </div>
 
         <script>
-            let tg = window.Telegram.WebApp; 
-            tg.expand();
-            const DIRECT_LINKS = __DL_JSON__; 
-            const INIT_DATA = tg.initData || ""; 
+            let tg = window.Telegram.WebApp; tg.expand();
+            const DIRECT_LINKS = __DL_JSON__; const INIT_DATA = tg.initData || ""; 
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
-            let isUserVip = false; 
-            let activeCat = "Home"; 
-            let userFavs = []; 
-            let active18Btn = null; 
-            let activeFileId = null;
-            let adInterval = null; 
-            let adTimeLeft = 15; 
-            let adCompleted = false; 
-            let adAborted = false;
-            let currentViewMovies = [];
+            let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null;
+            let adInterval = null; let adTimeLeft = 15; let adCompleted = false; let adAborted = false; let currentViewMovies = [];
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
@@ -577,6 +490,7 @@ async def web_ui():
                 if(btnEl) btnEl.classList.add('active'); 
                 if(tabName === 'home') loadHomeMovies(); 
                 if(tabName === 'fav') loadFavorites(); 
+                if(tabName === 'profile') loadCinemaDNA();
                 window.scrollTo({top:0, behavior:'smooth'}); 
             }
             
@@ -598,18 +512,10 @@ async def web_ui():
             }
 
             function openDetail(index) { 
-                let m = currentViewMovies[index];
-                if(!m) return;
-                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; 
-                document.getElementById('detailTitle').innerText = m._id; 
-                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
-                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
-                let btnsHtml = m.files.map(function(f) { 
-                    let isFree = f.is_unlocked || isUserVip; 
-                    return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
-                }).join(''); 
-                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
-                document.getElementById('detailModal').style.display = 'flex'; 
+                let m = currentViewMovies[index]; if(!m) return;
+                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; document.getElementById('detailTitle').innerText = m._id; document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
+                let btnsHtml = m.files.map(function(f) { let isFree = f.is_unlocked || isUserVip; return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; }).join(''); 
+                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; document.getElementById('detailModal').style.display = 'flex'; 
             }
 
             function handleFileClick(fileId, isFree) { activeFileId = fileId; if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
@@ -622,19 +528,19 @@ async def web_ui():
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             
-            async function loadSurprise() { 
+            async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) { console.error('Surprise Error:', e); } }
+
+            async function loadCinemaDNA() { 
                 try { 
-                    const res = await fetch('/api/random'); 
-                    const data = await res.json(); 
-                    if(data.movie) {
-                        currentViewMovies = [data.movie]; 
-                        openDetail(0); 
-                    } else {
-                        tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!");
-                    }
-                } catch(e) { 
-                    console.error('Surprise Error:', e);
-                } 
+                    const res = await fetch('/api/cinema_dna/' + uid); const data = await res.json(); const container = document.getElementById('dnaContainer');
+                    if(data.dna.length > 0) {
+                        let html = '<div style="background:#1e293b; padding:15px; border-radius:12px; margin-top:15px; border:1px solid #334155; position:relative;">';
+                        html += '<button class="dna-close" onclick="this.parentElement.style.display=\'none\'">✕</button>';
+                        html += '<h3 style="color:#fbbf24; font-size:16px; margin-bottom:10px;">🎭 আপনার Cinema DNA</h3>';
+                        data.dna.forEach(d => { html += `<div style="margin-bottom:8px;"><div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px;"><span>${d.cat}</span><span>${d.percent}%</span></div><div class="dna-bar-bg"><div class="dna-bar-fill" style="width:${d.percent}%;"></div></div></div>`; });
+                        html += '</div>'; container.innerHTML = html;
+                    } else { container.innerHTML = ''; }
+                } catch(e) {} 
             }
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
@@ -647,7 +553,7 @@ async def web_ui():
     return html_code
 
 # ==========================================
-# 10. Main Web App APIs (Random API Added)
+# 9. Main Web App APIs (Random & Cinema DNA Added)
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
@@ -655,59 +561,56 @@ async def get_user_info(uid: int):
     if not user: return {"vip": False}
     now = datetime.datetime.utcnow()
     vip_until = user.get("vip_until")
-    is_vip = vip_until and vip_until > now
-    return {"vip": is_vip}
+    return {"vip": vip_until and vip_until > now}
 
 @app.get("/api/list")
 async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home"):
     if uid in banned_cache: return {"movies": []}
-    limit = 20
-    unlocked_ids = []
+    limit = 20; unlocked_ids = []
     if uid != 0:
         time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
         async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}): unlocked_ids.append(u["movie_id"])
     match_stage = {}
     if q: match_stage["title"] = {"$regex": q, "$options": "i"}
     if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
-    pipeline = [
-        {"$match": match_stage}, 
-        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
-        {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}
-    ]
+    pipeline = [{"$match": match_stage}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}]
     movies = await db.movies.aggregate(pipeline).to_list(limit)
-    for m in movies:
+    for m in movies: 
         for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
     return {"movies": movies}
 
 @app.get("/api/random")
 async def random_movie():
-    pipeline = [{"$sample": {"size": 1}}]
-    movies = await db.movies.aggregate(pipeline).to_list(1)
+    pipeline = [{"$sample": {"size": 1}}]; movies = await db.movies.aggregate(pipeline).to_list(1)
     if not movies: return {"movie": None}
     m = movies[0]
     return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
 
+@app.get("/api/cinema_dna/{uid}")
+async def get_cinema_dna(uid: int):
+    unlocks = await db.user_unlocks.find({"user_id": uid}).to_list(1000)
+    if not unlocks: return {"dna": []}
+    movie_ids = [ObjectId(u["movie_id"]) for u in unlocks]
+    if not movie_ids: return {"dna": []}
+    pipeline = [{"$match": {"_id": {"$in": movie_ids}}}, {"$unwind": "$categories"}, {"$group": {"_id": "$categories", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}, {"$limit": 3}]
+    cats = await db.movies.aggregate(pipeline).to_list(3)
+    total = sum(c["count"] for c in cats) or 1
+    dna = [{"cat": c["_id"], "percent": int((c["count"]/total)*100)} for c in cats]
+    return {"dna": dna}
+
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
     try:
-        cache = await db.file_cache.find_one({"photo_id": photo_id})
-        now = datetime.datetime.utcnow()
+        cache = await db.file_cache.find_one({"photo_id": photo_id}); now = datetime.datetime.utcnow()
         if cache and cache.get("expires_at", now) > now: file_path = cache["file_path"]
-        else:
-            file_info = await bot.get_file(photo_id); file_path = file_info.file_path
-            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(minutes=50)}}, upsert=True)
+        else: file_info = await bot.get_file(photo_id); file_path = file_info.file_path; await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(minutes=50)}}, upsert=True)
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
         async def stream():
-            async with aiohttp.ClientSession() as s:
-                async with s.get(file_url) as r:
-                    async for c in r.content.iter_chunked(1024): yield c
+            async with aiohttp.ClientSession() as s: async with s.get(file_url) as r: async for c in r.content.iter_chunked(1024): yield c
         return StreamingResponse(stream(), media_type="image/jpeg")
     except: return {"error": "not found"}
 
-class SendRequestModel(BaseModel):
-    userId: int
-    movieId: str
-    initData: str
+class SendRequestModel(BaseModel): userId: int; movieId: str; initData: str
 
 @app.post("/api/send")
 async def send_file(d: SendRequestModel):
@@ -715,12 +618,13 @@ async def send_file(d: SendRequestModel):
     try:
         m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
         if m:
-            now = datetime.datetime.utcnow()
-            user_data = await db.users.find_one({"user_id": d.userId})
+            now = datetime.datetime.utcnow(); user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
-            time_cfg = await db.settings.find_one({"id": "del_time"})
-            del_minutes = time_cfg['minutes'] if time_cfg else 60
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            time_cfg = await db.settings.find_one({"id": "del_time"}); del_minutes = time_cfg['minutes'] if time_cfg else 60
+            
+            # Updated Caption: Added Join Channel & Auto-Delete Timer
+            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n🚀 <a href='https://t.me/addlist/MwbWNafSFK4yZjhl'>Join Channel</a>\n⚠️ ফাইলটি {del_minutes} মিনিট পর অটো-ডিলিট হবে!"
+            
             if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
             else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
@@ -740,19 +644,16 @@ async def get_favs(uid: int):
     pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
     return await db.movies.aggregate(pipeline).to_list(len(fav_titles))
 
-class FavModel(BaseModel):
-    uid: int; title: str; initData: str
+class FavModel(BaseModel): uid: int; title: str; initData: str
 
 @app.post("/api/fav/toggle")
 async def toggle_fav(data: FavModel):
     if not validate_tg_data(data.initData): return {"isFav": False}
-    user = await db.users.find_one({"user_id": data.uid})
-    favs = user.get("favorites", []) if user else []
+    user = await db.users.find_one({"user_id": data.uid}); favs = user.get("favorites", []) if user else []
     if data.title in favs: await db.users.update_one({"user_id": data.uid}, {"$pull": {"favorites": data.title}}); return {"isFav": False}
     else: await db.users.update_one({"user_id": data.uid}, {"$push": {"favorites": data.title}}); return {"isFav": True}
 
-class PaymentModel(BaseModel):
-    uid: int; method: str; trx_id: str; days: int; price: int; initData: str
+class PaymentModel(BaseModel): uid: int; method: str; trx_id: str; days: int; price: int; initData: str
 
 @app.post("/api/payment/submit")
 async def submit_payment(data: PaymentModel):
@@ -761,26 +662,34 @@ async def submit_payment(data: PaymentModel):
     res = await db.payments.insert_one({"user_id": data.uid, "method": data.method, "trx_id": data.trx_id, "amount": data.price, "days": data.days, "status": "pending"})
     try:
         builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Approve", callback_data=f"trx_approve_{res.inserted_id}")
-        builder.button(text="❌ Reject", callback_data=f"trx_reject_{res.inserted_id}")
+        builder.button(text="✅ Approve", callback_data=f"trx_approve_{res.inserted_id}"); builder.button(text="❌ Reject", callback_data=f"trx_reject_{res.inserted_id}")
         await bot.send_message(OWNER_ID, f"💰 <b>Payment!</b>\n👤 <code>{data.uid}</code>\n🏦 {data.method.upper()}\n🧾 <code>{data.trx_id}</code>\n💵 {data.price} BDT", parse_mode="HTML", reply_markup=builder.as_markup())
     except: pass
     return {"ok": True}
 
+@dp.callback_query(F.data.startswith("trx_"))
+async def handle_trx_approval(c: types.CallbackQuery):
+    if c.from_user.id not in admin_cache: return
+    action = c.data.split("_")[1]; pay_id = c.data.split("_")[2]
+    payment = await db.payments.find_one({"_id": ObjectId(pay_id)})
+    if not payment or payment["status"] != "pending": return await c.answer("⚠️ প্রসেস করা হয়েছে!", show_alert=True)
+    user_id = payment["user_id"]; days = payment["days"]
+    if action == "approve":
+        now = datetime.datetime.utcnow(); user = await db.users.find_one({"user_id": user_id}); current_vip = user.get("vip_until", now) if user else now
+        if current_vip < now: current_vip = now
+        await db.users.update_one({"user_id": user_id}, {"$set": {"vip_until": current_vip + datetime.timedelta(days=days)}})
+        await db.payments.update_one({"_id": ObjectId(pay_id)}, {"$set": {"status": "approved"}}); await c.message.edit_text(c.message.text + "\n\n✅ <b>অ্যাপ্রুভ!</b>", parse_mode="HTML")
+    else:
+        await db.payments.update_one({"_id": ObjectId(pay_id)}, {"$set": {"status": "rejected"}}); await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
+
 # ==========================================
-# 11. Main Application Startup
+# 10. Main Application Startup
 # ==========================================
 async def start():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    port = int(os.getenv("PORT", 8000))
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
-    server = uvicorn.Server(config)
-    asyncio.create_task(auto_delete_worker())
-    await bot.delete_webhook(drop_pending_updates=True)
+    await init_db(); await load_admins(); await load_banned_users()
+    port = int(os.getenv("PORT", 8000)); config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio"); server = uvicorn.Server(config)
+    asyncio.create_task(auto_delete_worker()); await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(server.serve(), dp.start_polling(bot))
 
 if __name__ == "__main__": 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start())
+    loop = asyncio.get_event_loop(); loop.run_until_complete(start())
