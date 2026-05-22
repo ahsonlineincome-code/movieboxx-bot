@@ -370,7 +370,40 @@ async def handle_trx_approval(c: types.CallbackQuery):
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    html = """
+    now = datetime.datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Stats Calculation
+    total_users = await db.users.count_documents({})
+    today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
+    total_movies = await db.movies.count_documents({})
+    vip_users = await db.users.count_documents({"vip_until": {"$gt": now}})
+    pending_payments = await db.payments.count_documents({"status": "pending"})
+    
+    total_clicks_pipeline = [{"$group": {"_id": None, "total_clicks": {"$sum": "$clicks"}}}]
+    total_clicks_res = await db.movies.aggregate(total_clicks_pipeline).to_list(1)
+    total_clicks = total_clicks_res[0]["total_clicks"] if total_clicks_res else 0
+    
+    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
+    
+    stats = {
+        "total_users": total_users, "today_users": today_users,
+        "total_movies": total_movies, "total_clicks": total_clicks,
+        "today_clicks": today_clicks, "vip_users": vip_users,
+        "pending_payments": pending_payments
+    }
+    
+    # Movies List Calculation
+    movies_cursor = await db.movies.find({}, {"title": 1, "quality": 1, "clicks": 1}).sort("created_at", -1).limit(100).to_list(100)
+    movies = []
+    for m in movies_cursor:
+        m["_id"] = str(m["_id"])
+        movies.append(m)
+        
+    stats_json = json.dumps(stats)
+    movies_json = json.dumps(movies)
+    
+    html = f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -378,26 +411,25 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            body { font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; margin: 0; }
-            .header { text-align: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
-            .header h1 { margin: 0; color: #ef4444; }
-            .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 40px; }
-            .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; transition: 0.3s; }
-            .card:hover { border-color: #ef4444; transform: translateY(-2px); }
-            .card h2 { margin: 0; font-size: 32px; color: #ef4444; } /* Default red for main numbers */
-            .card p { margin: 5px 0 0; color: #94a3b8; font-weight: 600; font-size: 14px;}
-            .card small { color: #64748b; font-size: 12px; }
-            .table-section { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; overflow-x: auto; }
-            .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-            .table-header h3 { margin: 0; color: #fbbf24; }
-            table { width: 100%; border-collapse: collapse; min-width: 600px; }
-            th { text-align: left; padding: 12px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 13px; }
-            td { padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }
-            tr:hover { background: rgba(255,255,255,0.03); }
-            .btn-del { background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }
-            .btn-del:hover { background: #b91c1c; }
-            .badge { background: #334155; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #cbd5e1; }
-            .loading { text-align: center; padding: 20px; color: #64748b; }
+            body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; margin: 0; }}
+            .header {{ text-align: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 15px; }}
+            .header h1 {{ margin: 0; color: #ef4444; }}
+            .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 40px; }}
+            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; transition: 0.3s; }}
+            .card:hover {{ border-color: #ef4444; transform: translateY(-2px); }}
+            .card h2 {{ margin: 0; font-size: 32px; color: #ef4444; }}
+            .card p {{ margin: 5px 0 0; color: #94a3b8; font-weight: 600; font-size: 14px;}}
+            .card small {{ color: #64748b; font-size: 12px; }}
+            .table-section {{ background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; overflow-x: auto; }}
+            .table-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
+            .table-header h3 {{ margin: 0; color: #fbbf24; }}
+            table {{ width: 100%; border-collapse: collapse; min-width: 600px; }}
+            th {{ text-align: left; padding: 12px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 13px; }}
+            td {{ padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }}
+            tr:hover {{ background: rgba(255,255,255,0.03); }}
+            .btn-del {{ background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }}
+            .btn-del:hover {{ background: #b91c1c; }}
+            .badge {{ background: #334155; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #cbd5e1; }}
         </style>
     </head>
     <body>
@@ -405,7 +437,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <h1><i class="fa-solid fa-shield-halved"></i> Movie Box Admin</h1>
         </div>
 
-        <div class="cards" id="statsContainer">
+        <div class="cards">
             <div class="card"><h2 id="statTotalUsers">-</h2><p>Total Users</p><small>Today: <span id="statTodayUsers">0</span></small></div>
             <div class="card"><h2 id="statTotalClicks">-</h2><p>Total Clicks</p><small>Today: <span id="statTodayClicks">0</span></small></div>
             <div class="card"><h2 id="statTotalMovies">-</h2><p>Total Movies</p></div>
@@ -426,79 +458,67 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                         <th>Action</th>
                     </tr>
                 </thead>
-                <tbody id="moviesTableBody">
-                    <tr><td colspan="4" class="loading">Loading data...</td></tr>
-                </tbody>
+                <tbody id="moviesTableBody"></tbody>
             </table>
         </div>
 
         <script>
-            async function loadStats() {
-                try {
-                    const res = await fetch('/api/admin/stats');
-                    const data = await res.json();
-                    document.getElementById('statTotalUsers').innerText = data.total_users;
-                    document.getElementById('statTodayUsers').innerText = data.today_users;
-                    document.getElementById('statTotalClicks').innerText = data.total_clicks;
-                    document.getElementById('statTodayClicks').innerText = data.today_clicks;
-                    document.getElementById('statTotalMovies').innerText = data.total_movies;
-                    document.getElementById('statVipUsers').innerText = data.vip_users;
-                    document.getElementById('statPending').innerText = data.pending_payments;
-                    
-                    if(data.pending_payments > 0) {
-                        document.getElementById('statPending').style.color = "#fbbf24";
-                    }
-                } catch(e) { console.error("Stats Error", e); }
-            }
+            // Injecting data directly from Python
+            const statsData = {stats_json};
+            const moviesData = {movies_json};
 
-            async function loadMovies() {
-                try {
-                    const res = await fetch('/api/admin/movies');
-                    const data = await res.json();
-                    const tbody = document.getElementById('moviesTableBody');
-                    
-                    if(data.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b;">No movies uploaded yet.</td></tr>';
-                        return;
-                    }
+            // Populate Stats
+            document.getElementById('statTotalUsers').innerText = statsData.total_users;
+            document.getElementById('statTodayUsers').innerText = statsData.today_users;
+            document.getElementById('statTotalClicks').innerText = statsData.total_clicks;
+            document.getElementById('statTodayClicks').innerText = statsData.today_clicks;
+            document.getElementById('statTotalMovies').innerText = statsData.total_movies;
+            document.getElementById('statVipUsers').innerText = statsData.vip_users;
+            document.getElementById('statPending').innerText = statsData.pending_payments;
+            
+            if(statsData.pending_payments > 0) {{
+                document.getElementById('statPending').style.color = "#fbbf24";
+            }}
 
-                    tbody.innerHTML = data.map(m => `
-                        <tr>
-                            <td><strong>${m.title}</strong></td>
-                            <td><span class="badge">${m.quality || 'Main'}</span></td>
-                            <td><i class="fa-solid fa-eye" style="color:#3b82f6;"></i> ${m.clicks || 0}</td>
-                            <td><button class="btn-del" onclick="deleteMovie('${m._id}', this)"><i class="fa-solid fa-trash"></i> Delete</button></td>
-                        </tr>
-                    `).join('');
-                } catch(e) { console.error("Movies Error", e); }
-            }
+            // Populate Table
+            const tbody = document.getElementById('moviesTableBody');
+            if(moviesData.length === 0) {{
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b;">No movies uploaded yet.</td></tr>';
+            }} else {{
+                tbody.innerHTML = moviesData.map(m => `
+                    <tr>
+                        <td><strong>${{m.title}}</strong></td>
+                        <td><span class="badge">${{m.quality || 'Main'}}</span></td>
+                        <td><i class="fa-solid fa-eye" style="color:#3b82f6;"></i> ${{m.clicks || 0}}</td>
+                        <td><button class="btn-del" onclick="deleteMovie('${{m._id}}', this)"><i class="fa-solid fa-trash"></i> Delete</button></td>
+                    </tr>
+                `).join('');
+            }}
 
-            async function deleteMovie(id, btnElement) {
+            async function deleteMovie(id, btnElement) {{
                 if(!confirm("Are you sure you want to delete this file/episode?")) return;
                 btnElement.innerText = "Deleting...";
                 btnElement.disabled = true;
 
-                try {
-                    const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' });
+                try {{
+                    const res = await fetch(`/api/admin/movie/${{id}}`, {{ method: 'DELETE', credentials: 'include' }});
+                    if(res.status === 401) {{ alert("Authentication failed! Please refresh the page."); return; }}
+                    
                     const data = await res.json();
-                    if(data.ok) {
-                        btnElement.closest('tr').remove(); // Remove row from table
-                        loadStats(); // Refresh stats
-                    } else {
+                    if(data.ok) {{
+                        btnElement.closest('tr').remove(); 
+                        document.getElementById('statTotalMovies').innerText = parseInt(document.getElementById('statTotalMovies').innerText) - 1;
+                    }} else {{
                         alert("Error: " + data.msg);
-                        btnElement.innerText = "Delete";
+                        btnElement.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
                         btnElement.disabled = false;
-                    }
-                } catch(e) { 
+                    }}
+                }} catch(e) {{ 
                     alert("Failed to delete!"); 
-                    btnElement.innerText = "Delete";
+                    btnElement.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
                     btnElement.disabled = false;
-                }
-            }
-
-            // Load data on page load
-            loadStats();
-            loadMovies();
+                }}
+            }}
         </script>
     </body>
     </html>
