@@ -370,34 +370,136 @@ async def handle_trx_approval(c: types.CallbackQuery):
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    total_users = await db.users.count_documents({})
-    total_movies = await db.movies.count_documents({})
-    vip_users = await db.users.count_documents({"vip_until": {"$gt": datetime.datetime.utcnow()}})
-    pending_payments = await db.payments.count_documents({"status": "pending"})
-    
-    html = f"""
+    html = """
     <!DOCTYPE html>
     <html>
     <head>
         <title>Admin Panel - Movie Box</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; }}
-            .header {{ text-align: center; margin-bottom: 30px; }}
-            .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }}
-            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; }}
-            .card h2 {{ margin: 0; font-size: 32px; color: #ef4444; }}
-            .card p {{ margin: 5px 0 0; color: #94a3b8; }}
+            body { font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; margin: 0; }
+            .header { text-align: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
+            .header h1 { margin: 0; color: #ef4444; }
+            .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 40px; }
+            .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; transition: 0.3s; }
+            .card:hover { border-color: #ef4444; transform: translateY(-2px); }
+            .card h2 { margin: 0; font-size: 32px; color: #ef4444; } /* Default red for main numbers */
+            .card p { margin: 5px 0 0; color: #94a3b8; font-weight: 600; font-size: 14px;}
+            .card small { color: #64748b; font-size: 12px; }
+            .table-section { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; overflow-x: auto; }
+            .table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+            .table-header h3 { margin: 0; color: #fbbf24; }
+            table { width: 100%; border-collapse: collapse; min-width: 600px; }
+            th { text-align: left; padding: 12px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 13px; }
+            td { padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }
+            tr:hover { background: rgba(255,255,255,0.03); }
+            .btn-del { background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+            .btn-del:hover { background: #b91c1c; }
+            .badge { background: #334155; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #cbd5e1; }
+            .loading { text-align: center; padding: 20px; color: #64748b; }
         </style>
     </head>
     <body>
-        <div class="header"><h1>🎬 Movie Box Admin</h1></div>
-        <div class="cards">
-            <div class="card"><h2>{total_users}</h2><p>Total Users</p></div>
-            <div class="card"><h2>{total_movies}</h2><p>Total Movies</p></div>
-            <div class="card"><h2>{vip_users}</h2><p>VIP Users</p></div>
-            <div class="card"><h2>{pending_payments}</h2><p>Pending Payments</p></div>
+        <div class="header">
+            <h1><i class="fa-solid fa-shield-halved"></i> Movie Box Admin</h1>
         </div>
+
+        <div class="cards" id="statsContainer">
+            <div class="card"><h2 id="statTotalUsers">-</h2><p>Total Users</p><small>Today: <span id="statTodayUsers">0</span></small></div>
+            <div class="card"><h2 id="statTotalClicks">-</h2><p>Total Clicks</p><small>Today: <span id="statTodayClicks">0</span></small></div>
+            <div class="card"><h2 id="statTotalMovies">-</h2><p>Total Movies</p></div>
+            <div class="card"><h2 id="statVipUsers">-</h2><p>VIP Users</p></div>
+            <div class="card"><h2 id="statPending">-</h2><p>Pending Payments</p></div>
+        </div>
+
+        <div class="table-section">
+            <div class="table-header">
+                <h3><i class="fa-solid fa-film"></i> Recent Movies & Files</h3>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Quality / Episode</th>
+                        <th>View Count</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="moviesTableBody">
+                    <tr><td colspan="4" class="loading">Loading data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <script>
+            async function loadStats() {
+                try {
+                    const res = await fetch('/api/admin/stats');
+                    const data = await res.json();
+                    document.getElementById('statTotalUsers').innerText = data.total_users;
+                    document.getElementById('statTodayUsers').innerText = data.today_users;
+                    document.getElementById('statTotalClicks').innerText = data.total_clicks;
+                    document.getElementById('statTodayClicks').innerText = data.today_clicks;
+                    document.getElementById('statTotalMovies').innerText = data.total_movies;
+                    document.getElementById('statVipUsers').innerText = data.vip_users;
+                    document.getElementById('statPending').innerText = data.pending_payments;
+                    
+                    if(data.pending_payments > 0) {
+                        document.getElementById('statPending').style.color = "#fbbf24";
+                    }
+                } catch(e) { console.error("Stats Error", e); }
+            }
+
+            async function loadMovies() {
+                try {
+                    const res = await fetch('/api/admin/movies');
+                    const data = await res.json();
+                    const tbody = document.getElementById('moviesTableBody');
+                    
+                    if(data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b;">No movies uploaded yet.</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = data.map(m => `
+                        <tr>
+                            <td><strong>${m.title}</strong></td>
+                            <td><span class="badge">${m.quality || 'Main'}</span></td>
+                            <td><i class="fa-solid fa-eye" style="color:#3b82f6;"></i> ${m.clicks || 0}</td>
+                            <td><button class="btn-del" onclick="deleteMovie('${m._id}', this)"><i class="fa-solid fa-trash"></i> Delete</button></td>
+                        </tr>
+                    `).join('');
+                } catch(e) { console.error("Movies Error", e); }
+            }
+
+            async function deleteMovie(id, btnElement) {
+                if(!confirm("Are you sure you want to delete this file/episode?")) return;
+                btnElement.innerText = "Deleting...";
+                btnElement.disabled = true;
+
+                try {
+                    const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if(data.ok) {
+                        btnElement.closest('tr').remove(); // Remove row from table
+                        loadStats(); // Refresh stats
+                    } else {
+                        alert("Error: " + data.msg);
+                        btnElement.innerText = "Delete";
+                        btnElement.disabled = false;
+                    }
+                } catch(e) { 
+                    alert("Failed to delete!"); 
+                    btnElement.innerText = "Delete";
+                    btnElement.disabled = false;
+                }
+            }
+
+            // Load data on page load
+            loadStats();
+            loadMovies();
+        </script>
     </body>
     </html>
     """
