@@ -36,7 +36,7 @@ from bson import ObjectId
 from pydantic import BaseModel
 
 # ==========================================
-# 1. Configuration & Global Variables
+# 1. Configuration & Global Variables (CHECK ADDED)
 # ==========================================
 TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URL = os.getenv("MONGO_URI")
@@ -46,7 +46,11 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439")
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
 
-bot = Bot(token=TOKEN)
+if not TOKEN or not MONGO_URL or not APP_URL:
+    print("🚨 CRITICAL ERROR: BOT_TOKEN, MONGO_URI, or APP_URL is missing in Environment Variables!")
+    # You can exit here if you want: exit(1)
+
+bot = Bot(token=TOKEN if TOKEN else "dummy_token")
 dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
 security = HTTPBasic()
@@ -59,7 +63,7 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL if MONGO_URL else "mongodb://localhost:27017")
 db = client['movie_database']
 
 admin_cache = set([OWNER_ID]) 
@@ -97,13 +101,16 @@ async def load_banned_users():
         banned_cache.add(b_user["user_id"])
 
 async def init_db():
-    await db.movies.create_index([("title", "text")])
-    await db.movies.create_index("title")
-    await db.movies.create_index("created_at")
-    await db.movies.create_index("categories")
-    await db.auto_delete.create_index("delete_at")
-    await db.users.create_index("joined_at")
-    await db.payments.create_index("trx_id", unique=True)
+    try:
+        await db.movies.create_index([("title", "text")])
+        await db.movies.create_index("title")
+        await db.movies.create_index("created_at")
+        await db.movies.create_index("categories")
+        await db.auto_delete.create_index("delete_at")
+        await db.users.create_index("joined_at")
+        await db.payments.create_index("trx_id", unique=True)
+    except Exception as e:
+        print(f"DB Index Error: {e}")
 
 # ==========================================
 # 4. Security & Authentication Methods
@@ -182,8 +189,10 @@ async def start_cmd(message: types.Message, state: FSMContext):
     tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
+    final_app_url = APP_URL if APP_URL else "https://google.com"
+    
     kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
+        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=final_app_url))],
         [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
@@ -365,7 +374,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API (Fixed & Dynamic)
+# 8. Web Admin Panel API
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
@@ -471,7 +480,7 @@ async def admin_delete_movie(movie_id: str):
         return {"ok": False}
 
 # ==========================================
-# 9. Main Web App UI (Original with DNA Floating Button)
+# 9. Main Web App UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -494,7 +503,7 @@ async def web_ui():
             body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; } 
             body.oled-mode { background: #000000; }
             #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }
-            #welcomeScreen.hide { opacity: 0; visibility: hidden; }
+            #welcomeScreen.hide { opacity: 0; visibility: hidden; pointer-events: none; }
             .ws-brand { font-size: 48px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: pulse 1.5s infinite; }
             .ws-bn { font-size: 18px; color: #94a3b8; margin-top: 10px; opacity: 0; animation: fadeUp 1s 0.5s forwards; }
             @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
@@ -682,14 +691,13 @@ async def web_ui():
         </div>
 
         <div id="dnaModal" class="modal">
-            <div class="modal-content ad-box" id="dnaModalContent">
-                <!-- Injected by JS -->
-            </div>
+            <div class="modal-content ad-box" id="dnaModalContent"></div>
         </div>
 
         <script>
-            let tg = window.Telegram.WebApp; 
-            tg.expand();
+            let tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : { expand: function(){}, initDataUnsafe: {user: {id: 0, first_name: "User"}}, close: function(){}, openLink: function(url){ window.open(url,'_blank'); } }; 
+            try { tg.expand(); } catch(e) {}
+            
             const DIRECT_LINKS = __DL_JSON__; 
             const INIT_DATA = tg.initData || ""; 
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
@@ -704,7 +712,7 @@ async def web_ui():
             let adAborted = false;
             let currentViewMovies = [];
 
-            setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
+            setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 3000);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
 
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
@@ -728,7 +736,7 @@ async def web_ui():
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
 
-            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) {} }
+            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) { list.innerHTML = '<p style="color:red; text-align:center;">Failed to load</p>'; } }
             async function searchMovies() { const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); if(!q) { list.innerHTML = ''; return; } try { const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; } catch(e) {} }
 
             function createMovieCard(m, index) { 
@@ -781,6 +789,7 @@ async def web_ui():
             function startDnaScanner() { 
                 document.getElementById('dnaModal').style.display = 'flex';
                 document.getElementById('dnaModalContent').innerHTML = `
+                    <button class="close-icon" onclick="closeModal('dnaModal')"><i class="fa-solid fa-xmark"></i></button>
                     <div class="dna-spinner"></div>
                     <h3 id="dnaScanText" style="color: #8B5CF6; margin-top: 30px;">AI হিস্ট্রি স্ক্যান করছে...</h3>
                     <div class="dna-progress-bg"><div id="dnaProgressBar" class="dna-progress-fill"></div></div>
@@ -806,7 +815,7 @@ async def web_ui():
                     
                     setTimeout(() => {
                         if(data.dna && data.dna.length > 0) {
-                            let resultHtml = '<h2 style="color: #4ade80; margin-bottom: 20px;">✅ এআই এনালাইসিস সম্পন্ন!</h2>';
+                            let resultHtml = '<button class="close-icon" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i></button><h2 style="color: #4ade80; margin-bottom: 20px;">✅ এআই এনালাইসিস সম্পন্ন!</h2>';
                             const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8B5CF6'];
                             data.dna.forEach((d, i) => {
                                 resultHtml += `
@@ -817,10 +826,10 @@ async def web_ui():
                                 `;
                             });
                             resultHtml += '<div style="margin-top: 20px; background: linear-gradient(45deg, #8B5CF6, #ec4899); padding: 15px; border-radius: 12px; color: white;"><h3>📸 স্ক্রিনশট নিয়ে বন্ধুদের শেয়ার করুন!</h3></div>';
-                            resultHtml += '<button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="margin-top: 15px;"><i class="fa-solid fa-check"></i> বন্ধ করুন</button>';
+                            resultHtml += '<button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="margin-top: 15px; justify-content: center;"><i class="fa-solid fa-check"></i> বন্ধ করুন</button>';
                             document.getElementById('dnaModalContent').innerHTML = resultHtml;
                         } else {
-                            document.getElementById('dnaModalContent').innerHTML = '<h2>⚠️ ডাটা নেই</h2><p style="color:#94a3b8; margin: 15px 0;">কিছু মুভি আনলক করুন এবং আবার ট্রাই করুন।</p><button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i> বন্ধ করুন</button>';
+                            document.getElementById('dnaModalContent').innerHTML = '<button class="close-icon" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i></button><h2>⚠️ ডাটা নেই</h2><p style="color:#94a3b8; margin: 15px 0;">কিছু মুভি আনলক করুন এবং আবার ট্রাই করুন।</p><button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="justify-content: center;"><i class="fa-solid fa-xmark"></i> বন্ধ করুন</button>';
                         }
                     }, 1000);
                 }).catch(e => {
