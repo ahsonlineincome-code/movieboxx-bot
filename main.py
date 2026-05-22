@@ -66,7 +66,6 @@ admin_cache = set([OWNER_ID])
 banned_cache = set() 
 
 CATEGORIES = ["Bangla", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
-JOIN_LINK = "https://t.me/addlist/MwbWNafSFK4yZjhl"
 
 # ==========================================
 # 2. FSM States
@@ -180,7 +179,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
 
-    tg_link = JOIN_LINK
+    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
     kb = [
@@ -366,45 +365,113 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API
+# 8. Web Admin Panel API (Fixed & Dynamic)
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    total_users = await db.users.count_documents({})
-    total_movies = await db.movies.count_documents({})
-    vip_users = await db.users.count_documents({"vip_until": {"$gt": datetime.datetime.utcnow()}})
-    pending_payments = await db.payments.count_documents({"status": "pending"})
-    
-    html = f"""
+    html = """
     <!DOCTYPE html>
     <html>
     <head>
         <title>Admin Panel - Movie Box</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-            body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; }}
-            .header {{ text-align: center; margin-bottom: 30px; }}
-            .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }}
-            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; }}
-            .card h2 {{ margin: 0; font-size: 32px; color: #ef4444; }}
-            .card p {{ margin: 5px 0 0; color: #94a3b8; }}
+            body { font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; }
+            .header { text-align: center; margin-bottom: 30px; color: #ef4444; }
+            .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 30px; }
+            .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; }
+            .card h2 { margin: 0; font-size: 32px; color: #ef4444; }
+            .card p { margin: 5px 0 0; color: #94a3b8; font-size: 14px; }
+            table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; margin-top: 20px; }
+            th, td { padding: 15px; text-align: left; border-bottom: 1px solid #334155; }
+            th { background: #0f172a; color: #94a3b8; }
+            .del-btn { background: #ef4444; color: white; border: none; padding: 8px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+            .del-btn:active { transform: scale(0.95); }
         </style>
     </head>
     <body>
-        <div class="header"><h1>🎬 Movie Box Admin</h1></div>
-        <div class="cards">
-            <div class="card"><h2>{total_users}</h2><p>Total Users</p></div>
-            <div class="card"><h2>{total_movies}</h2><p>Total Movies</p></div>
-            <div class="card"><h2>{vip_users}</h2><p>VIP Users</p></div>
-            <div class="card"><h2>{pending_payments}</h2><p>Pending Payments</p></div>
-        </div>
+        <div class="header"><h1>🎬 Admin Dashboard</h1></div>
+        <div class="cards" id="statsCards"></div>
+        <h2 style="margin-bottom: 15px;">🎬 Movies Stats & Delete</h2>
+        <table>
+            <thead><tr><th>Title</th><th>Clicks</th><th>Action</th></tr></thead>
+            <tbody id="movieTable"></tbody>
+        </table>
+
+        <script>
+            async function loadAdminData() {
+                try {
+                    const res = await fetch('/api/admin/stats');
+                    const data = await res.json();
+                    
+                    document.getElementById('statsCards').innerHTML = `
+                        <div class="card"><h2>${data.total_users}</h2><p>Total Users</p></div>
+                        <div class="card"><h2>${data.today_joined}</h2><p>Today Joined</p></div>
+                        <div class="card"><h2>${data.total_clicks}</h2><p>Total Ad Clicks</p></div>
+                        <div class="card"><h2>${data.today_clicks}</h2><p>Today Ad Clicks</p></div>
+                    `;
+
+                    let rows = '';
+                    data.movies.forEach(m => {
+                        rows += `<tr><td>${m.title}</td><td>${m.clicks}</td><td><button class="del-btn" onclick="deleteMovie('${m._id}', this)">Delete</button></td></tr>`;
+                    });
+                    document.getElementById('movieTable').innerHTML = rows;
+                } catch(e) {
+                    console.error(e);
+                }
+            }
+
+            async function deleteMovie(id, btn) {
+                if(confirm('Are you sure you want to delete this movie?')) {
+                    try {
+                        const res = await fetch('/api/admin/delmovie/' + id, {method: 'POST'});
+                        if(res.ok) {
+                            btn.closest('tr').remove();
+                        } else {
+                            alert('Failed to delete');
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            loadAdminData();
+        </script>
     </body>
     </html>
     """
     return HTMLResponse(html)
 
+@app.get("/api/admin/stats")
+async def admin_stats():
+    now = datetime.datetime.utcnow()
+    today_start = datetime.datetime(now.year, now.month, now.day)
+    
+    total_users = await db.users.count_documents({})
+    today_joined = await db.users.count_documents({"joined_at": {"$gte": today_start}})
+    total_clicks = await db.user_unlocks.count_documents({})
+    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
+    
+    movies = await db.movies.find({}).sort("clicks", -1).to_list(100)
+    movie_list = [{"_id": str(m["_id"]), "title": m["title"], "clicks": m.get("clicks", 0)} for m in movies]
+    
+    return {
+        "total_users": total_users,
+        "today_joined": today_joined,
+        "total_clicks": total_clicks,
+        "today_clicks": today_clicks,
+        "movies": movie_list
+    }
+
+@app.post("/api/admin/delmovie/{movie_id}")
+async def admin_delete_movie(movie_id: str):
+    try:
+        await db.movies.delete_one({"_id": ObjectId(movie_id)})
+        return {"ok": True}
+    except:
+        return {"ok": False}
+
 # ==========================================
-# 9. Main Web App UI (DNA Scanner Added)
+# 9. Main Web App UI (Original with DNA Floating Button)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -455,6 +522,7 @@ async def web_ui():
             .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
+            .btn-dna { bottom: 220px; background: linear-gradient(45deg, #8B5CF6, #6D28D9); font-weight: bold; font-size: 22px; }
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
             body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
@@ -502,14 +570,7 @@ async def web_ui():
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
             
-            /* Join Banner CSS */
-            .join-banner { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(45deg, #24A1DE, #1b7ba8); margin: 10px 15px; border-radius: 10px; padding: 8px 15px; font-weight: 600; font-size: 13px; }
-            .join-banner-btn { background: #fff; color: #24A1DE; padding: 5px 15px; border-radius: 8px; text-decoration: none; font-weight: 800; font-size: 12px; margin: 0 10px; }
-            .join-banner-close { background: none; border: none; color: white; font-size: 20px; cursor: pointer; line-height: 1; }
-
             /* DNA Scanner CSS */
-            .scan-btn { padding: 15px 40px; background: linear-gradient(45deg, #8B5CF6, #6D28D9); color: white; border: none; border-radius: 30px; font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 0 20px rgba(139, 92, 246, 0.5); transition: 0.2s; }
-            .scan-btn:active { transform: scale(0.95); }
             .dna-spinner { border: 6px solid #334155; border-top: 6px solid #8B5CF6; border-radius: 50%; width: 60px; height: 60px; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
             .dna-progress-bg { background: #334155; border-radius: 10px; height: 10px; margin-top: 20px; overflow: hidden; }
@@ -537,11 +598,6 @@ async def web_ui():
         </header>
 
         <div id="tabHome" class="page-section active">
-            <div id="joinBanner" class="join-banner">
-                <span>🎭 Cinema DNA স্ক্যান করুন!</span>
-                <a href="#" onclick="event.stopPropagation(); switchTab('dna', document.querySelectorAll('.nav-item')[3]);" class="join-banner-btn">Scan</a>
-                <button class="join-banner-close" onclick="closeJoinBanner()">&times;</button>
-            </div>
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             <div class="cat-row">
                 <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
@@ -558,26 +614,12 @@ async def web_ui():
         <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div></div>
         <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
         
-        <div id="tabDna" class="page-section">
-            <div id="dnaStart" style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; padding: 20px;">
-                <div style="font-size: 80px; margin-bottom: 20px; animation: pulse 1.5s infinite;">🧬</div>
-                <h2 style="margin-bottom: 15px; background: linear-gradient(45deg, #8B5CF6, #ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-size: 28px;">Cinema DNA Scanner</h2>
-                <p style="color: #94a3b8; margin-bottom: 30px;">আপনার ডাউনলোড হিস্ট্রি অ্যানালাইসিস করে বের করুন আপনার সিনেমা পারসোনালিটি! এআই আপনার জন্য কী বলছে জানুন।</p>
-                <button onclick="startDnaScan()" class="scan-btn">🎭 Scan My DNA</button>
-            </div>
-            <div id="dnaScanning" style="display: none; text-align: center; padding: 40px 20px;">
-                <div class="dna-spinner"></div>
-                <h3 id="dnaScanText" style="color: #8B5CF6; margin-top: 30px;">AI হিস্ট্রি স্ক্যান করছে...</h3>
-                <div class="dna-progress-bg"><div id="dnaProgressBar" class="dna-progress-fill"></div></div>
-            </div>
-            <div id="dnaResult" style="display: none; text-align: center; padding: 20px;">
-                <h2 style="color: #4ade80; margin-bottom: 10px;">✅ এআই এনালাইসিস সম্পন্ন!</h2>
-                <p style="color: #94a3b8; margin-bottom: 20px;">আপনার Cinema DNA রেজাল্ট</p>
-                <div id="dnaBarsContainer"></div>
-                <div style="margin-top: 20px; background: linear-gradient(45deg, #8B5CF6, #ec4899); padding: 15px; border-radius: 12px; color: white;">
-                    <h3>📸 স্ক্রিনশট নিয়ে বন্ধুদের শেয়ার করুন!</h3>
-                </div>
-                <button onclick="resetDnaScan()" style="margin-top: 20px; padding: 12px 30px; border-radius: 10px; background: #334155; color: white; border: none; font-weight: 700; cursor: pointer;">🔄 আবার স্ক্যান করুন</button>
+        <div id="tabSurprise" class="page-section">
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; padding: 20px;">
+                <div style="font-size: 80px; margin-bottom: 20px; animation: pulse 1.5s infinite;">🎲</div>
+                <h2 style="margin-bottom: 15px; color: #fbbf24;">মুভি রুলেট!</h2>
+                <p style="color: #94a3b8; margin-bottom: 30px;">কী দেখবেন ঠিক করতে পারছেন না? বট আপনার জন্য একটি মুভি বেছে নিচ্ছে!</p>
+                <button onclick="loadSurprise()" style="padding: 15px 40px; background: linear-gradient(45deg, #ff416c, #ff4b2b); color: white; border: none; border-radius: 30px; font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 0 20px rgba(255, 65, 108, 0.5);">🎲 Surprise Me!</button>
             </div>
         </div>
 
@@ -592,6 +634,7 @@ async def web_ui():
             </div>
         </div>
 
+        <button class="floating-btn btn-dna" onclick="startDnaScanner()"><i class="fa-solid fa-dna"></i></button>
         <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="floating-btn btn-tg"><i class="fa-brands fa-telegram"></i></a>
         <a href="https://t.me/+W5V9-mn08jMyYTE1" class="floating-btn btn-18">18+</a>
 
@@ -599,7 +642,7 @@ async def web_ui():
             <button class="nav-item active" onclick="switchTab('home', this)"><i class="fa-solid fa-house"></i>Home</button>
             <button class="nav-item" onclick="switchTab('search', this)"><i class="fa-solid fa-magnifying-glass"></i>Search</button>
             <button class="nav-item" onclick="switchTab('fav', this)"><i class="fa-solid fa-heart"></i>Favorites</button>
-            <button class="nav-item" onclick="switchTab('dna', this)"><i class="fa-solid fa-dna"></i>DNA</button>
+            <button class="nav-item" onclick="switchTab('surprise', this)"><i class="fa-solid fa-dice"></i>Surprise</button>
             <button class="nav-item" onclick="switchTab('profile', this)"><i class="fa-solid fa-user"></i>Profile</button>
         </div>
 
@@ -638,6 +681,12 @@ async def web_ui():
             </div>
         </div>
 
+        <div id="dnaModal" class="modal">
+            <div class="modal-content ad-box" id="dnaModalContent">
+                <!-- Injected by JS -->
+            </div>
+        </div>
+
         <script>
             let tg = window.Telegram.WebApp; 
             tg.expand();
@@ -657,9 +706,6 @@ async def web_ui():
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
-
-            function closeJoinBanner() { document.getElementById('joinBanner').style.display = 'none'; localStorage.setItem('joinBannerClosed', 'true'); }
-            if(localStorage.getItem('joinBannerClosed') === 'true') { document.getElementById('joinBanner').style.display = 'none'; }
 
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
             
@@ -716,21 +762,35 @@ async def web_ui():
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             
+            async function loadSurprise() { 
+                try { 
+                    const res = await fetch('/api/random'); 
+                    const data = await res.json(); 
+                    if(data.movie) {
+                        currentViewMovies = [data.movie]; 
+                        openDetail(0); 
+                    } else {
+                        tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!");
+                    }
+                } catch(e) { 
+                    console.error('Surprise Error:', e);
+                } 
+            }
+
             // DNA Scanner JS
-            let dnaInterval = null;
-            function resetDnaScan() { document.getElementById('dnaStart').style.display = 'flex'; document.getElementById('dnaScanning').style.display = 'none'; document.getElementById('dnaResult').style.display = 'none'; }
-            
-            async function startDnaScan() { 
-                document.getElementById('dnaStart').style.display = 'none'; 
-                document.getElementById('dnaScanning').style.display = 'block'; 
-                document.getElementById('dnaResult').style.display = 'none';
+            function startDnaScanner() { 
+                document.getElementById('dnaModal').style.display = 'flex';
+                document.getElementById('dnaModalContent').innerHTML = `
+                    <div class="dna-spinner"></div>
+                    <h3 id="dnaScanText" style="color: #8B5CF6; margin-top: 30px;">AI হিস্ট্রি স্ক্যান করছে...</h3>
+                    <div class="dna-progress-bg"><div id="dnaProgressBar" class="dna-progress-fill"></div></div>
+                `;
                 
+                let progress = 0;
                 const progressBar = document.getElementById('dnaProgressBar');
                 const scanText = document.getElementById('dnaScanText');
-                let progress = 0;
                 
-                clearInterval(dnaInterval);
-                dnaInterval = setInterval(() => {
+                let dnaInterval = setInterval(() => {
                     progress += Math.random() * 15;
                     if(progress > 90) progress = 90;
                     progressBar.style.width = progress + '%';
@@ -739,42 +799,34 @@ async def web_ui():
                     else scanText.innerText = "Cinema DNA তৈরি করছে...";
                 }, 500);
 
-                try {
-                    const res = await fetch('/api/dna/' + uid);
-                    const data = await res.json();
+                fetch('/api/dna/' + uid).then(res => res.json()).then(data => {
                     clearInterval(dnaInterval);
                     progressBar.style.width = '100%';
                     scanText.innerText = "সম্পন্ন!";
                     
                     setTimeout(() => {
-                        document.getElementById('dnaScanning').style.display = 'none';
-                        document.getElementById('dnaResult').style.display = 'block';
-                        let container = document.getElementById('dnaBarsContainer');
-                        container.innerHTML = '';
-                        
                         if(data.dna && data.dna.length > 0) {
+                            let resultHtml = '<h2 style="color: #4ade80; margin-bottom: 20px;">✅ এআই এনালাইসিস সম্পন্ন!</h2>';
                             const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8B5CF6'];
                             data.dna.forEach((d, i) => {
-                                container.innerHTML += `
+                                resultHtml += `
                                     <div class="dna-bar-box">
                                         <div class="dna-bar-title"><span>${d.trait}</span><span>${d.percentage}%</span></div>
-                                        <div class="dna-bar-bg"><div class="dna-bar-fill" style="width: 0%; background: ${colors[i % colors.length]};" id="dnaFill${i}"></div></div>
+                                        <div class="dna-bar-bg"><div class="dna-bar-fill" style="width: ${d.percentage}%; background: ${colors[i % colors.length]};"></div></div>
                                     </div>
                                 `;
                             });
-                            setTimeout(() => {
-                                data.dna.forEach((d, i) => {
-                                    document.getElementById('dnaFill'+i).style.width = d.percentage + '%';
-                                });
-                            }, 100);
+                            resultHtml += '<div style="margin-top: 20px; background: linear-gradient(45deg, #8B5CF6, #ec4899); padding: 15px; border-radius: 12px; color: white;"><h3>📸 স্ক্রিনশট নিয়ে বন্ধুদের শেয়ার করুন!</h3></div>';
+                            resultHtml += '<button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')" style="margin-top: 15px;"><i class="fa-solid fa-check"></i> বন্ধ করুন</button>';
+                            document.getElementById('dnaModalContent').innerHTML = resultHtml;
                         } else {
-                            container.innerHTML = '<p style="color:#94a3b8; padding: 20px;">ডাউনলোড হিস্ট্রি পাওয়া যায়নি! কিছু মুভি আনলক করুন এবং আবার ট্রাই করুন।</p>';
+                            document.getElementById('dnaModalContent').innerHTML = '<h2>⚠️ ডাটা নেই</h2><p style="color:#94a3b8; margin: 15px 0;">কিছু মুভি আনলক করুন এবং আবার ট্রাই করুন।</p><button class="dl-file-btn unlocked" onclick="closeModal(\'dnaModal\')"><i class="fa-solid fa-xmark"></i> বন্ধ করুন</button>';
                         }
                     }, 1000);
-                } catch(e) { 
+                }).catch(e => {
                     clearInterval(dnaInterval);
-                    resetDnaScan();
-                } 
+                    closeModal('dnaModal');
+                }); 
             }
 
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
@@ -903,24 +955,16 @@ async def send_file(d: SendRequestModel):
             is_vip = user_data and user_data.get("vip_until", now) > now
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n⚠️ এই ফাইলটি <b>{del_minutes} মিনিট</b> পর অটোমেটিক ডিলিট হয়ে যাবে!\n🚀 নতুন মুভি পেতে চ্যানেলে জয়েন করুন।"
-            join_kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🚀 Join Channel", url=JOIN_LINK)]])
-            
-            if m.get("file_type") == "video": 
-                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
-            else: 
-                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
-                
+            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+            else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
             if sent_msg and not is_vip:
                 delete_at = now + datetime.timedelta(minutes=del_minutes)
                 await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
         return {"ok": True}
-    except Exception as e:
-        print(f"Send Error: {e}")
-        return {"ok": False}
+    except: return {"ok": False}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
