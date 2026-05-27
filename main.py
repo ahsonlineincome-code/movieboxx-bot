@@ -343,7 +343,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API & UI
+# 8. Web Admin Panel API & UI (WITH LIVE USERS)
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
@@ -359,7 +359,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }
             .header { text-align: center; margin-bottom: 30px; color: #fff; }
             .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 40px; }
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
             .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
             .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
             .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
@@ -367,6 +367,8 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .stat-card.today-users .value i { color: #10b981; }
             .stat-card.clicks .value i { color: #f59e0b; }
             .stat-card.today-clicks .value i { color: #ef4444; }
+            .stat-card.live-users { border-color: #10b981; }
+            .stat-card.live-users .value { color: #10b981; }
             
             .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
             .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
@@ -405,6 +407,10 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                 <h3>Today's Clicks</h3>
                 <div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div>
             </div>
+            <div class="stat-card live-users">
+                <h3>Live Active Users (5m)</h3>
+                <div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div>
+            </div>
         </div>
 
         <div class="table-container">
@@ -436,6 +442,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                     document.getElementById('todayUsers').innerText = data.today_users;
                     document.getElementById('totalClicks').innerText = data.total_clicks;
                     document.getElementById('todayClicks').innerText = data.today_clicks;
+                    document.getElementById('activeUsers').innerText = data.active_users;
                 } catch(e) { console.error(e); }
             }
 
@@ -478,6 +485,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
 
             fetchStats();
             fetchMovies();
+            setInterval(fetchStats, 60000); // Auto refresh stats every 1 minute
         </script>
     </body>
     </html>
@@ -492,6 +500,10 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
     total_users = await db.users.count_documents({})
     today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
     
+    # Live Users Calculation (Last 5 minutes)
+    five_mins_ago = now - datetime.timedelta(minutes=5)
+    active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+    
     total_clicks_pipeline = [{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]
     total_clicks_res = await db.movies.aggregate(total_clicks_pipeline).to_list(1)
     total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
@@ -501,6 +513,7 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
     return {
         "total_users": total_users,
         "today_users": today_users,
+        "active_users": active_users,
         "total_clicks": total_clicks,
         "today_clicks": today_clicks
     }
@@ -520,7 +533,7 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     raise HTTPException(status_code=404, detail="Movie not found")
 
 # ==========================================
-# 9. Main Web App UI (UNCHANGED)
+# 9. Main Web App UI 
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -817,13 +830,16 @@ async def web_ui():
     return html_code
 
 # ==========================================
-# 10. Main Web App APIs (BANDWIDTH OPTIMIZED)
+# 10. Main Web App APIs (BANDWIDTH OPTIMIZED + LIVE TRACKING)
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
+    now = datetime.datetime.utcnow()
+    # ইউজারের লাইভ ট্র্যাকিং ডাটাবেসে সেভ হচ্ছে (এতে ব্যান্ডউইথ খরচ হয় না)
+    await db.users.update_one({"user_id": uid}, {"$set": {"last_active": now}})
+    
     user = await db.users.find_one({"user_id": uid})
     if not user: return {"vip": False}
-    now = datetime.datetime.utcnow()
     vip_until = user.get("vip_until")
     is_vip = vip_until and vip_until > now
     return {"vip": is_vip}
