@@ -212,6 +212,27 @@ async def forward_to_admin(m: types.Message):
 # ==========================================
 # 7. Admin Commands & Movie Upload
 # ==========================================
+@dp.callback_query(F.data.startswith("reply_"))
+async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
+    if c.from_user.id not in admin_cache: return
+    user_id = int(c.data.split("_")[1])
+    await state.set_state(AdminStates.waiting_for_reply)
+    await state.update_data(reply_user_id=user_id)
+    await c.message.answer("✍️ আপনার মেসেজ লিখুন (রিপ্লাই দেওয়ার জন্য):")
+    await c.answer()
+
+@dp.message(AdminStates.waiting_for_reply)
+async def send_reply_to_user(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    user_id = data.get("reply_user_id")
+    await state.clear()
+    if user_id:
+        try:
+            await m.copy_to(chat_id=user_id)
+            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
+        except:
+            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে। ইউজার বট ব্লক করে থাকতে পারে।")
+
 @dp.message(Command("addlink"))
 async def add_direct_link(m: types.Message):
     if m.from_user.id not in admin_cache: return
