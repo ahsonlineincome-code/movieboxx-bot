@@ -20,7 +20,7 @@ except RuntimeError:
 # ==========================================
 
 from fastapi import FastAPI, Body, Request, Depends, HTTPException, status
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
@@ -66,7 +66,6 @@ admin_cache = set([OWNER_ID])
 banned_cache = set() 
 
 CATEGORIES = ["Bangla", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
-JOIN_LINK = "https://t.me/addlist/MwbWNafSFK4yZjhl"
 
 # ==========================================
 # 2. FSM States
@@ -180,7 +179,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
 
-    tg_link = JOIN_LINK
+    tg_link = "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
     kb = [
@@ -211,30 +210,8 @@ async def forward_to_admin(m: types.Message):
     except: pass
 
 # ==========================================
-# 7. Admin Commands, Reply & Movie Upload
+# 7. Admin Commands & Movie Upload
 # ==========================================
-@dp.callback_query(F.data.startswith("reply_"))
-async def reply_callback(c: types.CallbackQuery, state: FSMContext):
-    if c.from_user.id not in admin_cache: 
-        return await c.answer("⚠️ Only Admins!", show_alert=True)
-    target_id = int(c.data.split("_")[1])
-    await state.set_state(AdminStates.waiting_for_reply)
-    await state.update_data(target_user_id=target_id)
-    await c.message.answer("✍️ রিপ্লাই মেসেজ লিখুন:")
-    await c.answer()
-
-@dp.message(AdminStates.waiting_for_reply, F.text)
-async def send_admin_reply(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-    target_id = data.get("target_user_id")
-    if target_id:
-        try:
-            await bot.send_message(target_id, f"📩 <b>Admin Reply:</b>\n\n{m.text}", parse_mode="HTML")
-            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
-        except:
-            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ।")
-    await state.clear()
-
 @dp.message(Command("addlink"))
 async def add_direct_link(m: types.Message):
     if m.from_user.id not in admin_cache: return
@@ -366,167 +343,184 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API (Fixed & UI Added)
+# 8. Web Admin Panel API & UI
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    now = datetime.datetime.utcnow()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Stats Calculation
-    total_users = await db.users.count_documents({})
-    today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    total_movies = await db.movies.count_documents({})
-    vip_users = await db.users.count_documents({"vip_until": {"$gt": now}})
-    pending_payments = await db.payments.count_documents({"status": "pending"})
-    
-    total_clicks_pipeline = [{"$group": {"_id": None, "total_clicks": {"$sum": "$clicks"}}}]
-    total_clicks_res = await db.movies.aggregate(total_clicks_pipeline).to_list(1)
-    total_clicks = total_clicks_res[0]["total_clicks"] if total_clicks_res else 0
-    
-    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
-    
-    stats = {
-        "total_users": total_users, "today_users": today_users,
-        "total_movies": total_movies, "total_clicks": total_clicks,
-        "today_clicks": today_clicks, "vip_users": vip_users,
-        "pending_payments": pending_payments
-    }
-    
-    # Movies List Calculation
-    movies_cursor = await db.movies.find({}, {"title": 1, "quality": 1, "clicks": 1}).sort("created_at", -1).limit(100).to_list(100)
-    movies = []
-    for m in movies_cursor:
-        m["_id"] = str(m["_id"])
-        movies.append(m)
-        
-    stats_json = json.dumps(stats)
-    movies_json = json.dumps(movies)
-    
-    html = f"""
+    html_code = '''
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
-        <title>Admin Panel - Movie Box</title>
+        <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Admin Panel - Movie Box</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            body {{ font-family: 'Inter', sans-serif; background: #0f172a; color: #fff; padding: 20px; margin: 0; }}
-            .header {{ text-align: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 15px; }}
-            .header h1 {{ margin: 0; color: #ef4444; }}
-            .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-bottom: 40px; }}
-            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; text-align: center; transition: 0.3s; }}
-            .card:hover {{ border-color: #ef4444; transform: translateY(-2px); }}
-            .card h2 {{ margin: 0; font-size: 32px; color: #ef4444; }}
-            .card p {{ margin: 5px 0 0; color: #94a3b8; font-weight: 600; font-size: 14px;}}
-            .card small {{ color: #64748b; font-size: 12px; }}
-            .table-section {{ background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; overflow-x: auto; }}
-            .table-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }}
-            .table-header h3 {{ margin: 0; color: #fbbf24; }}
-            table {{ width: 100%; border-collapse: collapse; min-width: 600px; }}
-            th {{ text-align: left; padding: 12px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 13px; }}
-            td {{ padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }}
-            tr:hover {{ background: rgba(255,255,255,0.03); }}
-            .btn-del {{ background: #dc2626; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600; transition: 0.2s; }}
-            .btn-del:hover {{ background: #b91c1c; }}
-            .badge {{ background: #334155; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: #cbd5e1; }}
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }
+            .header { text-align: center; margin-bottom: 30px; color: #fff; }
+            .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 40px; }
+            .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
+            .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
+            .stat-card.users .value i { color: #3b82f6; }
+            .stat-card.today-users .value i { color: #10b981; }
+            .stat-card.clicks .value i { color: #f59e0b; }
+            .stat-card.today-clicks .value i { color: #ef4444; }
+            
+            .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
+            .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+            .table-header h2 { margin: 0; color: #fff; font-size: 20px; }
+            table { width: 100%; border-collapse: collapse; min-width: 600px; }
+            th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; }
+            td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; }
+            tr:last-child td { border-bottom: none; }
+            tr:hover { background: rgba(255,255,255,0.03); }
+            .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
+            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+            .delete-btn:hover { background: #ef4444; color: white; }
+            .empty-state { text-align: center; padding: 40px; color: #64748b; }
         </style>
     </head>
     <body>
         <div class="header">
-            <h1><i class="fa-solid fa-shield-halved"></i> Movie Box Admin</h1>
+            <h1><i class="fa-solid fa-shield-halved"></i> Admin Panel</h1>
+            <p>Movie Box Control Center</p>
         </div>
 
-        <div class="cards">
-            <div class="card"><h2 id="statTotalUsers">-</h2><p>Total Users</p><small>Today: <span id="statTodayUsers">0</span></small></div>
-            <div class="card"><h2 id="statTotalClicks">-</h2><p>Total Clicks</p><small>Today: <span id="statTodayClicks">0</span></small></div>
-            <div class="card"><h2 id="statTotalMovies">-</h2><p>Total Movies</p></div>
-            <div class="card"><h2 id="statVipUsers">-</h2><p>VIP Users</p></div>
-            <div class="card"><h2 id="statPending">-</h2><p>Pending Payments</p></div>
+        <div class="stats-grid">
+            <div class="stat-card users">
+                <h3>Total Users</h3>
+                <div class="value"><i class="fa-solid fa-users"></i> <span id="totalUsers">0</span></div>
+            </div>
+            <div class="stat-card today-users">
+                <h3>Today's New Users</h3>
+                <div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div>
+            </div>
+            <div class="stat-card clicks">
+                <h3>Total Clicks / Views</h3>
+                <div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div>
+            </div>
+            <div class="stat-card today-clicks">
+                <h3>Today's Clicks</h3>
+                <div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div>
+            </div>
         </div>
 
-        <div class="table-section">
+        <div class="table-container">
             <div class="table-header">
-                <h3><i class="fa-solid fa-film"></i> Recent Movies & Files</h3>
+                <h2><i class="fa-solid fa-film"></i> Uploaded Movies & Files</h2>
             </div>
             <table>
                 <thead>
                     <tr>
                         <th>Title</th>
                         <th>Quality / Episode</th>
-                        <th>View Count</th>
+                        <th>Category</th>
+                        <th>Views</th>
                         <th>Action</th>
                     </tr>
                 </thead>
-                <tbody id="moviesTableBody"></tbody>
+                <tbody id="movieTableBody">
+                    <tr><td colspan="5" class="empty-state">Loading data...</td></tr>
+                </tbody>
             </table>
         </div>
 
         <script>
-            // Injecting data directly from Python
-            const statsData = {stats_json};
-            const moviesData = {movies_json};
-
-            // Populate Stats
-            document.getElementById('statTotalUsers').innerText = statsData.total_users;
-            document.getElementById('statTodayUsers').innerText = statsData.today_users;
-            document.getElementById('statTotalClicks').innerText = statsData.total_clicks;
-            document.getElementById('statTodayClicks').innerText = statsData.today_clicks;
-            document.getElementById('statTotalMovies').innerText = statsData.total_movies;
-            document.getElementById('statVipUsers').innerText = statsData.vip_users;
-            document.getElementById('statPending').innerText = statsData.pending_payments;
-            
-            if(statsData.pending_payments > 0) {{
-                document.getElementById('statPending').style.color = "#fbbf24";
-            }}
-
-            // Populate Table
-            const tbody = document.getElementById('moviesTableBody');
-            if(moviesData.length === 0) {{
-                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#64748b;">No movies uploaded yet.</td></tr>';
-            }} else {{
-                tbody.innerHTML = moviesData.map(m => `
-                    <tr>
-                        <td><strong>${{m.title}}</strong></td>
-                        <td><span class="badge">${{m.quality || 'Main'}}</span></td>
-                        <td><i class="fa-solid fa-eye" style="color:#3b82f6;"></i> ${{m.clicks || 0}}</td>
-                        <td><button class="btn-del" onclick="deleteMovie('${{m._id}}', this)"><i class="fa-solid fa-trash"></i> Delete</button></td>
-                    </tr>
-                `).join('');
-            }}
-
-            async function deleteMovie(id, btnElement) {{
-                if(!confirm("Are you sure you want to delete this file/episode?")) return;
-                btnElement.innerText = "Deleting...";
-                btnElement.disabled = true;
-
-                try {{
-                    const res = await fetch(`/api/admin/movie/${{id}}`, {{ method: 'DELETE', credentials: 'include' }});
-                    if(res.status === 401) {{ alert("Authentication failed! Please refresh the page."); return; }}
-                    
+            async function fetchStats() {
+                try {
+                    const res = await fetch('/api/admin/stats');
                     const data = await res.json();
-                    if(data.ok) {{
-                        btnElement.closest('tr').remove(); 
-                        document.getElementById('statTotalMovies').innerText = parseInt(document.getElementById('statTotalMovies').innerText) - 1;
-                    }} else {{
-                        alert("Error: " + data.msg);
-                        btnElement.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
-                        btnElement.disabled = false;
-                    }}
-                }} catch(e) {{ 
-                    alert("Failed to delete!"); 
-                    btnElement.innerHTML = '<i class="fa-solid fa-trash"></i> Delete';
-                    btnElement.disabled = false;
-                }}
-            }}
+                    document.getElementById('totalUsers').innerText = data.total_users;
+                    document.getElementById('todayUsers').innerText = data.today_users;
+                    document.getElementById('totalClicks').innerText = data.total_clicks;
+                    document.getElementById('todayClicks').innerText = data.today_clicks;
+                } catch(e) { console.error(e); }
+            }
+
+            async function fetchMovies() {
+                try {
+                    const res = await fetch('/api/admin/movies');
+                    const movies = await res.json();
+                    const tbody = document.getElementById('movieTableBody');
+                    
+                    if(movies.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies uploaded yet.</td></tr>';
+                        return;
+                    }
+
+                    tbody.innerHTML = movies.map(m => `
+                        <tr id="row-${m._id}">
+                            <td><strong>${m.title}</strong><br><small style="color:#64748b">${m.year || 'N/A'}</small></td>
+                            <td>${m.quality || 'Main'}</td>
+                            <td>${(m.categories || []).join(', ')}</td>
+                            <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
+                            <td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td>
+                        </tr>
+                    `).join('');
+                } catch(e) { console.error(e); }
+            }
+
+            async function deleteMovie(id) {
+                if(!confirm("Are you sure you want to delete this file?")) return;
+                try {
+                    const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if(data.ok) {
+                        document.getElementById(`row-${id}`).remove();
+                        fetchStats(); 
+                    } else {
+                        alert("Failed to delete!");
+                    }
+                } catch(e) { alert("Error deleting!"); }
+            }
+
+            fetchStats();
+            fetchMovies();
         </script>
     </body>
     </html>
-    """
-    return HTMLResponse(html)
+    '''
+    return HTMLResponse(html_code)
+
+@app.get("/api/admin/stats")
+async def admin_stats(auth: bool = Depends(verify_admin)):
+    now = datetime.datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    total_users = await db.users.count_documents({})
+    today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
+    
+    total_clicks_pipeline = [{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]
+    total_clicks_res = await db.movies.aggregate(total_clicks_pipeline).to_list(1)
+    total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
+    
+    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
+    
+    return {
+        "total_users": total_users,
+        "today_users": today_users,
+        "total_clicks": total_clicks,
+        "today_clicks": today_clicks
+    }
+
+@app.get("/api/admin/movies")
+async def admin_movies(auth: bool = Depends(verify_admin)):
+    movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
+    for m in movies:
+        m["_id"] = str(m["_id"])
+    return movies
+
+@app.delete("/api/admin/movie/{movie_id}")
+async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
+    result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
+    if result.deleted_count == 1:
+        return {"ok": True}
+    raise HTTPException(status_code=404, detail="Movie not found")
 
 # ==========================================
-# 9. Main Web App UI (Join Banner Added)
+# 9. Main Web App UI (UNCHANGED)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -623,11 +617,6 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
-            
-            /* Join Banner CSS */
-            .join-banner { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(45deg, #24A1DE, #1b7ba8); margin: 10px 15px; border-radius: 10px; padding: 8px 15px; font-weight: 600; font-size: 13px; }
-            .join-banner-btn { background: #fff; color: #24A1DE; padding: 5px 15px; border-radius: 8px; text-decoration: none; font-weight: 800; font-size: 12px; margin: 0 10px; }
-            .join-banner-close { background: none; border: none; color: white; font-size: 20px; cursor: pointer; line-height: 1; }
         </style>
     </head>
     <body>
@@ -646,11 +635,6 @@ async def web_ui():
         </header>
 
         <div id="tabHome" class="page-section active">
-            <div id="joinBanner" class="join-banner">
-                <span>🚀 নতুন মুভি পেতে জয়েন করুন!</span>
-                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="join-banner-btn" target="_blank">Join</a>
-                <button class="join-banner-close" onclick="closeJoinBanner()">&times;</button>
-            </div>
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             <div class="cat-row">
                 <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
@@ -753,9 +737,6 @@ async def web_ui():
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
 
-            function closeJoinBanner() { document.getElementById('joinBanner').style.display = 'none'; localStorage.setItem('joinBannerClosed', 'true'); }
-            if(localStorage.getItem('joinBannerClosed') === 'true') { document.getElementById('joinBanner').style.display = 'none'; }
-
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
             
             function switchTab(tabName, btnEl) { 
@@ -836,7 +817,7 @@ async def web_ui():
     return html_code
 
 # ==========================================
-# 10. Main Web App APIs (Random API Added)
+# 10. Main Web App APIs (BANDWIDTH OPTIMIZED)
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
@@ -876,22 +857,23 @@ async def random_movie():
     m = movies[0]
     return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
 
+# 🔥 BANDWIDTH SAVE: Redirects instead of streaming
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
     try:
         cache = await db.file_cache.find_one({"photo_id": photo_id})
         now = datetime.datetime.utcnow()
-        if cache and cache.get("expires_at", now) > now: file_path = cache["file_path"]
+        if cache and cache.get("expires_at", now) > now:
+            file_path = cache["file_path"]
         else:
-            file_info = await bot.get_file(photo_id); file_path = file_info.file_path
-            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(minutes=50)}}, upsert=True)
+            file_info = await bot.get_file(photo_id)
+            file_path = file_info.file_path
+            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(hours=1)}}, upsert=True)
+        
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
-        async def stream():
-            async with aiohttp.ClientSession() as s:
-                async with s.get(file_url) as r:
-                    async for c in r.content.iter_chunked(1024): yield c
-        return StreamingResponse(stream(), media_type="image/jpeg")
-    except: return {"error": "not found"}
+        return RedirectResponse(url=file_url)
+    except:
+        return RedirectResponse(url="https://via.placeholder.com/110x160")
 
 class SendRequestModel(BaseModel):
     userId: int
@@ -909,25 +891,16 @@ async def send_file(d: SendRequestModel):
             is_vip = user_data and user_data.get("vip_until", now) > now
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            
-            # Modified Caption with Join Link and Auto-Delete Time
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n⚠️ এই ফাইলটি <b>{del_minutes} মিনিট</b> পর অটোমেটিক ডিলিট হয়ে যাবে!\n🚀 নতুন মুভি পেতে চ্যানেলে জয়েন করুন।"
-            join_kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🚀 Join Channel", url=JOIN_LINK)]])
-            
-            if m.get("file_type") == "video": 
-                sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
-            else: 
-                sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False, reply_markup=join_kb)
-                
+            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
+            else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=False)
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
             if sent_msg and not is_vip:
                 delete_at = now + datetime.timedelta(minutes=del_minutes)
                 await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
         return {"ok": True}
-    except Exception as e:
-        print(f"Send Error: {e}")
-        return {"ok": False}
+    except: return {"ok": False}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
@@ -966,21 +939,6 @@ async def submit_payment(data: PaymentModel):
     return {"ok": True}
 
 # ==========================================
-# Admin Delete API (New)
-# ==========================================
-@app.delete("/api/admin/movie/{movie_id}")
-async def admin_delete_movie_api(movie_id: str, auth: bool = Depends(verify_admin)):
-    try:
-        # Check if the ID format is valid for MongoDB
-        if not ObjectId.is_valid(movie_id):
-            return {"ok": False, "msg": "Invalid Movie ID format!"}
-            
-        result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
-        if result.deleted_count > 0:
-            return {"ok": True, "msg": "Deleted successfully"}
-        return {"ok": False, "msg": "Movie not found in database!"}
-    except Exception as e:
-        return {"ok": False, "msg": str(e)}
 # 11. Main Application Startup
 # ==========================================
 async def start():
