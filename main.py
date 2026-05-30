@@ -65,7 +65,6 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
-# Bangla Dubbed এবং Web Series যুক্ত করা হয়েছে
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
 
 # ==========================================
@@ -238,7 +237,7 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
 async def toggle_protect(m: types.Message):
     if m.from_user.id not in admin_cache: return
     cfg = await db.settings.find_one({"id": "protect_content"})
-    current = cfg.get("status", True) if cfg else True
+    current = cfg.get("status", False) if cfg else False
     new_status = not current
     await db.settings.update_one({"id": "protect_content"}, {"$set": {"status": new_status}}, upsert=True)
     status_text = "অন 🔒" if new_status else "অফ 🔓"
@@ -437,8 +436,26 @@ async def broadcast_prep(m: types.Message, state: FSMContext):
 async def execute_broadcast(m: types.Message, state: FSMContext):
     await state.clear()
     success = 0
+    
+    # ম্যানুয়াল কাস্টে সরাসরি মিনি অ্যাপ না খুলে বটে রিডাইরেক্ট করার জন্য বাটন
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}")
+    bcast_markup = builder.as_markup()
+
     async for u in db.users.find():
-        try: await m.copy_to(chat_id=u['user_id']); success += 1; await asyncio.sleep(0.05)
+        try: 
+            if m.photo:
+                await bot.send_photo(u['user_id'], photo=m.photo[-1].file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
+            elif m.video:
+                await bot.send_video(u['user_id'], video=m.video.file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
+            elif m.document:
+                await bot.send_document(u['user_id'], document=m.document.file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
+            elif m.text:
+                await bot.send_message(u['user_id'], text=m.text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=bcast_markup)
+            else:
+                await m.copy_to(chat_id=u['user_id'])
+            success += 1
+            await asyncio.sleep(0.05)
         except: pass
     await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
 
@@ -533,7 +550,7 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     raise HTTPException(status_code=404, detail="Movie not found")
 
 # ==========================================
-# 9. Main Web App UI (18+ Lock & Ad Bypass Fix)
+# 9. Main Web App UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -852,13 +869,20 @@ async def send_file(d: SendRequestModel):
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
             
-            # Protect content DB check
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
-            is_protected = protect_cfg.get("status", True) if protect_cfg else True
+            is_protected = protect_cfg.get("status", False) if protect_cfg else False
             
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            
+            tg_cfg = await db.settings.find_one({"id": "tg_link"})
+            tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+            
+            base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
+            if is_vip:
+                caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
+            else:
+                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
             
             if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
