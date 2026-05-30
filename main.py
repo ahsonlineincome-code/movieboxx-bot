@@ -430,20 +430,40 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
     await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান।")
+    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
     await state.clear()
+    
+    # প্রগ্রেস মেসেজ পাঠানো হচ্ছে (ছবি ২ এর মতো)
+    prog_msg = await m.answer("⏳ <b>Broadcast progressing...</b>", parse_mode="HTML")
+    
+    total_users = await db.users.count_documents({})
     success = 0
+    blocked = 0
+    
     async for u in db.users.find():
         try: 
-            # মেসেজটি হুবহু কপি করে ইউজারের কাছে পাঠানো হচ্ছে, কোনো অতিরিক্ত বাটন যুক্ত করা হচ্ছে না
+            # মেসেজটি হুবহু কপি করা হচ্ছে, কোনো বাটন বা মিনি অ্যাপের লিংক যুক্ত করা হচ্ছে না
             await m.copy_to(chat_id=u['user_id'])
             success += 1
             await asyncio.sleep(0.05)
-        except: pass
-    await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
+        except: 
+            blocked += 1
+            
+    # ফাইনাল স্ট্যাটাস মেসেজ (ছবি ২ এর মতোই ফরম্যাট)
+    stats_text = (
+        f"✅ <b>Broadcast Complete!</b>\n\n"
+        f"👥 Total Users: <b>{total_users}</b>\n"
+        f"✅ Successful: <b>{success}</b>\n"
+        f"🚫 Blocked Users: <b>{blocked}</b>"
+    )
+    
+    try:
+        await prog_msg.edit_text(stats_text, parse_mode="HTML")
+    except:
+        await m.answer(stats_text, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
