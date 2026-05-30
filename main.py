@@ -133,7 +133,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 # 5. Background Tasks
 # ==========================================
 async def auto_delete_worker():
-    async def update_monthly_users_bio():
+async def update_monthly_users_bio():
     while True:
         try:
             now = datetime.datetime.utcnow()
