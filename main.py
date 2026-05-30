@@ -133,29 +133,6 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
 # 5. Background Tasks
 # ==========================================
 async def auto_delete_worker():
-async def update_monthly_users_bio():
-    while True:
-        try:
-            now = datetime.datetime.utcnow()
-            thirty_days_ago = now - datetime.timedelta(days=30)
-            
-            # গত ৩০ দিনে যারা বট ব্যবহার করেছে (Active) তাদের সংখ্যা
-            monthly_count = await db.users.count_documents({"last_active": {"$gte": thirty_days_ago}})
-            
-            # যদি আপনি গত ৩০ দিনে যারা নতুন জয়েন করেছে তাদের দেখতে চান, তবে উপরের লাইনটি মুছে নিচের লাইনটি ব্যবহার করুন:
-            # monthly_count = await db.users.count_documents({"joined_at": {"$gte": thirty_days_ago}})
-            
-            # কমা দিয়ে ফরম্যাট করা (যেমন: 7,428)
-            formatted_count = f"{monthly_count:,}"
-            short_bio = f"{formatted_count} monthly users"
-            
-            # বটের প্রোফাইলে বায়ো আপডেট করা
-            await bot.set_my_short_description(short_bio)
-        except Exception as e:
-            print(f"Bio Update Error: {e}")
-            
-        # ৬ ঘণ্টা অন্তর অন্তর এটি আপডেট হবে (21600 সেকেন্ড = ৬ ঘণ্টা)
-        await asyncio.sleep(21600)
     while True:
         try:
             now = datetime.datetime.utcnow()
@@ -168,6 +145,19 @@ async def update_monthly_users_bio():
         except:
             pass
         await asyncio.sleep(60)
+
+async def update_monthly_users_bio():
+    while True:
+        try:
+            now = datetime.datetime.utcnow()
+            thirty_days_ago = now - datetime.timedelta(days=30)
+            monthly_count = await db.users.count_documents({"last_active": {"$gte": thirty_days_ago}})
+            formatted_count = f"{monthly_count:,}"
+            short_bio = f"{formatted_count} monthly users"
+            await bot.set_my_short_description(short_bio)
+        except Exception as e:
+            print(f"Bio Update Error: {e}")
+        await asyncio.sleep(21600) # 6 hours sleep
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -368,7 +358,6 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
-# StateFilter(None) ensures this only triggers when NOT in /cast mode
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache, StateFilter(None))
 async def receive_movie_file(m: types.Message, state: FSMContext):
     fid = m.video.file_id if m.video else m.document.file_id
@@ -464,7 +453,6 @@ async def broadcast_prep(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
-    # Prevent accidental command broadcasts
     if m.text and m.text.startswith("/"):
         await state.clear()
         await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে কারণ আপনি একটি কমান্ড লিখেছেন।", parse_mode="HTML")
@@ -983,19 +971,7 @@ async def start():
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
     asyncio.create_task(auto_delete_worker())
-    async def start():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    port = int(os.getenv("PORT", 8000))
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
-    server = uvicorn.Server(config)
-    
-    asyncio.create_task(auto_delete_worker())
-    asyncio.create_task(update_monthly_users_bio()) # <--- এই লাইনটি যোগ করুন
-    
-    await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.gather(server.serve(), dp.start_polling(bot))
+    asyncio.create_task(update_monthly_users_bio()) # Monthly Users Bio Update Task Added
     await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(server.serve(), dp.start_polling(bot))
 
