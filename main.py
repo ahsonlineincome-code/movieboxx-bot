@@ -25,8 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -66,7 +65,6 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
-# Bangla Dubbed এবং Web Series যুক্ত করা হয়েছে
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Horror", "Action", "Web Series", "Adult Content"]
 
 # ==========================================
@@ -235,11 +233,17 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
 # ==========================================
 # 7. Admin Commands & Movie Upload
 # ==========================================
+@dp.message(Command("cancel"))
+async def cancel_cmd(m: types.Message, state: FSMContext):
+    if m.from_user.id not in admin_cache: return
+    await state.clear()
+    await m.answer("❌ বর্তমান প্রসেস বাতিল করা হয়েছে!", parse_mode="HTML")
+
 @dp.message(Command("protect"))
 async def toggle_protect(m: types.Message):
     if m.from_user.id not in admin_cache: return
     cfg = await db.settings.find_one({"id": "protect_content"})
-    current = cfg.get("status", True) if cfg else True
+    current = cfg.get("status", False) if cfg else False
     new_status = not current
     await db.settings.update_one({"id": "protect_content"}, {"$set": {"status": new_status}}, upsert=True)
     status_text = "অন 🔒" if new_status else "অফ 🔓"
@@ -263,14 +267,23 @@ async def set_delete_time(m: types.Message):
         await m.answer(f"✅ অটো-ডিলিট টাইম <b>{minutes} মিনিট</b> এ সেট করা হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /settime 60 (মিনিট লিখুন)", parse_mode="HTML")
 
-@dp.message(Command("setad"))
-async def set_ad_link(m: types.Message):
+@dp.message(Command("addlink"))
+async def add_link_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
     try:
         url = m.text.split(" ", 1)[1].strip()
         await db.settings.update_one({"id": "direct_links"}, {"$addToSet": {"links": url}}, upsert=True)
         await m.answer("✅ অ্যাড জোন লিংক অ্যাড হয়েছে।", parse_mode="HTML")
-    except: await m.answer("⚠️ /setad url", parse_mode="HTML")
+    except: await m.answer("⚠️ /addlink url", parse_mode="HTML")
+
+@dp.message(Command("addadultlink"))
+async def add_adult_link_cmd(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    try:
+        url = m.text.split(" ", 1)[1].strip()
+        await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": url}}, upsert=True)
+        await m.answer("✅ ১৮+ অ্যাড লিংক অ্যাড হয়েছে।", parse_mode="HTML")
+    except: await m.answer("⚠️ /addadultlink url", parse_mode="HTML")
 
 @dp.message(Command("settg"))
 async def set_tg_link(m: types.Message):
@@ -281,16 +294,7 @@ async def set_tg_link(m: types.Message):
         await m.answer("✅ টেলিগ্রাম চ্যানেল লিংক আপডেট হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /settg https://t.me/...", parse_mode="HTML")
 
-@dp.message(Command("set18"))
-async def set_18_link(m: types.Message):
-    if m.from_user.id not in admin_cache: return
-    try:
-        url = m.text.split(" ", 1)[1].strip()
-        await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": url}}, upsert=True)
-        await m.answer("✅ ১৮+ অ্যাড লিংক অ্যাড হয়েছে।", parse_mode="HTML")
-    except: await m.answer("⚠️ /set18 url", parse_mode="HTML")
-
-@dp.message(Command("del"))
+@dp.message(Command("delmovie"))
 async def del_movie_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
     try:
@@ -298,7 +302,7 @@ async def del_movie_cmd(m: types.Message):
         result = await db.movies.delete_many({"title": title})
         if result.deleted_count > 0: await m.answer(f"✅ '<b>{title}</b>' ডিলিট হয়েছে!", parse_mode="HTML")
         else: await m.answer("⚠️ পাওয়া যায়নি")
-    except: await m.answer("⚠️ /del মুভির নাম", parse_mode="HTML")
+    except: await m.answer("⚠️ /delmovie মুভির নাম", parse_mode="HTML")
 
 @dp.message(Command("addvip"))
 async def add_vip_cmd(m: types.Message):
@@ -341,6 +345,7 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
+# StateFilter(None) ensures this only triggers when NOT in /cast mode
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache, StateFilter(None))
 async def receive_movie_file(m: types.Message, state: FSMContext):
     fid = m.video.file_id if m.video else m.document.file_id
@@ -432,16 +437,43 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
     await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান।")
+    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
+    # Prevent accidental command broadcasts
+    if m.text and m.text.startswith("/"):
+        await state.clear()
+        await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে কারণ আপনি একটি কমান্ড লিখেছেন।", parse_mode="HTML")
+        return
+
     await state.clear()
+    
+    prog_msg = await m.answer("⏳ <b>Broadcast progressing...</b>", parse_mode="HTML")
+    
+    total_users = await db.users.count_documents({})
     success = 0
+    blocked = 0
+    
     async for u in db.users.find():
-        try: await m.copy_to(chat_id=u['user_id']); success += 1; await asyncio.sleep(0.05)
-        except: pass
-    await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
+        try: 
+            await m.copy_to(chat_id=u['user_id'])
+            success += 1
+            await asyncio.sleep(0.05)
+        except: 
+            blocked += 1
+            
+    stats_text = (
+        f"✅ <b>Broadcast Complete!</b>\n\n"
+        f"👥 Total Users: <b>{total_users}</b>\n"
+        f"✅ Successful: <b>{success}</b>\n"
+        f"🚫 Blocked Users: <b>{blocked}</b>"
+    )
+    
+    try:
+        await prog_msg.edit_text(stats_text, parse_mode="HTML")
+    except:
+        await m.answer(stats_text, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
@@ -534,7 +566,7 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     raise HTTPException(status_code=404, detail="Movie not found")
 
 # ==========================================
-# 9. Main Web App UI (18+ Lock & Ad Bypass Fix)
+# 9. Main Web App UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -853,13 +885,20 @@ async def send_file(d: SendRequestModel):
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
             
-            # Protect content DB check
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
-            is_protected = protect_cfg.get("status", True) if protect_cfg else True
+            is_protected = protect_cfg.get("status", False) if protect_cfg else False
             
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>"
+            
+            tg_cfg = await db.settings.find_one({"id": "tg_link"})
+            tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+            
+            base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
+            if is_vip:
+                caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
+            else:
+                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
             
             if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
