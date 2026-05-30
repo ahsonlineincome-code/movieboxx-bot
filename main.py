@@ -436,28 +436,14 @@ async def broadcast_prep(m: types.Message, state: FSMContext):
 async def execute_broadcast(m: types.Message, state: FSMContext):
     await state.clear()
     success = 0
-    
-    # ম্যানুয়াল কাস্টে সরাসরি মিনি অ্যাপ না খুলে বটে রিডাইরেক্ট করার জন্য বাটন
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}")
-    bcast_markup = builder.as_markup()
-
     async for u in db.users.find():
         try: 
-            if m.photo:
-                await bot.send_photo(u['user_id'], photo=m.photo[-1].file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
-            elif m.video:
-                await bot.send_video(u['user_id'], video=m.video.file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
-            elif m.document:
-                await bot.send_document(u['user_id'], document=m.document.file_id, caption=m.caption, parse_mode="HTML", reply_markup=bcast_markup)
-            elif m.text:
-                await bot.send_message(u['user_id'], text=m.text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=bcast_markup)
-            else:
-                await m.copy_to(chat_id=u['user_id'])
+            # মেসেজটি হুবহু কপি করে ইউজারের কাছে পাঠানো হচ্ছে, কোনো অতিরিক্ত বাটন যুক্ত করা হচ্ছে না
+            await m.copy_to(chat_id=u['user_id'])
             success += 1
             await asyncio.sleep(0.05)
         except: pass
-    await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
+    await m.answer(f"✅ {success} জনকে পাঠানো হয়েছে।", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
