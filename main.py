@@ -374,14 +374,26 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
 # ==========================================
 @dp.message(Command("batch"))
 async def batch_upload_start(m: types.Message, state: FSMContext):
-    if m.from_user.id not in admin_cache: return
+    if m.from_user.id not in admin_cache: 
+        await m.answer("⚠️ আপনি অ্যাডমিন নন!", parse_mode="HTML")
+        return
     await state.clear()
     await state.set_state(AdminStates.waiting_for_batch_photo)
-    await m.answer("📦 <b>Batch Upload Mode</b>\n\nসিরিজ বা মাল্টি-এপিসোডের <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
+    await m.answer("📦 <b>Batch Upload Mode</b>\n\nসিরিজ বা মাল্টি-এপিসোডের <b>পোস্টার</b> পাঠান (ছবি বা ফাইল হিসেবে)।", parse_mode="HTML")
 
-@dp.message(AdminStates.waiting_for_batch_photo, F.photo)
+@dp.message(AdminStates.waiting_for_batch_photo, F.photo | F.document)
 async def receive_batch_photo(m: types.Message, state: FSMContext):
-    await state.update_data(photo_id=m.photo[-1].file_id)
+    photo_id = None
+    if m.photo:
+        photo_id = m.photo[-1].file_id
+    elif m.document:
+        photo_id = m.document.file_id
+        
+    if not photo_id:
+        await m.answer("⚠️ দয়া করে একটি ছবি পাঠান।", parse_mode="HTML")
+        return
+
+    await state.update_data(photo_id=photo_id)
     await state.set_state(AdminStates.waiting_for_batch_title)
     await m.answer("✅ এবার <b>সিরিজ/মুভির নাম</b> লিখুন (যেমন: Money Heist)।", parse_mode="HTML")
 
@@ -514,7 +526,7 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
             except: pass
         except: pass
             
-    await m.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    await m.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
 
 @dp.message(Command("done"))
 async def wrong_done_cmd(m: types.Message):
