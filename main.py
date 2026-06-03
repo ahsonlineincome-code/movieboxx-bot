@@ -361,8 +361,14 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
-@dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache, StateFilter(None))
+# ✅ FIX: State আটকে গেলে মুভি আপলোড ব্লক করা
+@dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        await m.answer("⚠️ আপনি অন্য একটি প্রসেসে আটকে আছেন! আগে /cancel করুন।", parse_mode="HTML")
+        return
+        
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
     await state.set_state(AdminStates.waiting_for_photo)
@@ -477,13 +483,20 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
     await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)", parse_mode="HTML")
+    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
+    # কমান্ড লিখলে বাতিল
     if m.text and m.text.startswith("/"):
         await state.clear()
-        await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে কারণ আপনি একটি কমান্ড লিখেছেন।", parse_mode="HTML")
+        await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে।", parse_mode="HTML")
+        return
+
+    # ✅ FIX: যদি অ্যাডমিন সরাসরি রিপ্লাই করেন, তবে ব্রডকাস্ট বাতিল করা হবে (যাতে ভুলে সবার কাছে না যায়)
+    if m.reply_to_message:
+        await state.clear()
+        await m.answer("⚠️ ব্রডকাস্ট বাতিল করা হয়েছে কারণ আপনি রিপ্লাই করেছেন! ইউজারকে রিপ্লাই দিতে ইনলাইন ✍️ বাটন ব্যবহার করুন।", parse_mode="HTML")
         return
 
     await state.clear()
@@ -837,14 +850,12 @@ async def web_ui():
             function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
             function resetAdModal() { adStartTime = 0; document.getElementById('adClickBtn').style.display = 'block'; document.getElementById('adVerifyBtn').style.display = 'none'; document.getElementById('adTryAgainBtn').style.display = 'none'; }
             
-            // ✅ Cross-Platform Ad Verification Logic
             function openAdLink() { 
                 let linkToOpen = null; 
                 if(activeIsAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) { linkToOpen = ADULT_DIRECT_LINKS[Math.floor(Math.random() * ADULT_DIRECT_LINKS.length)]; } 
                 else if(DIRECT_LINKS && DIRECT_LINKS.length > 0) { linkToOpen = DIRECT_LINKS[Math.floor(Math.random() * DIRECT_LINKS.length)]; } 
                 if(linkToOpen) { tg.openLink(linkToOpen); }
-                
-                adStartTime = Date.now(); // Record start time
+                adStartTime = Date.now(); 
                 document.getElementById('adClickBtn').style.display = 'none';
                 document.getElementById('adVerifyBtn').style.display = 'block';
                 document.getElementById('adTryAgainBtn').style.display = 'none';
@@ -853,7 +864,7 @@ async def web_ui():
             function checkAdWatched() {
                 if (adStartTime === 0) return;
                 let elapsed = Date.now() - adStartTime;
-                if (elapsed >= 15000) { // 15 seconds check
+                if (elapsed >= 15000) { 
                     closeModal('adModal');
                     sendFileRequest(activeFileId);
                 } else {
