@@ -68,7 +68,7 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
-# ✅ UPDATED: Action remove করা হয়েছে
+# ✅ FIXED: Action সরানো হয়েছে, Bangla Dubbed ও Anime রাখা হয়েছে
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
 # ==========================================
@@ -85,7 +85,6 @@ class AdminStates(StatesGroup):
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
-    # Custom Batch Upload States
     waiting_for_batch_photo = State()
     waiting_for_batch_title = State()
     waiting_for_batch_year = State()
@@ -388,11 +387,9 @@ async def receive_batch_photo(m: types.Message, state: FSMContext):
         photo_id = m.photo[-1].file_id
     elif m.document:
         photo_id = m.document.file_id
-        
     if not photo_id:
         await m.answer("⚠️ দয়া করে একটি ছবি পাঠান।", parse_mode="HTML")
         return
-
     await state.update_data(photo_id=photo_id)
     await state.set_state(AdminStates.waiting_for_batch_title)
     await m.answer("✅ এবার <b>সিরিজ/মুভির নাম</b> লিখুন (যেমন: Money Heist)।", parse_mode="HTML")
@@ -408,23 +405,25 @@ async def receive_batch_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
     await state.set_state(AdminStates.waiting_for_batch_cats)
     builder = InlineKeyboardBuilder()
-    for cat in CATEGORIES: builder.button(text=cat, callback_data=f"batselcat_{cat}")
+    for index, cat in enumerate(CATEGORIES): 
+        builder.button(text=cat, callback_data=f"batselcat_{index}")
     builder.button(text="✅ Done", callback_data="batcats_done")
     builder.adjust(2)
     await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(AdminStates.waiting_for_batch_cats, F.data.startswith("batselcat_"))
 async def process_batch_category_selection(c: types.CallbackQuery, state: FSMContext):
-    cat = c.data.split("_", 1)[1]
+    index = int(c.data.split("_")[1])
+    cat = CATEGORIES[index]
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
     builder = InlineKeyboardBuilder()
-    for ct in CATEGORIES:
+    for i, ct in enumerate(CATEGORIES):
         prefix = "✅ " if ct in selected_cats else ""
-        builder.button(text=f"{prefix}{ct}", callback_data=f"batselcat_{ct}")
+        builder.button(text=f"{prefix}{ct}", callback_data=f"batselcat_{i}")
     builder.button(text="✅ Done", callback_data="batcats_done")
     builder.adjust(2)
     await c.message.edit_reply_markup(reply_markup=builder.as_markup())
@@ -450,16 +449,13 @@ async def receive_batch_file(m: types.Message, state: FSMContext):
 async def receive_batch_quality(m: types.Message, state: FSMContext):
     data = await state.get_data()
     files_list = data.get("files", [])
-    
     files_list.append({
         "file_id": data["current_file_id"],
         "file_type": data["current_file_type"],
         "quality": m.text.strip()
     })
-    
     await state.update_data(files=files_list)
     await state.set_state(AdminStates.waiting_for_batch_file)
-    
     added_count = len(files_list)
     await m.answer(f"✅ <b>{m.text.strip()}</b> যুক্ত হয়েছে!\n\nমোট যুক্ত হয়েছে: <b>{added_count}</b>টি ফাইল।\n\nপরবর্তী ফাইল পাঠান অথবা শেষ করতে <b>/done</b> লিখুন।", parse_mode="HTML")
 
@@ -467,50 +463,34 @@ async def receive_batch_quality(m: types.Message, state: FSMContext):
 async def finish_batch_upload(m: types.Message, state: FSMContext):
     data = await state.get_data()
     files_list = data.get("files", [])
-    
     if not files_list:
         await state.clear()
         return await m.answer("⚠️ কোনো ফাইল যুক্ত করা হয়নি! আপলোড বাতিল হলো।", parse_mode="HTML")
-        
     await state.clear()
-    
     title = data["title"]
     photo_id = data["photo_id"]
     year = data.get("year", "N/A")
     categories = data["categories"]
-    
     for f in files_list:
         await db.movies.insert_one({
-            "title": title, 
-            "quality": f["quality"], 
-            "photo_id": photo_id, 
-            "file_id": f["file_id"], 
-            "file_type": f["file_type"], 
-            "year": year, 
-            "categories": categories, 
-            "clicks": 0, 
-            "created_at": datetime.datetime.utcnow()
+            "title": title, "quality": f["quality"], "photo_id": photo_id, 
+            "file_id": f["file_id"], "file_type": f["file_type"], 
+            "year": year, "categories": categories, "clicks": 0, "created_at": datetime.datetime.utcnow()
         })
-        
     await m.answer(f"🎉 <b>{title}</b> সফলভাবে যুক্ত হয়েছে! মোট ফাইল/এপিসোড: <b>{len(files_list)}</b>\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
-    
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    
     bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
-    
     ep_list_text = ", ".join([f["quality"] for f in files_list])
     bcast_text = f"🆕 <b>New Upload Alert!</b>\n\n🎬 <b>{title}</b>\n📺 Files: <b>{ep_list_text}</b>\n📅 Year: <b>{year}</b>\n\n👇 এখনই দেখুন!"
-    
     now = datetime.datetime.utcnow()
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_minutes = time_cfg['minutes'] if time_cfg else 60
     delete_at = now + datetime.timedelta(minutes=del_minutes)
-    
     async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
@@ -525,7 +505,6 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
                 bcast_success += 1
             except: pass
         except: pass
-            
     await m.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
 
 @dp.message(Command("done"))
@@ -533,14 +512,15 @@ async def wrong_done_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
     await m.answer("⚠️ আপনি কোনো ব্যাচ আপলোড প্রসেসে নেই। শুরু করতে /batch লিখুন।", parse_mode="HTML")
 
-# ✅ Single Movie Upload
+# ==========================================
+# 7.6 Single Movie Upload
+# ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         await m.answer("⚠️ আপনি অন্য একটি প্রসেসে আটকে আছেন! আগে /cancel করুন।", parse_mode="HTML")
         return
-        
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
     await state.set_state(AdminStates.waiting_for_photo)
@@ -570,23 +550,27 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
     await state.set_state(AdminStates.waiting_for_cats)
     builder = InlineKeyboardBuilder()
-    for cat in CATEGORIES: builder.button(text=cat, callback_data=f"selcat_{cat}")
+    # ✅ FIXED: Index-based callback to avoid space/special character errors
+    for index, cat in enumerate(CATEGORIES): 
+        builder.button(text=cat, callback_data=f"selcat_{index}")
     builder.button(text="✅ Done", callback_data="cats_done")
     builder.adjust(2)
     await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
-    cat = c.data.split("_")[1]
+    # ✅ FIXED: Extract category name from list using index
+    index = int(c.data.split("_")[1])
+    cat = CATEGORIES[index]
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
     builder = InlineKeyboardBuilder()
-    for ct in CATEGORIES:
+    for i, ct in enumerate(CATEGORIES):
         prefix = "✅ " if ct in selected_cats else ""
-        builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{ct}")
+        builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{i}")
     builder.button(text="✅ Done", callback_data="cats_done")
     builder.adjust(2)
     await c.message.edit_reply_markup(reply_markup=builder.as_markup())
@@ -598,10 +582,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
-    
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
-    
     if LOG_CHANNEL_ID:
         try:
             log_text = (
@@ -615,23 +597,18 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML")
         except Exception as e:
             print(f"Log Channel Error: {e}")
-
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-    
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    
     bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
-    
     now = datetime.datetime.utcnow()
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_minutes = time_cfg['minutes'] if time_cfg else 60
     delete_at = now + datetime.timedelta(minutes=del_minutes)
-    
     async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
@@ -647,8 +624,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
             except: pass
         except Exception as e:
             print(f"Broadcast Error for {u['user_id']}: {e}")
-            pass
-            
     await c.message.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
 
 @dp.message(Command("cast"))
@@ -663,20 +638,15 @@ async def execute_broadcast(m: types.Message, state: FSMContext):
         await state.clear()
         await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে।", parse_mode="HTML")
         return
-
     if m.reply_to_message:
         await state.clear()
         await m.answer("⚠️ ব্রডকাস্ট বাতিল করা হয়েছে কারণ আপনি রিপ্লাই করেছেন! ইউজারকে রিপ্লাই দিতে ইনলাইন ✍️ বাটন ব্যবহার করুন।", parse_mode="HTML")
         return
-
     await state.clear()
-    
     prog_msg = await m.answer("⏳ <b>Broadcast progressing...</b>", parse_mode="HTML")
-    
     total_users = await db.users.count_documents({})
     success = 0
     blocked = 0
-    
     async for u in db.users.find():
         try: 
             await m.copy_to(chat_id=u['user_id'])
@@ -684,14 +654,12 @@ async def execute_broadcast(m: types.Message, state: FSMContext):
             await asyncio.sleep(0.05)
         except: 
             blocked += 1
-            
     stats_text = (
         f"✅ <b>Broadcast Complete!</b>\n\n"
         f"👥 Total Users: <b>{total_users}</b>\n"
         f"✅ Successful: <b>{success}</b>\n"
         f"🚫 Blocked Users: <b>{blocked}</b>"
     )
-    
     try:
         await prog_msg.edit_text(stats_text, parse_mode="HTML")
     except:
@@ -1126,25 +1094,19 @@ async def send_file(d: SendRequestModel):
             now = datetime.datetime.utcnow()
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
-            
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
             is_protected = protect_cfg.get("status", False) if protect_cfg else False
-            
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            
             tg_cfg = await db.settings.find_one({"id": "tg_link"})
             tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-            
             base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
             if is_vip:
                 caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
             else:
                 caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
-            
             if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-            
             await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
             if sent_msg and not is_vip:
