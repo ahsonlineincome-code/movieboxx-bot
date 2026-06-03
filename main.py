@@ -223,12 +223,19 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
+# ✅ FIX: ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস ইত্যাদি) পাঠালে ব্লক করা হবে এবং অ্যাডমিনের কাছে যাবে না
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
-async def forward_to_admin(m: types.Message):
+async def handle_user_messages(m: types.Message):
+    # ইউজার যদি টেক্সট ছাড়া অন্য কিছু (ছবি, ভিডিও, ভয়েস, স্টিকার) পাঠায়
+    if m.content_type not in ['text']:
+        await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি। ছবি, ভিডিও, ভয়েস বা স্টিকার গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
+        return
+        
+    # শুধুমাত্র টেক্সট মেসেজ অ্যাডমিনের কাছে যাবে
     try:
         builder = InlineKeyboardBuilder()
         builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{m.from_user.id}")
-        await bot.send_message(OWNER_ID, f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n{m.text or 'Media'}", parse_mode="HTML", reply_markup=builder.as_markup())
+        await bot.send_message(OWNER_ID, f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n{m.text}", parse_mode="HTML", reply_markup=builder.as_markup())
     except: pass
 
 @dp.callback_query(F.data.startswith("reply_"))
@@ -478,11 +485,10 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
         })
     await m.answer(f"🎉 <b>{title}</b> সফলভাবে যুক্ত হয়েছে! মোট ফাইল/এপিসোড: <b>{len(files_list)}</b>\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # ✅ FIX: Log Channel Post with Watch Now Button
+    # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
-            log_web_url = APP_URL if APP_URL else f"https://t.me/{BOT_USERNAME}"
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url=log_web_url)]]
+            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MoviesLinkBD_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = (
                 f"🎬 <b>New Batch Upload</b>\n\n"
@@ -601,11 +607,10 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # ✅ FIX: Log Channel Post with Watch Now Button
+    # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
-            log_web_url = APP_URL if APP_URL else f"https://t.me/{BOT_USERNAME}"
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url=log_web_url)]]
+            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MoviesLinkBD_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = (
                 f"🎬 <b>New Movie Uploaded</b>\n\n"
