@@ -168,6 +168,29 @@ async def update_monthly_users_bio():
             print(f"Bio Update Error: {e}")
         await asyncio.sleep(21600)
 
+# ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানোর জন্য নতুন ফাংশন (বট স্লো হওয়া রোধ করতে)
+async def run_broadcast(admin_chat_id, photo_id, bcast_text, bcast_markup, del_minutes):
+    bcast_success = 0
+    now = datetime.datetime.utcnow()
+    delete_at = now + datetime.timedelta(minutes=del_minutes)
+    async for u in db.users.find():
+        try:
+            sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+            bcast_success += 1
+            await asyncio.sleep(0.1)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            try:
+                sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+                bcast_success += 1
+            except: pass
+        except: pass
+    try:
+        await bot.send_message(admin_chat_id, f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    except: pass
+
 # ==========================================
 # 6. Telegram Bot Commands
 # ==========================================
@@ -223,20 +246,29 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ FIX: ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস ইত্যাদি) পাঠালে ব্লক করা হবে এবং অ্যাডমিনের কাছে যাবে না
+# ✅ FIX: ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস) অ্যাডমিনের কাছে পাঠানো হবে
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
-    # ইউজার যদি টেক্সট ছাড়া অন্য কিছু (ছবি, ভিডিও, ভয়েস, স্টিকার) পাঠায়
-    if m.content_type not in ['text']:
-        await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি। ছবি, ভিডিও, ভয়েস বা স্টিকার গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
+    # শুধুমাত্র এই টাইপগুলো গ্রহণ করবে
+    allowed_types = ['text', 'photo', 'video', 'voice', 'document']
+    if m.content_type not in allowed_types:
+        await m.answer("⚠️ দুঃখিত! এই ধরনের মেসেজ গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
         
-    # শুধুমাত্র টেক্সট মেসেজ অ্যাডমিনের কাছে যাবে
     try:
         builder = InlineKeyboardBuilder()
         builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{m.from_user.id}")
-        await bot.send_message(OWNER_ID, f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n{m.text}", parse_mode="HTML", reply_markup=builder.as_markup())
-    except: pass
+        user_info = f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n"
+        
+        if m.content_type == 'text':
+            await bot.send_message(OWNER_ID, user_info + m.text, parse_mode="HTML", reply_markup=builder.as_markup())
+        else:
+            # মিডিয়া থাকলে ক্যাপশনে ইউজার ইনফো যুক্ত করে কপি করা
+            caption = m.caption or ""
+            new_caption = user_info + caption
+            await m.copy_to(chat_id=OWNER_ID, caption=new_caption if new_caption.strip() != user_info.strip() else None, parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception as e:
+        print(f"Forward Error: {e}")
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
@@ -426,13 +458,18 @@ async def process_batch_category_selection(c: types.CallbackQuery, state: FSMCon
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
+    
     builder = InlineKeyboardBuilder()
     for i, ct in enumerate(CATEGORIES):
         prefix = "✅ " if ct in selected_cats else ""
         builder.button(text=f"{prefix}{ct}", callback_data=f"batselcat_{i}")
     builder.button(text="✅ Done", callback_data="batcats_done")
     builder.adjust(2)
-    await c.message.edit_reply_markup(reply_markup=builder.as_markup())
+    
+    try:
+        # টেলিগ্রাম এরর এড়াতে টেক্সট চেঞ্জ করা হচ্ছে
+        await c.message.edit_text(f"✅ ক্যাটাগরি সিলেক্ট করুন ({len(selected_cats)} টি সিলেক্ট করা হয়েছে):", reply_markup=builder.as_markup(), parse_mode="HTML")
+    except: pass
     await c.answer()
 
 @dp.callback_query(AdminStates.waiting_for_batch_cats, F.data == "batcats_done")
@@ -488,7 +525,7 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
     # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MoviesLinkBD_Bot?start=new")]]
+            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = (
                 f"🎬 <b>New Batch Upload</b>\n\n"
@@ -502,7 +539,7 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    bcast_success = 0
+    # ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানো হচ্ছে যাতে বট স্লো না হয়
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
@@ -511,25 +548,11 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     ep_list_text = ", ".join([f["quality"] for f in files_list])
     bcast_text = f"🆕 <b>New Upload Alert!</b>\n\n🎬 <b>{title}</b>\n📺 Files: <b>{ep_list_text}</b>\n📅 Year: <b>{year}</b>\n\n👇 এখনই দেখুন!"
-    now = datetime.datetime.utcnow()
+    
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
-    async for u in db.users.find():
-        try:
-            sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-            bcast_success += 1
-            await asyncio.sleep(0.1)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-                bcast_success += 1
-            except: pass
-        except: pass
-    await m.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    
+    asyncio.create_task(run_broadcast(m.from_user.id, photo_id, bcast_text, bcast_markup, del_minutes))
 
 @dp.message(Command("done"))
 async def wrong_done_cmd(m: types.Message):
@@ -589,13 +612,18 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
+    
     builder = InlineKeyboardBuilder()
     for i, ct in enumerate(CATEGORIES):
         prefix = "✅ " if ct in selected_cats else ""
         builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{i}")
     builder.button(text="✅ Done", callback_data="cats_done")
     builder.adjust(2)
-    await c.message.edit_reply_markup(reply_markup=builder.as_markup())
+    
+    try:
+        # টেলিগ্রাম এরর এড়াতে টেক্সট চেঞ্জ করা হচ্ছে
+        await c.message.edit_text(f"✅ ক্যাটাগরি সিলেক্ট করুন ({len(selected_cats)} টি সিলেক্ট করা হয়েছে):", reply_markup=builder.as_markup(), parse_mode="HTML")
+    except: pass
     await c.answer()
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
@@ -610,7 +638,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MoviesLinkBD_Bot?start=new")]]
+            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = (
                 f"🎬 <b>New Movie Uploaded</b>\n\n"
@@ -624,7 +652,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    bcast_success = 0
+    # ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানো হচ্ছে যাতে বট স্লো না হয়
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
@@ -632,26 +660,11 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
-    now = datetime.datetime.utcnow()
+    
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
-    async for u in db.users.find():
-        try:
-            sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-            bcast_success += 1
-            await asyncio.sleep(0.1)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-                bcast_success += 1
-            except: pass
-        except Exception as e:
-            print(f"Broadcast Error for {u['user_id']}: {e}")
-    await c.message.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    
+    asyncio.create_task(run_broadcast(c.from_user.id, data["photo_id"], bcast_text, bcast_markup, del_minutes))
 
 @dp.message(Command("cast"))
 async def broadcast_prep(m: types.Message, state: FSMContext):
