@@ -9,7 +9,6 @@ import hashlib
 import urllib.parse
 import secrets
 import json
-import re # ✅ স্মার্ট সার্চের জন্য Regex মডিউল
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -49,7 +48,6 @@ ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123")
 BOT_USERNAME = "bdlatestmovie_bot" 
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
-REQUEST_GROUP_ID = -1003949248289 # ✅ মুভি রিকোয়েস্ট গ্রুপের আইডি
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -215,47 +213,6 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই (ডিবাগ ভার্সন)
-@dp.message(F.chat.type.in_({"group", "supergroup"}), F.text, ~F.text.startswith("/"))
-async def handle_movie_request_group(m: types.Message):
-    # ডিবাগ: বট মেসেজ রিসিভ করলে রেন্ডার লগে দেখাবে
-    print(f"DEBUG: Received message in Chat ID: {m.chat.id} | Text: {m.text}")
-    
-    # যদি মেসেজ আপনার রিকোয়েস্ট গ্রুপের না হয়, তবে রিটার্ন করবে
-    if m.chat.id != REQUEST_GROUP_ID:
-        return
-        
-    query = m.text.strip()
-    if len(query) < 2 or len(query) > 100:
-        return
-    
-    # অপ্রয়োজনীয় শব্দ বাদ দেওয়া
-    stopwords = {'movie', 'film', 'series', 'pls', 'please', 'chi', 'dibo', 'dorkar', 'amar', 'kotha', 'bot', 'the', 'a', 'an', 'de', 'dao', 'cholbe', 'lam', 'koro', 'lagbe'}
-    words = query.split()
-    filtered_words = [word for word in words if word.lower() not in stopwords]
-    
-    if not filtered_words:
-        regex_pattern = re.escape(query)
-    else:
-        regex_pattern = "|".join([re.escape(word) for word in filtered_words])
-    
-    # ডিবাগ: সার্চ প্যাটার্ন রেন্ডার লগে দেখাবে
-    print(f"DEBUG: Searching DB with regex: {regex_pattern}")
-    
-    try:
-        movie = await db.movies.find_one({"title": {"$regex": regex_pattern, "$options": "i"}})
-        
-        if movie:
-            web_app_url = APP_URL if APP_URL else "https://t.me/"
-            kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))]]
-            markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-            await m.reply(f"🎬 এই মুভিটি আমাদের বটে আপলোড করা আছে! দেখতে নিচের বাটনে ক্লিক করুন।", reply_markup=markup, parse_mode="HTML")
-        else:
-            await m.reply("😔 দুঃখিত, এই মুভিটি এখনো আপলোড হয়নি। শীঘ্রই আপলোড করে দেওয়া হবে!", parse_mode="HTML")
-    except Exception as e:
-        # যদি ডাটাবেস সার্চে কোনো এরর আসে, তা রেন্ডার লগে দেখাবে
-        print(f"DEBUG DB ERROR: {e}")
-
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     if m.content_type not in ['text']:
@@ -406,12 +363,11 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
 # ==========================================
 # 7.5 Broadcast & Movie Upload (FIXED CLASH)
 # ==========================================
-# ✅ FIX: ব্রডকাস্ট মোডকে সর্বোচ্চ অগ্রাধিকার দেওয়া হয়েছে যেন কোনোভাবেই মুভি আপলোড হিসেবে গণ্য না হয়
 @dp.message(Command("cast"))
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
     await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মোড অন! আপনার মেসেজ (ভিডিও/ছবি/টেক্সট) পাঠান, সবার কাছে যাবে।\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("📢 ব্রডকাস্ট মোড অন! আপনার মেসেজ পাঠান।\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_bcast, F.text | F.photo | F.video | F.document | F.animation)
 async def execute_broadcast(m: types.Message, state: FSMContext):
@@ -443,7 +399,6 @@ async def execute_broadcast(m: types.Message, state: FSMContext):
     except:
         await m.answer(stats_text, parse_mode="HTML")
 
-# ✅ FIX: StateFilter(None) নিশ্চিত করবে যে ব্রডকাস্ট মোড ছাড়া এটি কাজ করবে
 @dp.message(F.content_type.in_({'video', 'document'}), StateFilter(None), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     fid = m.video.file_id if m.video else m.document.file_id
@@ -460,7 +415,7 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
-    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। অথবা /cancel লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
@@ -506,13 +461,47 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_reply_markup(reply_markup=markup)
     await c.answer()
 
+# 🛑 FIX: ব্রডকাস্টকে ব্যাকগ্রাউন্ড টাস্কে নেওয়া হয়েছে যেন বট হ্যাং না করে
+async def background_movie_broadcast(data, selected_cats):
+    bcast_success = 0
+    tg_cfg = await db.settings.find_one({"id": "tg_link"})
+    tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+    link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
+    web_app_url = APP_URL if APP_URL else "https://t.me/" 
+    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
+    bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
+    bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
+    
+    now = datetime.datetime.utcnow()
+    time_cfg = await db.settings.find_one({"id": "del_time"})
+    del_minutes = time_cfg['minutes'] if time_cfg else 60
+    delete_at = now + datetime.timedelta(minutes=del_minutes)
+    
+    async for u in db.users.find():
+        try:
+            sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+            bcast_success += 1
+            await asyncio.sleep(0.1)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            try:
+                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+                bcast_success += 1
+            except: pass
+        except Exception as e:
+            print(f"Broadcast Error for {u['user_id']}: {e}")
+
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
 async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
+    
     await state.clear()
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
+    
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
     if LOG_CHANNEL_ID:
@@ -531,34 +520,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    bcast_success = 0
-    tg_cfg = await db.settings.find_one({"id": "tg_link"})
-    tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-    link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-    web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
-    bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
-    bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
-    now = datetime.datetime.utcnow()
-    time_cfg = await db.settings.find_one({"id": "del_time"})
-    del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
-    async for u in db.users.find():
-        try:
-            sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-            bcast_success += 1
-            await asyncio.sleep(0.1)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-                bcast_success += 1
-            except: pass
-        except Exception as e:
-            print(f"Broadcast Error for {u['user_id']}: {e}")
-    await c.message.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    # 🛑 এখানে ব্যাকগ্রাউন্ড টাস্ক হিসেবে ব্রডকাস্ট শুরু করানো হয়েছে
+    asyncio.create_task(background_movie_broadcast(data, selected_cats))
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
