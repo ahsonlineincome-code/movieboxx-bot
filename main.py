@@ -215,33 +215,46 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই (ফিক্সড ও উন্নত করা হয়েছে)
-@dp.message(F.chat.id == REQUEST_GROUP_ID, F.text, ~F.text.startswith("/"))
+# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই (ডিবাগ ভার্সন)
+@dp.message(F.chat.type.in_({"group", "supergroup"}), F.text, ~F.text.startswith("/"))
 async def handle_movie_request_group(m: types.Message):
+    # ডিবাগ: বট মেসেজ রিসিভ করলে রেন্ডার লগে দেখাবে
+    print(f"DEBUG: Received message in Chat ID: {m.chat.id} | Text: {m.text}")
+    
+    # যদি মেসেজ আপনার রিকোয়েস্ট গ্রুপের না হয়, তবে রিটার্ন করবে
+    if m.chat.id != REQUEST_GROUP_ID:
+        return
+        
     query = m.text.strip()
-    if len(query) < 2 or len(query) > 50:
+    if len(query) < 2 or len(query) > 100:
         return
     
-    # ✅ FIX: অপ্রয়োজনীয় শব্দ (movie, pls, ইত্যাদি) বাদ দিয়ে শুধু মুভির নাম খুঁজবে
-    stopwords = {'movie', 'film', 'series', 'pls', 'please', 'chi', 'dibo', 'dorkar', 'amar', 'kotha', 'bot', 'the', 'a', 'an', 'de', 'dao', 'cholbe', 'lam', 'koro'}
+    # অপ্রয়োজনীয় শব্দ বাদ দেওয়া
+    stopwords = {'movie', 'film', 'series', 'pls', 'please', 'chi', 'dibo', 'dorkar', 'amar', 'kotha', 'bot', 'the', 'a', 'an', 'de', 'dao', 'cholbe', 'lam', 'koro', 'lagbe'}
     words = query.split()
     filtered_words = [word for word in words if word.lower() not in stopwords]
     
     if not filtered_words:
-        return
-        
-    # মুভির নামের অংশ বা পুরো নাম মিললেই সে পেয়ে যাবে
-    regex_pattern = "|".join([re.escape(word) for word in filtered_words])
-    
-    movie = await db.movies.find_one({"title": {"$regex": regex_pattern, "$options": "i"}})
-    
-    if movie:
-        web_app_url = APP_URL if APP_URL else "https://t.me/"
-        kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))]]
-        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-        await m.reply(f"🎬 এই মুভিটি আমাদের বটে আপলোড করা আছে! দেখতে নিচের বাটনে ক্লিক করুন।", reply_markup=markup, parse_mode="HTML")
+        regex_pattern = re.escape(query)
     else:
-        await m.reply("😔 দুঃখিত, এই মুভিটি এখনো আপলোড হয়নি। শীঘ্রই আপলোড করে দেওয়া হবে!", parse_mode="HTML")
+        regex_pattern = "|".join([re.escape(word) for word in filtered_words])
+    
+    # ডিবাগ: সার্চ প্যাটার্ন রেন্ডার লগে দেখাবে
+    print(f"DEBUG: Searching DB with regex: {regex_pattern}")
+    
+    try:
+        movie = await db.movies.find_one({"title": {"$regex": regex_pattern, "$options": "i"}})
+        
+        if movie:
+            web_app_url = APP_URL if APP_URL else "https://t.me/"
+            kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))]]
+            markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
+            await m.reply(f"🎬 এই মুভিটি আমাদের বটে আপলোড করা আছে! দেখতে নিচের বাটনে ক্লিক করুন।", reply_markup=markup, parse_mode="HTML")
+        else:
+            await m.reply("😔 দুঃখিত, এই মুভিটি এখনো আপলোড হয়নি। শীঘ্রই আপলোড করে দেওয়া হবে!", parse_mode="HTML")
+    except Exception as e:
+        # যদি ডাটাবেস সার্চে কোনো এরর আসে, তা রেন্ডার লগে দেখাবে
+        print(f"DEBUG DB ERROR: {e}")
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
