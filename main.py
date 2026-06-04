@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F, BaseFilter
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -75,7 +75,7 @@ CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama",
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
-    waiting_for_reply = State()
+    # waiting_for_reply সরিয়ে দেওয়া হয়েছে কারণ এটি Batch Upload-এ Conflict করছিল
     waiting_for_photo = State()
     waiting_for_title = State()
     waiting_for_quality = State() 
@@ -168,7 +168,6 @@ async def update_monthly_users_bio():
             print(f"Bio Update Error: {e}")
         await asyncio.sleep(21600)
 
-# ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানোর জন্য নতুন ফাংশন (বট স্লো হওয়া রোধ করতে)
 async def run_broadcast(admin_chat_id, photo_id, bcast_text, bcast_markup, del_minutes):
     bcast_success = 0
     now = datetime.datetime.utcnow()
@@ -192,7 +191,7 @@ async def run_broadcast(admin_chat_id, photo_id, bcast_text, bcast_markup, del_m
     except: pass
 
 # ==========================================
-# 6. Telegram Bot Commands
+# 6. Telegram Bot Commands & User Handler
 # ==========================================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -246,10 +245,9 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ FIX: ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস) অ্যাডমিনের কাছে পাঠানো হবে
+# ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস) অ্যাডমিনের কাছে পাঠানো হবে
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
-    # শুধুমাত্র এই টাইপগুলো গ্রহণ করবে
     allowed_types = ['text', 'photo', 'video', 'voice', 'document']
     if m.content_type not in allowed_types:
         await m.answer("⚠️ দুঃখিত! এই ধরনের মেসেজ গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
@@ -263,33 +261,62 @@ async def handle_user_messages(m: types.Message):
         if m.content_type == 'text':
             await bot.send_message(OWNER_ID, user_info + m.text, parse_mode="HTML", reply_markup=builder.as_markup())
         else:
-            # মিডিয়া থাকলে ক্যাপশনে ইউজার ইনফো যুক্ত করে কপি করা
             caption = m.caption or ""
             new_caption = user_info + caption
             await m.copy_to(chat_id=OWNER_ID, caption=new_caption if new_caption.strip() != user_info.strip() else None, parse_mode="HTML", reply_markup=builder.as_markup())
     except Exception as e:
         print(f"Forward Error: {e}")
 
+# ==========================================
+# 🚀 FIX: ADVANCED STATE MANAGEMENT FOR REPLIES
+# ==========================================
+
+# কাস্টম ফিল্টার: চেক করবে অ্যাডমিন কি রিপ্লাই দিতে চাচ্ছেন
+class IsReplyingToUser(BaseFilter):
+    async def __call__(self, message: types.Message, state: FSMContext) -> bool:
+        data = await state.get_data()
+        return data.get("pending_reply_user_id") is not None
+
+# অ্যাডমিন যখন রিপ্লাই বাটনে ক্লিক করবেন
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
     if c.from_user.id not in admin_cache: return
     user_id = int(c.data.split("_")[1])
-    await state.set_state(AdminStates.waiting_for_reply)
-    await state.update_data(reply_user_id=user_id)
-    await c.message.answer("✍️ আপনার মেসেজ লিখুন (রিপ্লাই দেওয়ার জন্য):")
+    
+    # ⚡️ স্টেট পরিবর্তন না করে শুধু FSM ডেটাতে pending_reply_user_id সেভ করা হচ্ছে
+    await state.update_data(pending_reply_user_id=user_id)
+    
+    # রিপ্লাই ক্যানসেল করার জন্য বাটন
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Cancel Reply", callback_data="cancel_reply_intent")
+    
+    await c.message.answer("✍️ আপনার মেসেজ লিখুন (রিপ্লাই দেওয়ার জন্য)।\n\n⚠️ <b>আপনার চলমান Upload Process বাতিল হবে না!</b>", reply_markup=builder.as_markup(), parse_mode="HTML")
     await c.answer()
 
-@dp.message(AdminStates.waiting_for_reply)
-async def send_reply_to_user(m: types.Message, state: FSMContext):
+# রিপ্লাই ইন্টেন্ট ক্যানসেল করার হ্যান্ডলার
+@dp.callback_query(F.data == "cancel_reply_intent")
+async def cancel_reply_intent(c: types.CallbackQuery, state: FSMContext):
+    if c.from_user.id not in admin_cache: return
+    await state.update_data(pending_reply_user_id=None) # রিপ্লাই ইন্টেন্ট মুছে ফেলা
+    await c.message.edit_text("❌ রিপ্লাই বাতিল করা হয়েছে। আপনার চলমান Upload Process আগের মতোই চালু আছে।")
+    await c.answer()
+
+# ⚡️ হাই-প্রায়োরিটি ইন্টারসেপ্ট হ্যান্ডলার: অ্যাডমিনের রিপ্লাই মেসেজ ধরবে এবং Upload State নষ্ট না করে ইউজারকে পাঠাবে
+@dp.message(IsReplyingToUser(), F.chat.type == "private", lambda m: m.from_user.id in admin_cache)
+async def handle_admin_reply_intercept(m: types.Message, state: FSMContext):
     data = await state.get_data()
-    user_id = data.get("reply_user_id")
-    await state.clear()
-    if user_id:
+    reply_user_id = data.get("pending_reply_user_id")
+    
+    if reply_user_id:
         try:
-            await m.copy_to(chat_id=user_id)
-            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
-        except:
-            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
+            await m.copy_to(chat_id=reply_user_id)
+            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে! আপনার চলমান Upload Process এখনও চালু আছে।", parse_mode="HTML")
+        except Exception as e:
+            await m.answer(f"❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।\nError: {e}", parse_mode="HTML")
+        
+        # রিপ্লাই পাঠানো হয়ে গেলে pending_reply_user_id ক্লিয়ার করা হচ্ছে, কিন্তু State বা অন্য কোনো Data নষ্ট হচ্ছে না!
+        await state.update_data(pending_reply_user_id=None)
+        return # এখানে রিটার্ন করার কারণে এই মেসেজ নিচের Batch/File হ্যান্ডলারে যাবে না!
 
 # ==========================================
 # 7. Admin Commands & Movie Upload
@@ -467,7 +494,6 @@ async def process_batch_category_selection(c: types.CallbackQuery, state: FSMCon
     builder.adjust(2)
     
     try:
-        # টেলিগ্রাম এরর এড়াতে টেক্সট চেঞ্জ করা হচ্ছে
         await c.message.edit_text(f"✅ ক্যাটাগরি সিলেক্ট করুন ({len(selected_cats)} টি সিলেক্ট করা হয়েছে):", reply_markup=builder.as_markup(), parse_mode="HTML")
     except: pass
     await c.answer()
@@ -522,7 +548,6 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
         })
     await m.answer(f"🎉 <b>{title}</b> সফলভাবে যুক্ত হয়েছে! মোট ফাইল/এপিসোড: <b>{len(files_list)}</b>\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
@@ -539,7 +564,6 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    # ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানো হচ্ছে যাতে বট স্লো না হয়
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
@@ -621,7 +645,6 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     builder.adjust(2)
     
     try:
-        # টেলিগ্রাম এরর এড়াতে টেক্সট চেঞ্জ করা হচ্ছে
         await c.message.edit_text(f"✅ ক্যাটাগরি সিলেক্ট করুন ({len(selected_cats)} টি সিলেক্ট করা হয়েছে):", reply_markup=builder.as_markup(), parse_mode="HTML")
     except: pass
     await c.answer()
@@ -635,7 +658,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # ✅ FIX: Log Channel Post with Specific Watch Now Link
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
@@ -652,7 +674,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    # ✅ FIX: ব্রডকাস্ট ব্যাকগ্রাউন্ডে পাঠানো হচ্ছে যাতে বট স্লো না হয়
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
@@ -724,7 +745,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API & UI
+# 8. Web Admin Panel API & UI (No Changes Made Here)
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
