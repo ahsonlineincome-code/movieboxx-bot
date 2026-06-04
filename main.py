@@ -9,7 +9,7 @@ import hashlib
 import urllib.parse
 import secrets
 import json
-import re # ✅ স্মার্ট সার্চের জন্য Regex মডিউল অ্যাড করা হয়েছে
+import re # ✅ স্মার্ট সার্চের জন্য Regex মডিউল
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -215,19 +215,24 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই হ্যান্ডলার
+# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই (ফিক্সড ও উন্নত করা হয়েছে)
 @dp.message(F.chat.id == REQUEST_GROUP_ID, F.text, ~F.text.startswith("/"))
 async def handle_movie_request_group(m: types.Message):
     query = m.text.strip()
-    # ডাটাবেস সুরক্ষার জন্য শুধুমাত্র ৪০ ক্যারেক্টারের কম মেসেজ সার্চ করবে
-    if len(query) < 2 or len(query) > 40:
+    if len(query) < 2 or len(query) > 50:
+        return
+    
+    # ✅ FIX: অপ্রয়োজনীয় শব্দ (movie, pls, ইত্যাদি) বাদ দিয়ে শুধু মুভির নাম খুঁজবে
+    stopwords = {'movie', 'film', 'series', 'pls', 'please', 'chi', 'dibo', 'dorkar', 'amar', 'kotha', 'bot', 'the', 'a', 'an', 'de', 'dao', 'cholbe', 'lam', 'koro'}
+    words = query.split()
+    filtered_words = [word for word in words if word.lower() not in stopwords]
+    
+    if not filtered_words:
         return
         
-    # ✅ FIX: স্মার্ট সার্চ অ্যালগরিদম (যেকোনো একটি শব্দ মিললেই পেয়ে যাবে)
-    words = query.split()
-    regex_pattern = "|".join([re.escape(word) for word in words])
+    # মুভির নামের অংশ বা পুরো নাম মিললেই সে পেয়ে যাবে
+    regex_pattern = "|".join([re.escape(word) for word in filtered_words])
     
-    # ডাটাবেসে মুভি খোঁজা হচ্ছে (কেস ইনসেনসিটিভ)
     movie = await db.movies.find_one({"title": {"$regex": regex_pattern, "$options": "i"}})
     
     if movie:
@@ -386,9 +391,46 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 7.5 Single Movie Upload (FIX: StateFilter Added)
+# 7.5 Broadcast & Movie Upload (FIXED CLASH)
 # ==========================================
-# ✅ FIX: StateFilter(None) অ্যাড করা হয়েছে যাতে ব্রডকাস্টের সময় এটি ভুলে মুভি আপলোড হিসেবে কাউন্ট না হয়
+# ✅ FIX: ব্রডকাস্ট মোডকে সর্বোচ্চ অগ্রাধিকার দেওয়া হয়েছে যেন কোনোভাবেই মুভি আপলোড হিসেবে গণ্য না হয়
+@dp.message(Command("cast"))
+async def broadcast_prep(m: types.Message, state: FSMContext):
+    if m.from_user.id not in admin_cache: return
+    await state.set_state(AdminStates.waiting_for_bcast)
+    await m.answer("📢 ব্রডকাস্ট মোড অন! আপনার মেসেজ (ভিডিও/ছবি/টেক্সট) পাঠান, সবার কাছে যাবে।\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_bcast, F.text | F.photo | F.video | F.document | F.animation)
+async def execute_broadcast(m: types.Message, state: FSMContext):
+    if m.text and m.text.startswith("/"):
+        await state.clear()
+        await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে।", parse_mode="HTML")
+        return
+        
+    await state.clear()
+    prog_msg = await m.answer("⏳ <b>Broadcast progressing...</b>", parse_mode="HTML")
+    total_users = await db.users.count_documents({})
+    success = 0
+    blocked = 0
+    async for u in db.users.find():
+        try: 
+            await m.copy_to(chat_id=u['user_id'])
+            success += 1
+            await asyncio.sleep(0.05)
+        except: 
+            blocked += 1
+    stats_text = (
+        f"✅ <b>Broadcast Complete!</b>\n\n"
+        f"👥 Total Users: <b>{total_users}</b>\n"
+        f"✅ Successful: <b>{success}</b>\n"
+        f"🚫 Blocked Users: <b>{blocked}</b>"
+    )
+    try:
+        await prog_msg.edit_text(stats_text, parse_mode="HTML")
+    except:
+        await m.answer(stats_text, parse_mode="HTML")
+
+# ✅ FIX: StateFilter(None) নিশ্চিত করবে যে ব্রডকাস্ট মোড ছাড়া এটি কাজ করবে
 @dp.message(F.content_type.in_({'video', 'document'}), StateFilter(None), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     fid = m.video.file_id if m.video else m.document.file_id
@@ -504,45 +546,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Broadcast Error for {u['user_id']}: {e}")
     await c.message.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
-
-@dp.message(Command("cast"))
-async def broadcast_prep(m: types.Message, state: FSMContext):
-    if m.from_user.id not in admin_cache: return
-    await state.set_state(AdminStates.waiting_for_bcast)
-    await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_bcast)
-async def execute_broadcast(m: types.Message, state: FSMContext):
-    if m.text and m.text.startswith("/"):
-        await state.clear()
-        await m.answer("⚠️ ব্রডকাস্ট বাতিল হয়েছে।", parse_mode="HTML")
-        return
-    if m.reply_to_message:
-        await state.clear()
-        await m.answer("⚠️ ব্রডকাস্ট বাতিল করা হয়েছে কারণ আপনি রিপ্লাই করেছেন! ইউজারকে রিপ্লাই দিতে ইনলাইন ✍️ বাটন ব্যবহার করুন।", parse_mode="HTML")
-        return
-    await state.clear()
-    prog_msg = await m.answer("⏳ <b>Broadcast progressing...</b>", parse_mode="HTML")
-    total_users = await db.users.count_documents({})
-    success = 0
-    blocked = 0
-    async for u in db.users.find():
-        try: 
-            await m.copy_to(chat_id=u['user_id'])
-            success += 1
-            await asyncio.sleep(0.05)
-        except: 
-            blocked += 1
-    stats_text = (
-        f"✅ <b>Broadcast Complete!</b>\n\n"
-        f"👥 Total Users: <b>{total_users}</b>\n"
-        f"✅ Successful: <b>{success}</b>\n"
-        f"🚫 Blocked Users: <b>{blocked}</b>"
-    )
-    try:
-        await prog_msg.edit_text(stats_text, parse_mode="HTML")
-    except:
-        await m.answer(stats_text, parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
