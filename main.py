@@ -46,6 +46,7 @@ APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
+REQUEST_GROUP_ID = int(os.getenv("REQUEST_GROUP_ID", "0"))
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
 
@@ -236,6 +237,52 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
             await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
         except:
             await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
+
+# ==========================================
+# 6.5 Group Movie Request Auto-Reply
+# ==========================================
+user_cooldowns = {}
+
+@dp.message(F.chat.id == REQUEST_GROUP_ID, F.text)
+async def handle_group_movie_request(m: types.Message):
+    # কুলডাউন চেক (Spam রোধ করতে ১০ সেকেন্ড)
+    user_id = m.from_user.id
+    current_time = time.time()
+    if user_id in user_cooldowns and current_time - user_cooldowns[user_id] < 10:
+        return # ১০ সেকেন্ডের মধ্যে আবার রিকোয়েস্ট করলে বট রিপ্লাই দেবে না
+    
+    user_cooldowns[user_id] = current_time
+    
+    # ইউজারের দেওয়া টেক্সট থেকে মুভির নাম ক্লিন করা
+    query = m.text.lower()
+    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need']
+    for word in stop_words:
+        query = query.replace(word, "")
+    query = query.strip()
+    
+    if not query or len(query) < 2:
+        return # শুধু pls বা movie লিখলে সার্চ করবে না
+
+    # ডাটাবেসে মুভি সার্চ করা (Regex দিয়ে ম্যাচিং)
+    movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
+    
+    if movie:
+        # মুভি পাওয়া গেলে
+        tg_cfg = await db.settings.find_one({"id": "tg_link"})
+        tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+        
+        kb = [
+            [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
+            [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)]
+        ]
+        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
+        
+        reply_text = f"✅ <b>{movie['title']}</b> মুভিটি আমাদের বটে আপলোড করা আছে!\n\n👇 সরাসরি দেখতে নিচের বাটনে ক্লিক করুন।"
+        await m.reply(reply_text, reply_markup=markup, parse_mode="HTML")
+    else:
+        # মুভি না পাওয়া গেলে
+        reply_text = f"⚠️ দুঃখিত, <b>{m.text}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে! আপডেট পেতে চ্যানেলে জয়েন করুন।"
+        await m.reply(reply_text, parse_mode="HTML")
 
 # ==========================================
 # 7. Admin Commands & Movie Upload
