@@ -46,9 +46,9 @@ APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
-REQUEST_GROUP_ID = int(os.getenv("REQUEST_GROUP_ID", "0"))
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
+REQUEST_GROUP_ID = -1003949248289 # ✅ মুভি রিকোয়েস্ট গ্রুপের আইডি
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -69,11 +69,19 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
-# ✅ FIX: ক্যাটাগরি লিস্ট আপডেট করা হয়েছে (Action রিমুভ করা হয়েছে)
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
+def get_category_keyboard(selected_cats):
+    builder = InlineKeyboardBuilder()
+    for index, cat in enumerate(CATEGORIES):
+        prefix = "✅ " if cat in selected_cats else ""
+        builder.button(text=f"{prefix}{cat}", callback_data=f"selcat_{index}")
+    builder.button(text="✅ Done", callback_data="cats_done")
+    builder.adjust(2)
+    return builder.as_markup()
+
 # ==========================================
-# 2. FSM States (Batch রিমুভ করা হয়েছে)
+# 2. FSM States
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
@@ -135,7 +143,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return True
 
 # ==========================================
-# 5. Background Tasks (Monthly Bio Task রিমুভ করা হয়েছে)
+# 5. Background Tasks
 # ==========================================
 async def auto_delete_worker():
     while True:
@@ -206,6 +214,25 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
+# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য অটো-রিপ্লাই হ্যান্ডলার
+@dp.message(F.chat.id == REQUEST_GROUP_ID, F.text, ~F.text.startswith("/"))
+async def handle_movie_request_group(m: types.Message):
+    query = m.text.strip()
+    # ডাটাবেস সুরক্ষার জন্য শুধুমাত্র ৪০ ক্যারেক্টারের কম মেসেজ সার্চ করবে (সাধারণত মুভির নাম ছোট হয়)
+    if len(query) < 2 or len(query) > 40:
+        return
+        
+    # ডাটাবেসে মুভি খোঁজা হচ্ছে (কেস ইনসেনসিটিভ)
+    movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
+    
+    if movie:
+        web_app_url = APP_URL if APP_URL else "https://t.me/"
+        kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))]]
+        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
+        await m.reply(f"🎬 এই মুভিটি আমাদের বটে আপলোড করা আছে! দেখতে নিচের বাটনে ক্লিক করুন।", reply_markup=markup, parse_mode="HTML")
+    else:
+        await m.reply("😔 দুঃখিত, এই মুভিটি এখনো আপলোড হয়নি। শীঘ্রই আপলোড করে দেওয়া হবে!", parse_mode="HTML")
+
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     if m.content_type not in ['text']:
@@ -237,67 +264,6 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
             await m.answer("✅ রিপ্লাই পাঠানো হয়েছে!")
         except:
             await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
-
-# ==========================================
-# 6.5 Group Movie Request Auto-Reply (Smart Search)
-# ==========================================
-import logging
-logger = logging.getLogger(__name__)
-
-user_cooldowns = {}
-
-@dp.message(F.text)
-async def handle_group_movie_request(m: types.Message):
-    # যদি মেসেটি প্রাইভেট চ্যাটের হয়, তবে ইগনোর করবে
-    if m.chat.type == "private":
-        return
-
-    # নির্দিষ্ট গ্রুপ চেক
-    if REQUEST_GROUP_ID != 0 and m.chat.id != REQUEST_GROUP_ID:
-        return
-
-    # কুলডাউন চেক (Spam রোধ)
-    user_id = m.from_user.id
-    current_time = time.time()
-    if user_id in user_cooldowns and current_time - user_cooldowns[user_id] < 10:
-        return 
-    user_cooldowns[user_id] = current_time
-    
-    # ইউজারের দেওয়া টেক্সট থেকে মুভির নাম বের করা (Word by Word)
-    text = m.text.lower()
-    words = text.split()
-    
-    # বাংলা এবং ইংরেজি সব ধরনের অতিরিক্ত শব্দের লিস্ট (যেগুলো মুভির নাম না)
-    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need', 'দিন', 'দেন', 'বট', 'চাইলে', 'plz', 'দেবেন', 'আপলোড', 'din', 'den', 'dao', 'dew', 'dibo', 'de', 'chi', 'lagbe', 'chai']
-    
-    # শুধুমাত্র মুভির নাম হিসেবে গুরুত্বপূর্ণ শব্দগুলো রাখা
-    filtered_words = [w for w in words if w not in stop_words]
-    query = " ".join(filtered_words).strip()
-    
-    # যদি শুধু অতিরিক্ত শব্দ লেখে (যেমন: "movie din"), তবে সার্চ করবে না
-    if not query or len(query) < 2:
-        return
-
-    # ডাটাবেসে মুভি সার্চ করা (Regex দিয়ে)
-    movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
-    
-    if movie:
-        # মুভি পাওয়া গেলে
-        tg_cfg = await db.settings.find_one({"id": "tg_link"})
-        tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-        
-        kb = [
-            [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
-            [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)]
-        ]
-        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-        
-        reply_text = f"✅ <b>{movie['title']}</b> মুভিটি আমাদের বটে আপলোড করা আছে!\n\n👇 সরাসরি দেখতে নিচের বাটনে ক্লিক করুন।"
-        await m.reply(reply_text, reply_markup=markup, parse_mode="HTML")
-    else:
-        # মুভি না পাওয়া গেলে
-        reply_text = f"⚠️ দুঃখিত, <b>{query}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে!"
-        await m.reply(reply_text, parse_mode="HTML")
 
 # ==========================================
 # 7. Admin Commands & Movie Upload
@@ -435,7 +401,6 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_title)
     await m.answer("✅ এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
 
-# ✅ FIX: ভুল ইনপুট দিলে আটকে যাবে না
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
     await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
@@ -464,14 +429,8 @@ async def fallback_quality(m: types.Message):
 async def receive_movie_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
     await state.set_state(AdminStates.waiting_for_cats)
-    
-    # ✅ FIX: কিবোর্ড লেআউট ঠিক করা হয়েছে (প্রতি লাইনে ২টি করে)
-    builder = InlineKeyboardBuilder()
-    for index, cat in enumerate(CATEGORIES): 
-        builder.button(text=cat, callback_data=f"selcat_{index}")
-    builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2) 
-    await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
+    markup = get_category_keyboard([])
+    await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=markup, parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_year)
 async def fallback_year(m: types.Message):
@@ -486,15 +445,8 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
-    
-    # ✅ FIX: আপডেট হওয়া কিবোর্ডও একই লেআউট মেন্টেন করবে
-    builder = InlineKeyboardBuilder()
-    for i, ct in enumerate(CATEGORIES):
-        prefix = "✅ " if ct in selected_cats else ""
-        builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{i}")
-    builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
-    await c.message.edit_reply_markup(reply_markup=builder.as_markup())
+    markup = get_category_keyboard(selected_cats)
+    await c.message.edit_reply_markup(reply_markup=markup)
     await c.answer()
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
@@ -506,7 +458,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # Log Channel Post
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
@@ -523,7 +474,6 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
-    # Broadcast
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
@@ -1091,7 +1041,6 @@ async def start():
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
     asyncio.create_task(auto_delete_worker())
-    # ✅ Monthly Users Bio Task রিমুভ করা হয়েছে
     await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(server.serve(), dp.start_polling(bot))
 
