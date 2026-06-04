@@ -9,6 +9,7 @@ import hashlib
 import urllib.parse
 import secrets
 import json
+import re # ✅ স্মার্ট সার্চের জন্য Regex মডিউল অ্যাড করা হয়েছে
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -214,16 +215,20 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য অটো-রিপ্লাই হ্যান্ডলার
+# ✅ মুভি রিকোয়েস্ট গ্রুপের জন্য স্মার্ট অটো-রিপ্লাই হ্যান্ডলার
 @dp.message(F.chat.id == REQUEST_GROUP_ID, F.text, ~F.text.startswith("/"))
 async def handle_movie_request_group(m: types.Message):
     query = m.text.strip()
-    # ডাটাবেস সুরক্ষার জন্য শুধুমাত্র ৪০ ক্যারেক্টারের কম মেসেজ সার্চ করবে (সাধারণত মুভির নাম ছোট হয়)
+    # ডাটাবেস সুরক্ষার জন্য শুধুমাত্র ৪০ ক্যারেক্টারের কম মেসেজ সার্চ করবে
     if len(query) < 2 or len(query) > 40:
         return
         
+    # ✅ FIX: স্মার্ট সার্চ অ্যালগরিদম (যেকোনো একটি শব্দ মিললেই পেয়ে যাবে)
+    words = query.split()
+    regex_pattern = "|".join([re.escape(word) for word in words])
+    
     # ডাটাবেসে মুভি খোঁজা হচ্ছে (কেস ইনসেনসিটিভ)
-    movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
+    movie = await db.movies.find_one({"title": {"$regex": regex_pattern, "$options": "i"}})
     
     if movie:
         web_app_url = APP_URL if APP_URL else "https://t.me/"
@@ -381,14 +386,11 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 7.5 Single Movie Upload (Fix & Fallback Added)
+# 7.5 Single Movie Upload (FIX: StateFilter Added)
 # ==========================================
-@dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
+# ✅ FIX: StateFilter(None) অ্যাড করা হয়েছে যাতে ব্রডকাস্টের সময় এটি ভুলে মুভি আপলোড হিসেবে কাউন্ট না হয়
+@dp.message(F.content_type.in_({'video', 'document'}), StateFilter(None), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is not None:
-        await m.answer("⚠️ আপনি অন্য একটি প্রসেসে আটকে আছেন! আগে /cancel করুন।", parse_mode="HTML")
-        return
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
     await state.set_state(AdminStates.waiting_for_photo)
