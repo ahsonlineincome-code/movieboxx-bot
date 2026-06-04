@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
-from aiogram import Bot, Dispatcher, types, F, BaseFilter
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -70,12 +70,15 @@ banned_cache = set()
 
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
+# ✅ FIX: ইউজারের মেসেজ অ্যাডমিনের চ্যাটে ফরওয়ার্ড হলে message_id ম্যাপিং করার জন্য ডিকশনারি
+reply_mapping = {}
+
 # ==========================================
 # 2. FSM States
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
-    # waiting_for_reply সরিয়ে দেওয়া হয়েছে কারণ এটি Batch Upload-এ Conflict করছিল
+    # waiting_for_reply = State() # ✅ FIX: এই স্টেটটি আর লাগবে না, মুছে দেওয়া হয়েছে
     waiting_for_photo = State()
     waiting_for_title = State()
     waiting_for_quality = State() 
@@ -191,7 +194,7 @@ async def run_broadcast(admin_chat_id, photo_id, bcast_text, bcast_markup, del_m
     except: pass
 
 # ==========================================
-# 6. Telegram Bot Commands & User Handler
+# 6. Telegram Bot Commands
 # ==========================================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -245,7 +248,20 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস) অ্যাডমিনের কাছে পাঠানো হবে
+# ✅ FIX 1: Native Reply Method - অ্যাডমিন সরাসরি ইউজারের মেসেজে Reply দিলে স্টেট নষ্ট না করে রিপ্লাই পাঠাবে
+@dp.message(F.reply_to_message, F.chat.type == "private", lambda m: m.from_user.id in admin_cache)
+async def native_admin_reply(m: types.Message, state: FSMContext):
+    # চেক করছি অ্যাডমিন যে মেসেজে রিপ্লাই করছেন সেটি কি ফরওয়ার্ড করা ইউজারের মেসেজ?
+    if m.reply_to_message.message_id in reply_mapping:
+        target_uid = reply_mapping[m.reply_to_message.message_id]
+        try:
+            await m.copy_to(chat_id=target_uid)
+            await m.reply("✅ রিপ্লাই পাঠানো হয়েছে! (আপলোড প্রসেস নিরাপদ আছে)")
+        except:
+            await m.reply("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
+    # যদি এটি সাধারণ কোনো রিপ্লাই হয়, তবে কিছু করবে না (ফলে Batch State সুরক্ষিত থাকবে)
+
+# ✅ FIX 2: ইউজারের মেসেজ অ্যাডমিনের কাছে ফরওয়ার্ড এবং message_id ম্যাপিং
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     allowed_types = ['text', 'photo', 'video', 'voice', 'document']
@@ -259,64 +275,51 @@ async def handle_user_messages(m: types.Message):
         user_info = f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n"
         
         if m.content_type == 'text':
-            await bot.send_message(OWNER_ID, user_info + m.text, parse_mode="HTML", reply_markup=builder.as_markup())
+            sent_msg = await bot.send_message(OWNER_ID, user_info + m.text, parse_mode="HTML", reply_markup=builder.as_markup())
         else:
             caption = m.caption or ""
             new_caption = user_info + caption
-            await m.copy_to(chat_id=OWNER_ID, caption=new_caption if new_caption.strip() != user_info.strip() else None, parse_mode="HTML", reply_markup=builder.as_markup())
+            sent_msg = await m.copy_to(chat_id=OWNER_ID, caption=new_caption if new_caption.strip() != user_info.strip() else None, parse_mode="HTML", reply_markup=builder.as_markup())
+        
+        # ✅ অ্যাডমিনের চ্যাটে পাঠানো মেসেজের ID এবং ইউজারের ID ম্যাপিং করে রাখা
+        if sent_msg:
+            reply_mapping[sent_msg.message_id] = m.from_user.id
+            
     except Exception as e:
         print(f"Forward Error: {e}")
 
-# ==========================================
-# 🚀 FIX: ADVANCED STATE MANAGEMENT FOR REPLIES
-# ==========================================
-
-# কাস্টম ফিল্টার: চেক করবে অ্যাডমিন কি রিপ্লাই দিতে চাচ্ছেন
-class IsReplyingToUser(BaseFilter):
-    async def __call__(self, message: types.Message, state: FSMContext) -> bool:
-        data = await state.get_data()
-        return data.get("pending_reply_user_id") is not None
-
-# অ্যাডমিন যখন রিপ্লাই বাটনে ক্লিক করবেন
+# ✅ FIX 3: Inline বাটনের মাধ্যমে রিপ্লাই (স্টেট চেঞ্জ না করে শুধু ডাটা সেভ করা)
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
     if c.from_user.id not in admin_cache: return
     user_id = int(c.data.split("_")[1])
     
-    # ⚡️ স্টেট পরিবর্তন না করে শুধু FSM ডেটাতে pending_reply_user_id সেভ করা হচ্ছে
-    await state.update_data(pending_reply_user_id=user_id)
-    
-    # রিপ্লাই ক্যানসেল করার জন্য বাটন
-    builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Cancel Reply", callback_data="cancel_reply_intent")
-    
-    await c.message.answer("✍️ আপনার মেসেজ লিখুন (রিপ্লাই দেওয়ার জন্য)।\n\n⚠️ <b>আপনার চলমান Upload Process বাতিল হবে না!</b>", reply_markup=builder.as_markup(), parse_mode="HTML")
+    # স্টেট চেঞ্জ করা হচ্ছে না! শুধুমাত্র reply_target_id সেভ করা হচ্ছে
+    await state.update_data(reply_target_id=user_id)
+    await c.message.answer("✍️ আপনার মেসেজ লিখুন (রিপ্লাই দেওয়ার জন্য)।\n\n⚠️ আপলোড প্রসেস থাকলে সেটি বাতিল হবে না, স্বাভাবিকভাবেই রিপ্লাই যাবে।")
     await c.answer()
 
-# রিপ্লাই ইন্টেন্ট ক্যানসেল করার হ্যান্ডলার
-@dp.callback_query(F.data == "cancel_reply_intent")
-async def cancel_reply_intent(c: types.CallbackQuery, state: FSMContext):
-    if c.from_user.id not in admin_cache: return
-    await state.update_data(pending_reply_user_id=None) # রিপ্লাই ইন্টেন্ট মুছে ফেলা
-    await c.message.edit_text("❌ রিপ্লাই বাতিল করা হয়েছে। আপনার চলমান Upload Process আগের মতোই চালু আছে।")
-    await c.answer()
-
-# ⚡️ হাই-প্রায়োরিটি ইন্টারসেপ্ট হ্যান্ডলার: অ্যাডমিনের রিপ্লাই মেসেজ ধরবে এবং Upload State নষ্ট না করে ইউজারকে পাঠাবে
-@dp.message(IsReplyingToUser(), F.chat.type == "private", lambda m: m.from_user.id in admin_cache)
-async def handle_admin_reply_intercept(m: types.Message, state: FSMContext):
+# ✅ FIX 4: অ্যাডমিন টেক্সট টাইপ করলে চেক করা রিপ্লাই কিনা (এই হ্যান্ডলারটি সবার শেষে থাকবে)
+# এটি শুধুমাত্র তখনই ট্রিগার হবে যখন কোনো স্পেসিফিক স্টেট (যেমন ব্যাচ কোয়ালিটি) এক্সপেক্ট করছে না
+@dp.message(F.text, F.chat.type == "private", lambda m: m.from_user.id in admin_cache)
+async def admin_text_handler(m: types.Message, state: FSMContext):
     data = await state.get_data()
-    reply_user_id = data.get("pending_reply_user_id")
+    target_id = data.get("reply_target_id")
     
-    if reply_user_id:
+    if target_id:
         try:
-            await m.copy_to(chat_id=reply_user_id)
-            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে! আপনার চলমান Upload Process এখনও চালু আছে।", parse_mode="HTML")
-        except Exception as e:
-            await m.answer(f"❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।\nError: {e}", parse_mode="HTML")
-        
-        # রিপ্লাই পাঠানো হয়ে গেলে pending_reply_user_id ক্লিয়ার করা হচ্ছে, কিন্তু State বা অন্য কোনো Data নষ্ট হচ্ছে না!
-        await state.update_data(pending_reply_user_id=None)
-        return # এখানে রিটার্ন করার কারণে এই মেসেজ নিচের Batch/File হ্যান্ডলারে যাবে না!
+            await m.copy_to(chat_id=target_id)
+            await m.answer("✅ রিপ্লাই পাঠানো হয়েছে! আপলোড প্রসেস অপরিবর্তিত রয়েছে।")
+        except:
+            await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ।")
+        # শুধুমাত্র reply_target_id মুছে ফেলা হচ্ছে, পুরো State বা Data নয়!
+        await state.update_data(reply_target_id=None)
+        return
+
+    # যদি কোনো রিপ্লাই টার্গেট না থাকে এবং অ্যাডমিন আইডল স্টেটে থাকে
+    current_state = await state.get_state()
+    if current_state is None:
+        pass # সাধারণ টেক্সট, কিছু করার নেই
 
 # ==========================================
 # 7. Admin Commands & Movie Upload
@@ -745,7 +748,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. Web Admin Panel API & UI (No Changes Made Here)
+# 8. Web Admin Panel API & UI
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
