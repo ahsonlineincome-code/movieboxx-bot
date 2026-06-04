@@ -68,10 +68,11 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
+# ✅ FIX: ক্যাটাগরি লিস্ট আপডেট করা হয়েছে (Action রিমুভ করা হয়েছে)
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
 # ==========================================
-# 2. FSM States
+# 2. FSM States (Batch রিমুভ করা হয়েছে)
 # ==========================================
 class AdminStates(StatesGroup):
     waiting_for_bcast = State()
@@ -84,12 +85,6 @@ class AdminStates(StatesGroup):
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
-    waiting_for_batch_photo = State()
-    waiting_for_batch_title = State()
-    waiting_for_batch_year = State()
-    waiting_for_batch_cats = State()
-    waiting_for_batch_file = State()
-    waiting_for_batch_quality = State()
 
 # ==========================================
 # 3. Database Initialization & Caching
@@ -139,7 +134,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return True
 
 # ==========================================
-# 5. Background Tasks
+# 5. Background Tasks (Monthly Bio Task রিমুভ করা হয়েছে)
 # ==========================================
 async def auto_delete_worker():
     while True:
@@ -154,19 +149,6 @@ async def auto_delete_worker():
         except:
             pass
         await asyncio.sleep(60)
-
-async def update_monthly_users_bio():
-    while True:
-        try:
-            now = datetime.datetime.utcnow()
-            thirty_days_ago = now - datetime.timedelta(days=30)
-            monthly_count = await db.users.count_documents({"last_active": {"$gte": thirty_days_ago}})
-            formatted_count = f"{monthly_count:,}"
-            short_bio = f"{formatted_count} monthly users"
-            await bot.set_my_short_description(short_bio)
-        except Exception as e:
-            print(f"Bio Update Error: {e}")
-        await asyncio.sleep(21600)
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -223,15 +205,11 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
-# ✅ FIX: ইউজার মিডিয়া (ছবি, ভিডিও, ভয়েস ইত্যাদি) পাঠালে ব্লক করা হবে এবং অ্যাডমিনের কাছে যাবে না
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
-    # ইউজার যদি টেক্সট ছাড়া অন্য কিছু (ছবি, ভিডিও, ভয়েস, স্টিকার) পাঠায়
     if m.content_type not in ['text']:
         await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি। ছবি, ভিডিও, ভয়েস বা স্টিকার গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
-        
-    # শুধুমাত্র টেক্সট মেসেজ অ্যাডমিনের কাছে যাবে
     try:
         builder = InlineKeyboardBuilder()
         builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{m.from_user.id}")
@@ -375,169 +353,7 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 7.5 Custom Batch Upload (Web Series / Episodes)
-# ==========================================
-@dp.message(Command("batch"))
-async def batch_upload_start(m: types.Message, state: FSMContext):
-    if m.from_user.id not in admin_cache: 
-        await m.answer("⚠️ আপনি অ্যাডমিন নন!", parse_mode="HTML")
-        return
-    await state.clear()
-    await state.set_state(AdminStates.waiting_for_batch_photo)
-    await m.answer("📦 <b>Batch Upload Mode</b>\n\nসিরিজ বা মাল্টি-এপিসোডের <b>পোস্টার</b> পাঠান (ছবি বা ফাইল হিসেবে)।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_batch_photo, F.photo | F.document)
-async def receive_batch_photo(m: types.Message, state: FSMContext):
-    photo_id = None
-    if m.photo:
-        photo_id = m.photo[-1].file_id
-    elif m.document:
-        photo_id = m.document.file_id
-    if not photo_id:
-        await m.answer("⚠️ দয়া করে একটি ছবি পাঠান।", parse_mode="HTML")
-        return
-    await state.update_data(photo_id=photo_id)
-    await state.set_state(AdminStates.waiting_for_batch_title)
-    await m.answer("✅ এবার <b>সিরিজ/মুভির নাম</b> লিখুন (যেমন: Money Heist)।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_batch_title, F.text)
-async def receive_batch_title(m: types.Message, state: FSMContext):
-    await state.update_data(title=m.text.strip(), files=[])
-    await state.set_state(AdminStates.waiting_for_batch_year)
-    await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_batch_year, F.text)
-async def receive_batch_year(m: types.Message, state: FSMContext):
-    await state.update_data(year=m.text.strip())
-    await state.set_state(AdminStates.waiting_for_batch_cats)
-    builder = InlineKeyboardBuilder()
-    for index, cat in enumerate(CATEGORIES): 
-        builder.button(text=cat, callback_data=f"batselcat_{index}")
-    builder.button(text="✅ Done", callback_data="batcats_done")
-    builder.adjust(2)
-    await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
-
-@dp.callback_query(AdminStates.waiting_for_batch_cats, F.data.startswith("batselcat_"))
-async def process_batch_category_selection(c: types.CallbackQuery, state: FSMContext):
-    index = int(c.data.split("_")[1])
-    cat = CATEGORIES[index]
-    data = await state.get_data()
-    selected_cats = data.get("categories", [])
-    if cat in selected_cats: selected_cats.remove(cat)
-    else: selected_cats.append(cat)
-    await state.update_data(categories=selected_cats)
-    builder = InlineKeyboardBuilder()
-    for i, ct in enumerate(CATEGORIES):
-        prefix = "✅ " if ct in selected_cats else ""
-        builder.button(text=f"{prefix}{ct}", callback_data=f"batselcat_{i}")
-    builder.button(text="✅ Done", callback_data="batcats_done")
-    builder.adjust(2)
-    await c.message.edit_reply_markup(reply_markup=builder.as_markup())
-    await c.answer()
-
-@dp.callback_query(AdminStates.waiting_for_batch_cats, F.data == "batcats_done")
-async def finish_batch_category_selection(c: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    selected_cats = data.get("categories", [])
-    if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
-    await state.set_state(AdminStates.waiting_for_batch_file)
-    await c.message.edit_text(f"✅ ক্যাটাগরি সিলেক্ট হয়েছে!\n\nএখন প্রথম <b>ফাইলটি (ভিডিও/ডকুমেন্ট)</b> পাঠান।\n\nশেষ হলে <b>/done</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_batch_file, F.content_type.in_({'video', 'document'}))
-async def receive_batch_file(m: types.Message, state: FSMContext):
-    fid = m.video.file_id if m.video else m.document.file_id
-    ftype = "video" if m.video else "document"
-    await state.update_data(current_file_id=fid, current_file_type=ftype)
-    await state.set_state(AdminStates.waiting_for_batch_quality)
-    await m.answer("✅ ফাইল পেয়েছি! এবার এর <b>কোয়ালিটি/এপিসোড</b> লিখুন (যেমন: EP 1 বা 720p)।", parse_mode="HTML")
-
-@dp.message(AdminStates.waiting_for_batch_quality, F.text)
-async def receive_batch_quality(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-    files_list = data.get("files", [])
-    files_list.append({
-        "file_id": data["current_file_id"],
-        "file_type": data["current_file_type"],
-        "quality": m.text.strip()
-    })
-    await state.update_data(files=files_list)
-    await state.set_state(AdminStates.waiting_for_batch_file)
-    added_count = len(files_list)
-    await m.answer(f"✅ <b>{m.text.strip()}</b> যুক্ত হয়েছে!\n\nমোট যুক্ত হয়েছে: <b>{added_count}</b>টি ফাইল।\n\nপরবর্তী ফাইল পাঠান অথবা শেষ করতে <b>/done</b> লিখুন।", parse_mode="HTML")
-
-@dp.message(Command("done"), AdminStates.waiting_for_batch_file)
-async def finish_batch_upload(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-    files_list = data.get("files", [])
-    if not files_list:
-        await state.clear()
-        return await m.answer("⚠️ কোনো ফাইল যুক্ত করা হয়নি! আপলোড বাতিল হলো।", parse_mode="HTML")
-    await state.clear()
-    title = data["title"]
-    photo_id = data["photo_id"]
-    year = data.get("year", "N/A")
-    categories = data["categories"]
-    for f in files_list:
-        await db.movies.insert_one({
-            "title": title, "quality": f["quality"], "photo_id": photo_id, 
-            "file_id": f["file_id"], "file_type": f["file_type"], 
-            "year": year, "categories": categories, "clicks": 0, "created_at": datetime.datetime.utcnow()
-        })
-    await m.answer(f"🎉 <b>{title}</b> সফলভাবে যুক্ত হয়েছে! মোট ফাইল/এপিসোড: <b>{len(files_list)}</b>\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
-    
-    # ✅ FIX: Log Channel Post with Specific Watch Now Link
-    if LOG_CHANNEL_ID:
-        try:
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
-            log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
-            log_text = (
-                f"🎬 <b>New Batch Upload</b>\n\n"
-                f"🏷 Title: <b>{title}</b>\n"
-                f"📂 Categories: {', '.join(categories)}\n"
-                f"📅 Year: <b>{year}</b>\n"
-                f"📺 Episodes: {', '.join([f['quality'] for f in files_list])}\n\n"
-                f"👤 Uploaded by Admin"
-            )
-            await bot.send_photo(LOG_CHANNEL_ID, photo=photo_id, caption=log_text, parse_mode="HTML", reply_markup=log_markup)
-        except Exception as e:
-            print(f"Log Channel Error: {e}")
-
-    bcast_success = 0
-    tg_cfg = await db.settings.find_one({"id": "tg_link"})
-    tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-    link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
-    web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
-    bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
-    ep_list_text = ", ".join([f["quality"] for f in files_list])
-    bcast_text = f"🆕 <b>New Upload Alert!</b>\n\n🎬 <b>{title}</b>\n📺 Files: <b>{ep_list_text}</b>\n📅 Year: <b>{year}</b>\n\n👇 এখনই দেখুন!"
-    now = datetime.datetime.utcnow()
-    time_cfg = await db.settings.find_one({"id": "del_time"})
-    del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
-    async for u in db.users.find():
-        try:
-            sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-            bcast_success += 1
-            await asyncio.sleep(0.1)
-        except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-            try:
-                sent_msg = await bot.send_photo(u['user_id'], photo=photo_id, caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
-                bcast_success += 1
-            except: pass
-        except: pass
-    await m.answer(f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
-
-@dp.message(Command("done"))
-async def wrong_done_cmd(m: types.Message):
-    if m.from_user.id not in admin_cache: return
-    await m.answer("⚠️ আপনি কোনো ব্যাচ আপলোড প্রসেসে নেই। শুরু করতে /batch লিখুন।", parse_mode="HTML")
-
-# ==========================================
-# 7.6 Single Movie Upload
+# 7.5 Single Movie Upload (Fix & Fallback Added)
 # ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
@@ -557,11 +373,20 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_title)
     await m.answer("✅ এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
 
+# ✅ FIX: ভুল ইনপুট দিলে আটকে যাবে না
+@dp.message(AdminStates.waiting_for_photo)
+async def fallback_photo(m: types.Message):
+    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
+
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
     await state.update_data(title=m.text.strip())
     await state.set_state(AdminStates.waiting_for_quality)
     await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_title)
+async def fallback_title(m: types.Message):
+    await m.answer("⚠️ দয়া করে <b>মুভির নাম (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_quality, F.text)
 async def receive_movie_quality(m: types.Message, state: FSMContext):
@@ -569,16 +394,26 @@ async def receive_movie_quality(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_year)
     await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
 
+@dp.message(AdminStates.waiting_for_quality)
+async def fallback_quality(m: types.Message):
+    await m.answer("⚠️ দয়া করে <b>কোয়ালিটি (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
+
 @dp.message(AdminStates.waiting_for_year, F.text)
 async def receive_movie_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
     await state.set_state(AdminStates.waiting_for_cats)
+    
+    # ✅ FIX: কিবোর্ড লেআউট ঠিক করা হয়েছে (প্রতি লাইনে ২টি করে)
     builder = InlineKeyboardBuilder()
     for index, cat in enumerate(CATEGORIES): 
         builder.button(text=cat, callback_data=f"selcat_{index}")
     builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
+    builder.adjust(2) 
     await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_year)
+async def fallback_year(m: types.Message):
+    await m.answer("⚠️ দয়া করে <b>রিলিজ সাল (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
@@ -589,6 +424,8 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     if cat in selected_cats: selected_cats.remove(cat)
     else: selected_cats.append(cat)
     await state.update_data(categories=selected_cats)
+    
+    # ✅ FIX: আপডেট হওয়া কিবোর্ডও একই লেআউট মেন্টেন করবে
     builder = InlineKeyboardBuilder()
     for i, ct in enumerate(CATEGORIES):
         prefix = "✅ " if ct in selected_cats else ""
@@ -607,7 +444,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # ✅ FIX: Log Channel Post with Specific Watch Now Link
+    # Log Channel Post
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
@@ -624,6 +461,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         except Exception as e:
             print(f"Log Channel Error: {e}")
 
+    # Broadcast
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
@@ -1191,7 +1029,7 @@ async def start():
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
     asyncio.create_task(auto_delete_worker())
-    asyncio.create_task(update_monthly_users_bio())
+    # ✅ Monthly Users Bio Task রিমুভ করা হয়েছে
     await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(server.serve(), dp.start_polling(bot))
 
