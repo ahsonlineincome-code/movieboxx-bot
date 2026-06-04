@@ -239,7 +239,7 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
             await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
 
 # ==========================================
-# 6.5 Group Movie Request Auto-Reply (Updated)
+# 6.5 Group Movie Request Auto-Reply (Smart Search)
 # ==========================================
 import logging
 logger = logging.getLogger(__name__)
@@ -248,14 +248,11 @@ user_cooldowns = {}
 
 @dp.message(F.text)
 async def handle_group_movie_request(m: types.Message):
-    # যদি মেসেটি প্রাইভেট চ্যাটের হয়, তবে ইগনোর করবে (শুধু গ্রুপে কাজ করবে)
+    # যদি মেসেটি প্রাইভেট চ্যাটের হয়, তবে ইগনোর করবে
     if m.chat.type == "private":
         return
 
-    # ডিবাগ লগ: বট মেসেজ পাচ্ছে কিনা চেক করার জন্য (Render-এর Logs এ দেখা যাবে)
-    logger.info(f"Received message in chat {m.chat.id}: {m.text}")
-
-    # নির্দিষ্ট গ্রুপ চেক (যদি Render-এ আইডি দেওয়া থাকে)
+    # নির্দিষ্ট গ্রুপ চেক
     if REQUEST_GROUP_ID != 0 and m.chat.id != REQUEST_GROUP_ID:
         return
 
@@ -266,19 +263,22 @@ async def handle_group_movie_request(m: types.Message):
         return 
     user_cooldowns[user_id] = current_time
     
-    # ইউজারের দেওয়া টেক্সট থেকে মুভির নাম ক্লিন করা
-    query = m.text.lower()
-    # বাংলা এবং ইংরেজি সব ধরনের অতিরিক্ত শব্দ বাদ দেওয়া
-    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need', 'দিন', 'দেন', 'বট', 'চাইলে', 'plz', 'দেবেন', 'আপলোড']
-    for word in stop_words:
-        query = query.replace(word, "")
-    query = query.strip()
+    # ইউজারের দেওয়া টেক্সট থেকে মুভির নাম বের করা (Word by Word)
+    text = m.text.lower()
+    words = text.split()
     
-    # যদি শুধু pls বা দাও লেখে, তবে সার্চ করবে না
+    # বাংলা এবং ইংরেজি সব ধরনের অতিরিক্ত শব্দের লিস্ট (যেগুলো মুভির নাম না)
+    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need', 'দিন', 'দেন', 'বট', 'চাইলে', 'plz', 'দেবেন', 'আপলোড', 'din', 'den', 'dao', 'dew', 'dibo', 'de', 'chi', 'lagbe', 'chai']
+    
+    # শুধুমাত্র মুভির নাম হিসেবে গুরুত্বপূর্ণ শব্দগুলো রাখা
+    filtered_words = [w for w in words if w not in stop_words]
+    query = " ".join(filtered_words).strip()
+    
+    # যদি শুধু অতিরিক্ত শব্দ লেখে (যেমন: "movie din"), তবে সার্চ করবে না
     if not query or len(query) < 2:
         return
 
-    # ডাটাবেসে মুভি সার্চ করা
+    # ডাটাবেসে মুভি সার্চ করা (Regex দিয়ে)
     movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
     
     if movie:
@@ -296,7 +296,7 @@ async def handle_group_movie_request(m: types.Message):
         await m.reply(reply_text, reply_markup=markup, parse_mode="HTML")
     else:
         # মুভি না পাওয়া গেলে
-        reply_text = f"⚠️ দুঃখিত, <b>{m.text}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে!"
+        reply_text = f"⚠️ দুঃখিত, <b>{query}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে!"
         await m.reply(reply_text, parse_mode="HTML")
 
 # ==========================================
