@@ -239,31 +239,46 @@ async def send_reply_to_user(m: types.Message, state: FSMContext):
             await m.answer("❌ রিপ্লাই পাঠাতে ব্যর্থ হয়েছে।")
 
 # ==========================================
-# 6.5 Group Movie Request Auto-Reply
+# 6.5 Group Movie Request Auto-Reply (Updated)
 # ==========================================
+import logging
+logger = logging.getLogger(__name__)
+
 user_cooldowns = {}
 
-@dp.message(F.chat.id == REQUEST_GROUP_ID, F.text)
+@dp.message(F.text)
 async def handle_group_movie_request(m: types.Message):
-    # কুলডাউন চেক (Spam রোধ করতে ১০ সেকেন্ড)
+    # যদি মেসেটি প্রাইভেট চ্যাটের হয়, তবে ইগনোর করবে (শুধু গ্রুপে কাজ করবে)
+    if m.chat.type == "private":
+        return
+
+    # ডিবাগ লগ: বট মেসেজ পাচ্ছে কিনা চেক করার জন্য (Render-এর Logs এ দেখা যাবে)
+    logger.info(f"Received message in chat {m.chat.id}: {m.text}")
+
+    # নির্দিষ্ট গ্রুপ চেক (যদি Render-এ আইডি দেওয়া থাকে)
+    if REQUEST_GROUP_ID != 0 and m.chat.id != REQUEST_GROUP_ID:
+        return
+
+    # কুলডাউন চেক (Spam রোধ)
     user_id = m.from_user.id
     current_time = time.time()
     if user_id in user_cooldowns and current_time - user_cooldowns[user_id] < 10:
-        return # ১০ সেকেন্ডের মধ্যে আবার রিকোয়েস্ট করলে বট রিপ্লাই দেবে না
-    
+        return 
     user_cooldowns[user_id] = current_time
     
     # ইউজারের দেওয়া টেক্সট থেকে মুভির নাম ক্লিন করা
     query = m.text.lower()
-    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need']
+    # বাংলা এবং ইংরেজি সব ধরনের অতিরিক্ত শব্দ বাদ দেওয়া
+    stop_words = ['movie', 'film', 'pls', 'please', 'দাও', 'চাই', 'টা', 'টি', 'করে', 'upload', 'need', 'দিন', 'দেন', 'বট', 'চাইলে', 'plz', 'দেবেন', 'আপলোড']
     for word in stop_words:
         query = query.replace(word, "")
     query = query.strip()
     
+    # যদি শুধু pls বা দাও লেখে, তবে সার্চ করবে না
     if not query or len(query) < 2:
-        return # শুধু pls বা movie লিখলে সার্চ করবে না
+        return
 
-    # ডাটাবেসে মুভি সার্চ করা (Regex দিয়ে ম্যাচিং)
+    # ডাটাবেসে মুভি সার্চ করা
     movie = await db.movies.find_one({"title": {"$regex": query, "$options": "i"}})
     
     if movie:
@@ -281,7 +296,7 @@ async def handle_group_movie_request(m: types.Message):
         await m.reply(reply_text, reply_markup=markup, parse_mode="HTML")
     else:
         # মুভি না পাওয়া গেলে
-        reply_text = f"⚠️ দুঃখিত, <b>{m.text}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে! আপডেট পেতে চ্যানেলে জয়েন করুন।"
+        reply_text = f"⚠️ দুঃখিত, <b>{m.text}</b> মুভিটি এখনো আমাদের বটে আপলোড হয়নি।\n\n🛠️ শীঘ্রই আপলোড করে দেওয়া হবে!"
         await m.reply(reply_text, parse_mode="HTML")
 
 # ==========================================
