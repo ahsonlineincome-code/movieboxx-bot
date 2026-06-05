@@ -28,7 +28,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesG   roup, State
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
 
@@ -68,6 +68,7 @@ db = client['movie_database']
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
 
+# ✅ FIXED: Action সরানো হয়েছে, Bangla Dubbed ও Anime রাখা হয়েছে
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
 # ==========================================
@@ -477,25 +478,6 @@ async def finish_batch_upload(m: types.Message, state: FSMContext):
             "year": year, "categories": categories, "clicks": 0, "created_at": datetime.datetime.utcnow()
         })
     await m.answer(f"🎉 <b>{title}</b> সফলভাবে যুক্ত হয়েছে! মোট ফাইল/এপিসোড: <b>{len(files_list)}</b>\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
-    
-    # ✅ FIX: Log Channel Post with Watch Now Button
-    if LOG_CHANNEL_ID:
-        try:
-            log_web_url = APP_URL if APP_URL else f"https://t.me/{BOT_USERNAME}"
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url=log_web_url)]]
-            log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
-            log_text = (
-                f"🎬 <b>New Batch Upload</b>\n\n"
-                f"🏷 Title: <b>{title}</b>\n"
-                f"📂 Categories: {', '.join(categories)}\n"
-                f"📅 Year: <b>{year}</b>\n"
-                f"📺 Episodes: {', '.join([f['quality'] for f in files_list])}\n\n"
-                f"👤 Uploaded by Admin"
-            )
-            await bot.send_photo(LOG_CHANNEL_ID, photo=photo_id, caption=log_text, parse_mode="HTML", reply_markup=log_markup)
-        except Exception as e:
-            print(f"Log Channel Error: {e}")
-
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
@@ -568,6 +550,7 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
     await state.update_data(year=m.text.strip())
     await state.set_state(AdminStates.waiting_for_cats)
     builder = InlineKeyboardBuilder()
+    # ✅ FIXED: Index-based callback to avoid space/special character errors
     for index, cat in enumerate(CATEGORIES): 
         builder.button(text=cat, callback_data=f"selcat_{index}")
     builder.button(text="✅ Done", callback_data="cats_done")
@@ -576,6 +559,7 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
+    # ✅ FIXED: Extract category name from list using index
     index = int(c.data.split("_")[1])
     cat = CATEGORIES[index]
     data = await state.get_data()
@@ -600,13 +584,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
-    
-    # ✅ FIX: Log Channel Post with Watch Now Button
     if LOG_CHANNEL_ID:
         try:
-            log_web_url = APP_URL if APP_URL else f"https://t.me/{BOT_USERNAME}"
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url=log_web_url)]]
-            log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = (
                 f"🎬 <b>New Movie Uploaded</b>\n\n"
                 f"🏷 Title: <b>{data['title']}</b>\n"
@@ -615,10 +594,9 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
                 f"📂 Categories: {', '.join(selected_cats)}\n\n"
                 f"👤 Uploaded by Admin"
             )
-            await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
+            await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML")
         except Exception as e:
             print(f"Log Channel Error: {e}")
-
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
