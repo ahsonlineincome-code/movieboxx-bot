@@ -9,6 +9,7 @@ import hashlib
 import urllib.parse
 import secrets
 import json
+import math
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -204,10 +205,30 @@ async def bot_stats(m: types.Message):
     text = f"📊 <b>Bot Statistics</b>\n\n👥 Total Users: <b>{total_users}</b>\n💎 VIP Users: <b>{vip_users}</b>\n🎬 Total Movies: <b>{total_movies}</b>"
     await m.answer(text, parse_mode="HTML")
 
+@dp.message(Command("ban"))
+async def ban_user(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    try:
+        uid = int(m.text.split()[1])
+        await db.banned.update_one({"user_id": uid}, {"$set": {"user_id": uid}}, upsert=True)
+        banned_cache.add(uid)
+        await m.answer(f"🚫 User <code>{uid}</code> ব্যান করা হয়েছে।", parse_mode="HTML")
+    except: await m.answer("⚠️ /ban USER_ID", parse_mode="HTML")
+
+@dp.message(Command("unban"))
+async def unban_user(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    try:
+        uid = int(m.text.split()[1])
+        await db.banned.delete_one({"user_id": uid})
+        banned_cache.discard(uid)
+        await m.answer(f"✅ User <code>{uid}</code> আনব্যান করা হয়েছে।", parse_mode="HTML")
+    except: await m.answer("⚠️ /unban USER_ID", parse_mode="HTML")
+
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     if m.content_type not in ['text']:
-        await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি। ছবি, ভিডিও, ভয়েস বা স্টিকার গ্রহণ করা হয় না।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
+        await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
     try:
         builder = InlineKeyboardBuilder()
@@ -431,7 +452,6 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_reply_markup(reply_markup=builder.as_markup())
     await c.answer()
 
-# ✅ FIX: Broadcast moved to background task for 10,000+ users
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
 async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -441,28 +461,17 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 ব্যাকগ্রাউন্ডে সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
     
-    # Log Channel Post
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
-            log_text = (
-                f"🎬 <b>New Movie Uploaded</b>\n\n"
-                f"🏷 Title: <b>{data['title']}</b>\n"
-                f"📺 Quality: <b>{data['quality']}</b>\n"
-                f"📅 Year: <b>{data.get('year', 'N/A')}</b>\n"
-                f"📂 Categories: {', '.join(selected_cats)}\n\n"
-                f"👤 Uploaded by Admin"
-            )
+            log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
-        except Exception as e:
-            print(f"Log Channel Error: {e}")
+        except: pass
 
-    # Start Background Task
     asyncio.create_task(run_movie_broadcast(data, selected_cats, c.from_user.id))
     await c.answer()
 
-# ✅ NEW: Background Broadcast Function for Movie Upload
 async def run_movie_broadcast(data, selected_cats, admin_id):
     bcast_success = 0
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
@@ -482,7 +491,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
-            await asyncio.sleep(0.05) # Faster & safer for 10k+ users
+            await asyncio.sleep(0.05)
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
             try:
@@ -502,7 +511,6 @@ async def broadcast_prep(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_bcast)
     await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে, কোনো বাটন যুক্ত হবে না)\n\n⚠️ বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
-# ✅ FIX: Broadcast moved to background task for 10,000+ users
 @dp.message(AdminStates.waiting_for_bcast)
 async def execute_broadcast(m: types.Message, state: FSMContext):
     if m.text and m.text.startswith("/"):
@@ -511,15 +519,13 @@ async def execute_broadcast(m: types.Message, state: FSMContext):
         return
     if m.reply_to_message:
         await state.clear()
-        await m.answer("⚠️ ব্রডকাস্ট বাতিল করা হয়েছে কারণ আপনি রিপ্লাই করেছেন! ইউজারকে রিপ্লাই দিতে ইনলাইন ✍️ বাটন ব্যবহার করুন।", parse_mode="HTML")
+        await m.answer("⚠️ ব্রডকাস্ট বাতিল করা হয়েছে কারণ আপনি রিপ্লাই করেছেন!", parse_mode="HTML")
         return
     await state.clear()
     prog_msg = await m.answer("⏳ <b>Broadcast started in background...</b>", parse_mode="HTML")
     
-    # Start Background Task
     asyncio.create_task(run_manual_broadcast(m, prog_msg, m.from_user.id))
 
-# ✅ NEW: Background Broadcast Function for /cast
 async def run_manual_broadcast(m, prog_msg, admin_id):
     total_users = await db.users.count_documents({})
     success = 0
@@ -528,21 +534,15 @@ async def run_manual_broadcast(m, prog_msg, admin_id):
         try: 
             await m.copy_to(chat_id=u['user_id'])
             success += 1
-            await asyncio.sleep(0.05) # Faster & safer for 10k+ users
+            await asyncio.sleep(0.05)
         except: 
             blocked += 1
             
-    stats_text = (
-        f"✅ <b>Broadcast Complete!</b>\n\n"
-        f"👥 Total Users: <b>{total_users}</b>\n"
-        f"✅ Successful: <b>{success}</b>\n"
-        f"🚫 Blocked Users: <b>{blocked}</b>"
-    )
+    stats_text = f"✅ <b>Broadcast Complete!</b>\n\n👥 Total Users: <b>{total_users}</b>\n✅ Successful: <b>{success}</b>\n🚫 Blocked Users: <b>{blocked}</b>"
     try:
         await prog_msg.edit_text(stats_text, parse_mode="HTML")
     except:
-        try:
-            await bot.send_message(admin_id, stats_text, parse_mode="HTML")
+        try: await bot.send_message(admin_id, stats_text, parse_mode="HTML")
         except: pass
 
 @dp.callback_query(F.data.startswith("trx_"))
@@ -566,7 +566,6 @@ async def handle_trx_approval(c: types.CallbackQuery):
 # ==========================================
 # 8. Web Admin Panel API & UI
 # ==========================================
-# ✅ FIX: Admin Panel HTML Restored to fix the issue
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
     html_code = '''
@@ -733,11 +732,19 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
+            
+            /* ✅ Pagination Styles */
+            .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }
+            .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }
+            body.oled-mode .page-btn { background: #0a0a0a; border-color: #1a1a1a; }
+            .page-btn:hover { background: #334155; color: white; }
+            .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
+            .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
         </style>
     </head>
     <body>
         <div id="welcomeScreen"><div class="ws-brand">Movie Box</div><div class="ws-bn">মুভি বক্স জগতে স্বাগতম</div></div>
-        <header onclick="switchTab('home')"><div class="logo"><svg width="35" height="35" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="margin-right: 8px; vertical-align: middle;"><defs><linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#ff416c;stop-opacity:1" /><stop offset="100%" style="stop-color:#ff4b2b;stop-opacity:1" /></linearGradient></defs><rect x="10" y="15" width="80" height="70" rx="15" ry="15" fill="none" stroke="url(#logoGrad)" stroke-width="6"/><polygon points="40,32 40,68 72,50" fill="url(#logoGrad)"/><path d="M 35 85 L 25 95 L 75 95 L 65 85" stroke="url(#logoGrad)" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>Movie Box</div></header>
+        <header onclick="switchTab('home')"><div class="logo">Movie Box</div></header>
 
         <div id="tabHome" class="page-section active">
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
@@ -754,9 +761,10 @@ async def web_ui():
                 <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
+            <div id="paginationHome" class="pagination-container"></div>
         </div>
 
-        <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div></div>
+        <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div><div id="paginationSearch" class="pagination-container"></div></div>
         <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
         
         <div id="tabSurprise" class="page-section">
@@ -829,21 +837,64 @@ async def web_ui():
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
+            let homeCurrentPage = 1;
+            let searchCurrentPage = 1;
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
-            function switchTab(tabName, btnEl) { document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); if(tabName === 'home') { activeCat = 'Home'; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); } document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); if(btnEl) btnEl.classList.add('active'); if(tabName === 'home') loadHomeMovies(); if(tabName === 'fav') loadFavorites(); window.scrollTo({top:0, behavior:'smooth'}); }
-            function filterCat(cat, btnEl) { activeCat = cat; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(); }
+            function switchTab(tabName, btnEl) { document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); if(tabName === 'home') { activeCat = 'Home'; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); } document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); if(btnEl) btnEl.classList.add('active'); if(tabName === 'home') loadHomeMovies(1); if(tabName === 'fav') loadFavorites(); window.scrollTo({top:0, behavior:'smooth'}); }
+            function filterCat(cat, btnEl) { activeCat = cat; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(1); }
             
             function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { if(btnEl) filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
-            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadHomeMovies(); } }
+            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadHomeMovies(1); } }
             
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
-            async function loadHomeMovies() { const list = document.getElementById('movieListHome'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; } catch(e) {} }
-            async function searchMovies() { const q = document.getElementById('searchInputMain').value.trim(); const list = document.getElementById('movieListSearch'); if(!q) { list.innerHTML = ''; return; } try { const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid); const data = await res.json(); currentViewMovies = data.movies || []; list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; } catch(e) {} }
+            
+            // ✅ Pagination Functions
+            async function loadHomeMovies(page = 1) { 
+                homeCurrentPage = page;
+                const list = document.getElementById('movieListHome'); 
+                list.innerHTML = '<div class="skeleton"></div>'; 
+                try { 
+                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
+                    renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies'); 
+                } catch(e) {} 
+            }
+
+            async function searchMovies(page = 1) { 
+                const q = document.getElementById('searchInputMain').value.trim(); 
+                const list = document.getElementById('movieListSearch'); 
+                if(!q) { list.innerHTML = ''; document.getElementById('paginationSearch').innerHTML = ''; return; } 
+                searchCurrentPage = page;
+                try { 
+                    const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid+'&page='+page); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; 
+                    renderPagination(data.total_pages, searchCurrentPage, 'paginationSearch', 'searchMovies'); 
+                } catch(e) {} 
+            }
+
+            function renderPagination(totalPages, currentPage, containerId, functionName) {
+                const container = document.getElementById(containerId);
+                if(totalPages <= 1) { container.innerHTML = ''; return; }
+                let html = '';
+                html += `<button class="page-btn" onclick="${functionName}(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+                let startPage = Math.max(1, currentPage - 1);
+                let endPage = Math.min(totalPages, currentPage + 1);
+                if(startPage > 1) { html += `<button class="page-btn" onclick="${functionName}(1)">1</button>`; if(startPage > 2) html += `<span style="color:#64748b;">...</span>`; }
+                for(let i = startPage; i <= endPage; i++) { html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="${functionName}(${i})">${i}</button>`; }
+                if(endPage < totalPages) { if(endPage < totalPages - 1) html += `<span style="color:#64748b;">...</span>`; html += `<button class="page-btn" onclick="${functionName}(${totalPages})">${totalPages}</button>`; }
+                html += `<button class="page-btn" onclick="${functionName}(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next <i class="fa-solid fa-chevron-right"></i></button>`;
+                container.innerHTML = html;
+                window.scrollTo({top:0, behavior:'smooth'});
+            }
 
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
@@ -900,7 +951,7 @@ async def web_ui():
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
-            fetchUserInfo(); loadHomeMovies(); loadFavorites();
+            fetchUserInfo(); loadHomeMovies(1); loadFavorites();
         </script>
     </body></html>'''
     html_code = html_code.replace("__DL_JSON__", dl_json)
@@ -920,9 +971,10 @@ async def get_user_info(uid: int):
     is_vip = vip_until and vip_until > now
     return {"vip": is_vip}
 
+# ✅ Pagination API Updated
 @app.get("/api/list")
 async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home"):
-    if uid in banned_cache: return {"movies": []}
+    if uid in banned_cache: return {"movies": [], "total_pages": 0}
     limit = 20
     unlocked_ids = []
     if uid != 0:
@@ -931,6 +983,10 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     match_stage = {}
     if q: match_stage["title"] = {"$regex": q, "$options": "i"}
     if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
+    
+    total_unique_titles = len(await db.movies.distinct("title", match_stage))
+    total_pages = math.ceil(total_unique_titles / limit)
+    
     pipeline = [
         {"$match": match_stage}, 
         {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
@@ -940,7 +996,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     for m in movies:
         m["is_adult"] = "Adult Content" in m.get("categories", [])
         for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
-    return {"movies": movies}
+    return {"movies": movies, "total_pages": total_pages}
 
 @app.get("/api/random")
 async def random_movie():
@@ -963,7 +1019,7 @@ async def get_image(photo_id: str):
         return RedirectResponse(url=file_url)
     except: return RedirectResponse(url="https://via.placeholder.com/110x160")
 
-# ✅ Rate Limiter / Queue System added to prevent Telegram Ban on 1000+ simultaneous clicks
+# ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
 
 class SendRequestModel(BaseModel):
@@ -973,7 +1029,6 @@ class SendRequestModel(BaseModel):
 async def send_file(d: SendRequestModel):
     if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData): return {"ok": False}
     
-    # সেমাফোর লক: একসাথে ২০ জনের বেশি এখানে ঢুকতে পারবে না, বাকিরা অপেক্ষা করবে
     async with send_semaphore:
         try:
             m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
@@ -1003,7 +1058,6 @@ async def send_file(d: SendRequestModel):
                 else: 
                     sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             except TelegramRetryAfter as e:
-                # যদি টেলিগ্রাম বলে কিছুক্ষণ পর আবার ট্রাই করতে, তবে অতিরিক্ত সময় নিয়ে আবার চেষ্টা করবে
                 await asyncio.sleep(e.retry_after + 1)
                 if m.get("file_type") == "video": 
                     sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
