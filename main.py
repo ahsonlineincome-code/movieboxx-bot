@@ -963,15 +963,23 @@ async def get_image(photo_id: str):
         return RedirectResponse(url=file_url)
     except: return RedirectResponse(url="https://via.placeholder.com/110x160")
 
+# ✅ Rate Limiter / Queue System added to prevent Telegram Ban on 1000+ simultaneous clicks
+send_semaphore = asyncio.Semaphore(20)
+
 class SendRequestModel(BaseModel):
     userId: int; movieId: str; initData: str
 
 @app.post("/api/send")
 async def send_file(d: SendRequestModel):
     if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData): return {"ok": False}
-    try:
-        m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
-        if m:
+    
+    # সেমাফোর লক: একসাথে ২০ জনের বেশি এখানে ঢুকতে পারবে না, বাকিরা অপেক্ষা করবে
+    async with send_semaphore:
+        try:
+            m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
+            if not m:
+                return {"ok": False, "msg": "Movie not found"}
+                
             now = datetime.datetime.utcnow()
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
@@ -981,20 +989,39 @@ async def send_file(d: SendRequestModel):
             del_minutes = time_cfg['minutes'] if time_cfg else 60
             tg_cfg = await db.settings.find_one({"id": "tg_link"})
             tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+            
             base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
             if is_vip:
                 caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
             else:
                 caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
-            if m.get("file_type") == "video": sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-            else: sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-            await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
-            await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
-            if sent_msg and not is_vip:
-                delete_at = now + datetime.timedelta(minutes=del_minutes)
-                await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
-        return {"ok": True}
-    except: return {"ok": False}
+            
+            sent_msg = None
+            try:
+                if m.get("file_type") == "video": 
+                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                else: 
+                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            except TelegramRetryAfter as e:
+                # যদি টেলিগ্রাম বলে কিছুক্ষণ পর আবার ট্রাই করতে, তবে অতিরিক্ত সময় নিয়ে আবার চেষ্টা করবে
+                await asyncio.sleep(e.retry_after + 1)
+                if m.get("file_type") == "video": 
+                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                else: 
+                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            
+            if sent_msg:
+                await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
+                await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
+                if not is_vip:
+                    delete_at = now + datetime.timedelta(minutes=del_minutes)
+                    await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
+                return {"ok": True}
+            return {"ok": False, "msg": "Failed to send"}
+            
+        except Exception as e:
+            print(f"Send File Error: {e}")
+            return {"ok": False, "msg": "Server error"}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
