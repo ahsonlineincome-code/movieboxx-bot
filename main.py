@@ -146,6 +146,7 @@ async def auto_delete_worker():
                 except:
                     pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
+                await asyncio.sleep(0.5) # <--- এই লাইনটা অ্যাড করো, এতে বট ব্যান হবে না
         except:
             pass
         await asyncio.sleep(60)
@@ -486,17 +487,24 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     del_minutes = time_cfg['minutes'] if time_cfg else 60
     delete_at = now + datetime.timedelta(minutes=del_minutes)
     
-    async for u in db.users.find():
+        async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+            
+            # নিচের লাইনটা কমেন্ট করে দিয়েছি, এটাই বটকে হ্যাং করতো
+            # await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+            
             bcast_success += 1
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.3) # স্লিপ টাইম বাড়িয়ে দিয়েছি
+            
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
             try:
                 sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
-                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+                
+                # এখানেও কমেন্ট করে দিয়েছি
+                # await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
+                
                 bcast_success += 1
             except: pass
         except: pass
