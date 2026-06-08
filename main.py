@@ -487,7 +487,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     del_minutes = time_cfg['minutes'] if time_cfg else 60
     delete_at = now + datetime.timedelta(minutes=del_minutes)
     
-        async for u in db.users.find():
+            async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             
