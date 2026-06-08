@@ -146,6 +146,7 @@ async def auto_delete_worker():
                 except:
                     pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
+                await asyncio.sleep(0.5) # FIXED: বট ব্যান না হওয়ার জন্য ডিলে যোগ করা হয়েছে
         except:
             pass
         await asyncio.sleep(60)
@@ -491,7 +492,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.3) # FIXED: বট হ্যাং ও ব্যান না হওয়ার জন্য ডিলে বাড়ানো হয়েছে
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
             try:
