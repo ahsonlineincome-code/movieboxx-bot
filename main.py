@@ -71,6 +71,9 @@ banned_cache = set()
 
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
+# কিউ সিস্টেম যোগ করা হলো (একসাথে একাধিক ব্রডকাস্ট রান করে বট যেন হ্যাং না করে)
+broadcast_queue = asyncio.Queue()
+
 # ==========================================
 # 2. FSM States
 # ==========================================
@@ -146,10 +149,31 @@ async def auto_delete_worker():
                 except:
                     pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
-                await asyncio.sleep(0.5) # FIXED: বট ব্যান না হওয়ার জন্য ডিলে যোগ করা হয়েছে
+                await asyncio.sleep(0.5)
         except:
             pass
         await asyncio.sleep(60)
+
+# নতুন কিউ ওয়ার্কার (ব্রডকাস্ট একটি একটি করে পাঠাবে)
+async def broadcast_queue_worker():
+    while True:
+        try:
+            # কিউ থেকে ডেটা নিবে (আগের ব্রডকাস্ট শেষ না হলে এখানে অপেক্ষা করবে)
+            task_data = await broadcast_queue.get()
+            await run_movie_broadcast(task_data['data'], task_data['selected_cats'], task_data['admin_id'])
+            broadcast_queue.task_done()
+        except Exception as e:
+            print(f"Queue Worker Error: {e}")
+            await asyncio.sleep(5)
+
+# স্টার্টআপ ইভেন্ট
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    asyncio.create_task(auto_delete_worker())
+    asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -449,7 +473,7 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
         prefix = "✅ " if ct in selected_cats else ""
         builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{i}")
     builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
+    builder.adjust(3) # এখানে 2 থেকে 3 করা হয়েছে
     await c.message.edit_reply_markup(reply_markup=builder.as_markup())
     await c.answer()
 
@@ -460,7 +484,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
-    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 ব্যাকগ্রাউন্ডে সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
+    
+    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
     
     if LOG_CHANNEL_ID:
         try:
@@ -470,7 +495,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    asyncio.create_task(run_movie_broadcast(data, selected_cats, c.from_user.id))
+    # সরাসরি রান না করে কিউতে পাঠানো হচ্ছে
+    await broadcast_queue.put({"data": data, "selected_cats": selected_cats, "admin_id": c.from_user.id})
     await c.answer()
 
 async def run_movie_broadcast(data, selected_cats, admin_id):
@@ -482,19 +508,20 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
+    
     now = datetime.datetime.utcnow()
-    time_cfg = await db.settings.find_one({"id": "del_time"})
-    del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
+    # ২৪ ঘণ্টা (১ দিন) পর ডিলিট হবে
+    delete_at = now + datetime.timedelta(days=1) 
     
     async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
-            await asyncio.sleep(0.3) # FIXED: বট হ্যাং ও ব্যান না হওয়ার জন্য ডিলে বাড়ানো হয়েছে
+            await asyncio.sleep(0.05) # ১ লাখ ইউজারের জন্য স্পিড বাড়ানো হয়েছে
         except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
+            # টেলিগ্রাম যদি বল কিছুক্ষন অপেক্ষা করতে, তাহলে অপেক্ষা করবে
+            await asyncio.sleep(e.retry_after + 1)
             try:
                 sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
                 await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
@@ -503,7 +530,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
         except: pass
         
     try:
-        await bot.send_message(admin_id, f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
+        await bot.send_message(admin_id, f"✅ <b>{data['title']}</b> এর ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
     except: pass
 
 @dp.message(Command("cast"))
