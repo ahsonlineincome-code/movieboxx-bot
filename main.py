@@ -50,7 +50,7 @@ BOT_USERNAME = "bdlatestmovie_bot"
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
 
-# ✅ নতুন: অটো-ডিলিট টাইম কনফিগারেশন
+# ✅ অটো-ডিলিট টাইম কনফিগারেশন
 BOT_MSG_DELETE_HOURS = 24       # বট মেসেজ ২৪ ঘণ্টা পর ডিলিট
 MOVIE_FILE_DELETE_HOURS = 1     # মুভি ফাইল ১ ঘণ্টা পর ডিলিট
 
@@ -105,15 +105,34 @@ async def load_banned_users():
         banned_cache.add(b_user["user_id"])
 
 async def init_db():
-    await db.movies.create_index([("title", "text")])
-    await db.movies.create_index("title")
-    await db.movies.create_index("created_at")
-    await db.movies.create_index("categories")
-    await db.auto_delete.create_index("delete_at")
-    await db.users.create_index("joined_at")
-    await db.payments.create_index("trx_id", unique=True)
-    await db.favorites.create_index([("user_id", 1), ("movie_id", 1)])
-    await db.user_unlocks.create_index("unlocked_at")
+    # ✅ ফিক্স: প্রতিটি index তে try/except যাতে conflict এ crash না হয়
+    try:
+        await db.movies.create_index([("title", "text")])
+    except: pass
+    try:
+        await db.movies.create_index("title")
+    except: pass
+    try:
+        await db.movies.create_index("created_at")
+    except: pass
+    try:
+        await db.movies.create_index("categories")
+    except: pass
+    try:
+        await db.auto_delete.create_index("delete_at")
+    except: pass
+    try:
+        await db.users.create_index("joined_at")
+    except: pass
+    try:
+        await db.payments.create_index("trx_id", unique=True)
+    except: pass
+    try:
+        await db.favorites.create_index([("user_id", 1), ("movie_id", 1)])
+    except: pass
+    try:
+        await db.user_unlocks.create_index("unlocked_at")
+    except: pass
 
 # ==========================================
 # 4. Security & Authentication Methods
@@ -147,9 +166,8 @@ def get_user_id_from_initdata(init_data: str) -> int:
     except:
         return 0
 
-# ✅ নতুন: অটো-ডিলিট শিডিউল হেল্পার ফাংশন
+# ✅ অটো-ডিলিট শিডিউল হেল্পার
 async def schedule_auto_delete(message: types.Message, hours: float = BOT_MSG_DELETE_HOURS):
-    """বট মেসেজ অটো-ডিলিট শিডিউল (ডিফল্ট ২৪ ঘণ্টা)"""
     delete_at = datetime.datetime.utcnow() + datetime.timedelta(hours=hours)
     await db.auto_delete.insert_one({
         "chat_id": message.chat.id,
@@ -159,7 +177,6 @@ async def schedule_auto_delete(message: types.Message, hours: float = BOT_MSG_DE
     })
 
 async def schedule_file_auto_delete(chat_id: int, message_id: int, hours: float = MOVIE_FILE_DELETE_HOURS):
-    """মুভি ফাইল মেসেজ অটো-ডিলিট শিডিউল (ডিফল্ট ১ ঘণ্টা)"""
     delete_at = datetime.datetime.utcnow() + datetime.timedelta(hours=hours)
     await db.auto_delete.insert_one({
         "chat_id": chat_id,
@@ -184,7 +201,7 @@ async def auto_delete_worker():
                 await asyncio.sleep(0.5)
         except:
             pass
-        await asyncio.sleep(30)  # ✅ ৩০ সেকেন্ডে একবার চেক
+        await asyncio.sleep(30)
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -202,23 +219,18 @@ async def start_cmd(message: types.Message, state: FSMContext):
     user = await db.users.find_one({"user_id": uid})
     
     if not user:
-        args = message.text.split(" ")
-        if len(args) > 1 and args[1].startswith("ref_"):
-            try:
-                referrer_id = int(args[1].split("_")[1])
-                if referrer_id != uid:
-                    await db.users.update_one({"user_id": referrer_id}, {"$inc": {"refer_count": 1}})
-                    ref_user = await db.users.find_one({"user_id": referrer_id})
-                    if ref_user and ref_user.get("refer_count", 0) % 5 == 0:
-                        current_vip = ref_user.get("vip_until", now)
-                        if current_vip < now: current_vip = now
-                        await db.users.update_one({"user_id": referrer_id}, {"$set": {"vip_until": current_vip + datetime.timedelta(days=1)}})
-                        try: 
-                            ref_msg = await bot.send_message(referrer_id, "🎉 ৫ জন রেফারের জন্য ২৪ ঘণ্টা VIP!", parse_mode="HTML")
-                            await schedule_auto_delete(ref_msg)
-                        except: pass
-            except: pass
-        await db.users.insert_one({"user_id": uid, "first_name": message.from_user.first_name, "joined_at": now, "refer_count": 0, "coins": 0, "last_checkin": now - datetime.timedelta(days=2), "vip_until": now - datetime.timedelta(days=1), "last_active": now, "is_adult_verified": False})
+        # ✅ রেফারেল VIP সিস্টেম সরানো হয়েছে - শুধু ইউজার রেজিস্টার
+        await db.users.insert_one({
+            "user_id": uid, 
+            "first_name": message.from_user.first_name, 
+            "joined_at": now, 
+            "refer_count": 0, 
+            "coins": 0, 
+            "last_checkin": now - datetime.timedelta(days=2), 
+            "vip_until": now - datetime.timedelta(days=1), 
+            "last_active": now, 
+            "is_adult_verified": False
+        })
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name, "last_active": now}})
 
@@ -232,7 +244,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
     
-    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।\n\n⚠️ <i>সকল মেসেজ ২৪ ঘণ্টা পর অটো-ডিলিট হবে। মুভি ফাইল ১ ঘণ্টা পর ডিলিট হবে।</i>"
+    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।\n\n⚠️ <i>মেসেজ ২৪ ঘণ্টা পর অটো-ডিলিট হবে। মুভি ফাইল ১ ঘণ্টা পর ডিলিট হবে।</i>"
     if uid in admin_cache: text += "\n\n⚙️ <b>অ্যাডমিন মোড অন.</b>"
     msg = await message.answer(text, reply_markup=markup, parse_mode="HTML")
     await schedule_auto_delete(msg)
@@ -329,17 +341,7 @@ async def toggle_protect(m: types.Message):
     msg = await m.answer(f"✅ ফরোয়ার্ড প্রোটেকশন এখন <b>{status_text}</b>", parse_mode="HTML")
     await schedule_auto_delete(msg)
 
-@dp.message(Command("setadcount"))
-async def set_ad_count(m: types.Message):
-    if m.from_user.id not in admin_cache: return
-    try:
-        count = int(m.text.split()[1])
-        await db.settings.update_one({"id": "ad_count"}, {"$set": {"count": count}}, upsert=True)
-        msg = await m.answer(f"✅ অ্যাড সংখ্যা <b>{count}</b> এ সেট করা হয়েছে।", parse_mode="HTML")
-        await schedule_auto_delete(msg)
-    except: 
-        msg = await m.answer("⚠️ /setadcount 2", parse_mode="HTML")
-        await schedule_auto_delete(msg)
+# ❌ /setadcount সরানো হয়েছে
 
 @dp.message(Command("settime"))
 async def set_delete_time(m: types.Message):
@@ -453,7 +455,7 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await schedule_auto_delete(msg)
 
 # ==========================================
-# 7.5 ✅ স্মুথ মুভি আপলোড (Step Indicator সহ)
+# 7.5 ✅ স্মুথ মুভি আপলোড
 # ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
@@ -466,7 +468,6 @@ async def receive_movie_file(m: types.Message, state: FSMContext):
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
 
-    # ✅ ফাইলের নাম থেকে অটো-টাইটেল
     auto_title = ""
     if m.video and m.video.file_name:
         auto_title = m.video.file_name.rsplit('.', 1)[0] if '.' in m.video.file_name else m.video.file_name
@@ -479,8 +480,7 @@ async def receive_movie_file(m: types.Message, state: FSMContext):
     cancel_kb = InlineKeyboardBuilder()
     cancel_kb.button(text="❌ Cancel Upload", callback_data="cancel_upload")
 
-    text = "📥 <b>Movie Upload Started!</b>\n\n"
-    text += f"✅ ফাইল পেয়েছি!\n"
+    text = "📥 <b>Movie Upload Started!</b>\n\n✅ ফাইল পেয়েছি!\n"
     if auto_title:
         text += f"📝 অটো-ডিটেক্ট: <i>{auto_title}</i>\n"
     text += f"\n📌 <b>Step 1/5:</b> এবার <b>পোস্টার (ছবি)</b> পাঠান।"
@@ -512,7 +512,7 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
-    msg = await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
+    msg = await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। অথবা /cancel লিখুন।", parse_mode="HTML")
     await schedule_auto_delete(msg)
 
 @dp.message(AdminStates.waiting_for_title, F.text)
@@ -523,7 +523,7 @@ async def receive_movie_title(m: types.Message, state: FSMContext):
         title = data.get("auto_title", "Untitled")
     await state.update_data(title=title)
     await state.set_state(AdminStates.waiting_for_quality)
-    msg = await m.answer(f"✅ টাইটেল: <b>{title}</b>\n\n📌 <b>Step 3/5:</b> এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।\n(যেমন: 720p, 1080p, S01E01)", parse_mode="HTML")
+    msg = await m.answer(f"✅ টাইটেল: <b>{title}</b>\n\n📌 <b>Step 3/5:</b> এবার <b>কোয়ালিটি</b> লিখুন।\n(যেমন: 720p, 1080p, S01E01)", parse_mode="HTML")
     await schedule_auto_delete(msg)
 
 @dp.message(AdminStates.waiting_for_title)
@@ -553,7 +553,7 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
         builder.button(text=cat, callback_data=f"selcat_{index}")
     builder.button(text="✅ Done", callback_data="cats_done")
     builder.adjust(2) 
-    msg = await m.answer("✅ সাল সেট!\n\n📌 <b>Step 5/5:</b> এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।\n\n✅ দিয়ে সিলেক্ট করুন, তারপর Done চাপুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
+    msg = await m.answer("✅ সাল সেট!\n\n📌 <b>Step 5/5:</b> এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
     await schedule_auto_delete(msg)
 
 @dp.message(AdminStates.waiting_for_year)
@@ -602,13 +602,10 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     await c.message.edit_text(
         f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n"
         f"📂 ক্যাটাগরি: {', '.join(selected_cats)}\n"
-        f"📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...\n\n"
-        f"⏳ নোটিফিকেশন <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।\n"
-        f"📁 মুভি ফাইল <b>১ ঘণ্টা</b> পর অটো-ডিলিট হবে।",
+        f"📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...",
         parse_mode="HTML"
     )
 
-    # ✅ লগ চ্যানেলে নোটিফিকেশন
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start=new")]]
@@ -624,12 +621,11 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    # ✅ সকল ইউজারকে অটো-ব্রডকাস্ট (নোটিফিকেশন ২৪ ঘণ্টা পর ডিলিট)
+    # ✅ সকল ইউজারকে অটো-ব্রডকাস্ট (২৪ ঘণ্টা পর অটো-ডিলিট)
     asyncio.create_task(run_movie_broadcast(data, selected_cats, c.from_user.id))
     await c.answer()
 
 async def run_movie_broadcast(data, selected_cats, admin_id):
-    """✅ নতুন মুভি আপলোড হলে সকল ইউজারকে নোটিফিকেশন (২৪ ঘণ্টা পর অটো-ডিলিট)"""
     bcast_success = 0
     bcast_fail = 0
     
@@ -649,11 +645,9 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
         f"📺 Quality: <b>{data['quality']}</b>\n"
         f"📅 Year: <b>{data.get('year', 'N/A')}</b>\n"
         f"📂 {', '.join(selected_cats)}\n\n"
-        f"👇 এখনই দেখুন!\n\n"
-        f"⏳ এই মেসেজ ২৪ ঘণ্টা পর অটো-ডিলিট হবে।"
+        f"👇 এখনই দেখুন!"
     )
     
-    # ✅ ব্রডকাস্ট মেসেজ ২৪ ঘণ্টা পর ডিলিট
     delete_at = datetime.datetime.utcnow() + datetime.timedelta(hours=BOT_MSG_DELETE_HOURS)
     
     async for u in db.users.find():
@@ -682,7 +676,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
 async def broadcast_prep(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
     await state.set_state(AdminStates.waiting_for_bcast)
-    msg = await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান। (ভিডিও/ছবি/টেক্সট যেটা পাঠাবেন সেটাই হুবহু সবার কাছে যাবে)\n\n⚠️ বাতিল করতে /cancel লিখুন।\n⏳ মেসেজ <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
+    msg = await m.answer("📢 ব্রডকাস্ট মেসেজ পাঠান।\n\n⚠️ বাতিল করতে /cancel লিখুন।\n⏳ মেসেজ <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
     await schedule_auto_delete(msg)
 
 @dp.message(AdminStates.waiting_for_bcast)
@@ -698,7 +692,7 @@ async def execute_broadcast(m: types.Message, state: FSMContext):
         await schedule_auto_delete(msg)
         return
     await state.clear()
-    prog_msg = await m.answer("⏳ <b>Broadcast started in background...</b>", parse_mode="HTML")
+    prog_msg = await m.answer("⏳ <b>Broadcast started...</b>", parse_mode="HTML")
     asyncio.create_task(run_manual_broadcast(m, prog_msg, m.from_user.id))
 
 async def run_manual_broadcast(m, prog_msg, admin_id):
@@ -716,7 +710,7 @@ async def run_manual_broadcast(m, prog_msg, admin_id):
         except: 
             blocked += 1
             
-    stats_text = f"✅ <b>Broadcast Complete!</b>\n\n👥 Total Users: <b>{total_users}</b>\n✅ Successful: <b>{success}</b>\n🚫 Blocked Users: <b>{blocked}</b>\n⏳ মেসেজ <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।"
+    stats_text = f"✅ <b>Broadcast Complete!</b>\n\n👥 Total: <b>{total_users}</b>\n✅ Successful: <b>{success}</b>\n🚫 Blocked: <b>{blocked}</b>\n⏳ মেসেজ <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।"
     try:
         await prog_msg.edit_text(stats_text, parse_mode="HTML")
     except:
@@ -759,17 +753,16 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .header { text-align: center; margin-bottom: 30px; color: #fff; }
             .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
             .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
-            .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; }
             .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
             .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
-            .stat-card.users .value i { color: #3b82f6; } .stat-card.today-users .value i { color: #10b981; } .stat-card.clicks .value i { color: #f59e0b; } .stat-card.today-clicks .value i { color: #ef4444; }
-            .stat-card.pending-del .value i { color: #a855f7; }
+            .stat-card.users .value i { color: #3b82f6; } .stat-card.today-users .value i { color: #10b981; } .stat-card.clicks .value i { color: #f59e0b; } .stat-card.today-clicks .value i { color: #ef4444; } .stat-card.pending-del .value i { color: #a855f7; }
             .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
             .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
             .table-header h2 { margin: 0; color: #fff; font-size: 20px; }
-            table { width: 100%; border-collapse: collapse; min-width: 600px; } th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; } td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; } tr:last-child td { border-bottom: none; } tr:hover { background: rgba(255,255,255,0.03); }
+            table { width: 100%; border-collapse: collapse; min-width: 600px; } th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; border-bottom: 1px solid #334155; } td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; } tr:last-child td { border-bottom: none; } tr:hover { background: rgba(255,255,255,0.03); }
             .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
-            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; } .delete-btn:hover { background: #ef4444; color: white; }
+            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; } .delete-btn:hover { background: #ef4444; color: white; }
             .empty-state { text-align: center; padding: 40px; color: #64748b; }
         </style>
     </head>
@@ -779,14 +772,13 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <div class="stat-card users"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users"></i> <span id="totalUsers">0</span></div></div>
             <div class="stat-card today-users"><h3>Today Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
             <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
-            <div class="stat-card today-clicks"><h3>Today Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
-            <div class="stat-card pending-del"><h3>Pending Auto-Delete</h3><div class="value"><i class="fa-solid fa-clock"></i> <span id="pendingDelete">0</span></div></div>
+            <div class="stat-card pending-del"><h3>Pending Delete</h3><div class="value"><i class="fa-solid fa-clock"></i> <span id="pendingDelete">0</span></div></div>
         </div>
-        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Movies</h2></div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading...</td></tr></tbody></table></div>
         <script>
-            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('pendingDelete').innerText = data.pending_deletes || 0; } catch(e) {} }
-            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
-            async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
+            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('pendingDelete').innerText = data.pending_deletes || 0; } catch(e) {} }
+            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'HD'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join(''); } catch(e) {} }
+            async function deleteMovie(id) { if(!confirm("Delete?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
     </body></html>'''
@@ -796,11 +788,13 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
 async def admin_stats(auth: bool = Depends(verify_admin)):
     now = datetime.datetime.utcnow(); today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total_users = await db.users.count_documents({}); today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    five_mins_ago = now - datetime.timedelta(minutes=5); active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
     total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1); total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
-    today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
+    try:
+        today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
+    except:
+        today_clicks = 0
     pending_deletes = await db.auto_delete.count_documents({})
-    return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks, "pending_deletes": pending_deletes}
+    return {"total_users": total_users, "today_users": today_users, "total_clicks": total_clicks, "today_clicks": today_clicks, "pending_deletes": pending_deletes}
 
 @app.get("/api/admin/movies")
 async def admin_movies(auth: bool = Depends(verify_admin)):
@@ -815,7 +809,7 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     raise HTTPException(status_code=404, detail="Movie not found")
 
 # ==========================================
-# 9. ✅ User API Endpoints (Web App এর জন্য)
+# 9. User API Endpoints
 # ==========================================
 @app.get("/api/movies")
 async def get_movies(request: Request, category: str = "Home", page: int = 1, search: str = ""):
@@ -845,12 +839,13 @@ async def get_movie_detail(movie_id: str, request: Request):
         uid = get_user_id_from_initdata(init_data)
         if uid:
             await db.users.update_one({"user_id": uid}, {"$set": {"last_active": datetime.datetime.utcnow()}})
-            await db.user_unlocks.insert_one({"user_id": uid, "movie_id": movie_id, "unlocked_at": datetime.datetime.utcnow()})
+            try:
+                await db.user_unlocks.insert_one({"user_id": uid, "movie_id": movie_id, "unlocked_at": datetime.datetime.utcnow()})
+            except: pass
     return movie
 
 @app.post("/api/send_file")
 async def send_movie_file(request: Request):
-    """✅ মুভি ফাইল ইউজারের চ্যাটে পাঠায় (১ ঘণ্টা পর অটো-ডিলিট)"""
     body = await request.json()
     movie_id = body.get("movie_id", "")
     init_data = body.get("init_data", "")
@@ -863,13 +858,11 @@ async def send_movie_file(request: Request):
     movie = await db.movies.find_one({"_id": ObjectId(movie_id)})
     if not movie: raise HTTPException(status_code=404, detail="Movie not found")
 
-    # ✅ অ্যাডাল্ট ভেরিফিকেশন চেক
     if "Adult Content" in movie.get("categories", []):
         user = await db.users.find_one({"user_id": uid})
         if not user or not user.get("is_adult_verified", False):
             return {"status": "need_adult_verify"}
 
-    # ✅ প্রোটেক্ট কন্টেন্ট চেক
     protect_cfg = await db.settings.find_one({"id": "protect_content"})
     protect = protect_cfg.get("status", False) if protect_cfg else False
 
@@ -885,15 +878,12 @@ async def send_movie_file(request: Request):
         else:
             sent_msg = await bot.send_document(chat_id=uid, document=movie["file_id"], caption=caption_text, parse_mode="HTML", protect_content=protect)
 
-        # ✅ মুভি ফাইল ১ ঘণ্টা পর অটো-ডিলিট শিডিউল
+        # ✅ মুভি ফাইল ১ ঘণ্টা পর অটো-ডিলিট
         await schedule_file_auto_delete(uid, sent_msg.message_id, hours=MOVIE_FILE_DELETE_HOURS)
 
-        await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$inc": {"clicks": 1}})
-        await db.user_unlocks.insert_one({"user_id": uid, "movie_id": movie_id, "unlocked_at": datetime.datetime.utcnow()})
-
-        return {"status": "sent", "message": "ফাইল আপনার টেলিগ্রাম চ্যাটে পাঠানো হয়েছে! ⏳ ১ ঘণ্টা পর ডিলিট হবে।"}
+        return {"status": "sent", "message": "ফাইল পাঠানো হয়েছে! ⏳ ১ ঘণ্টা পর ডিলিট হবে।"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed: {str(e)}")
 
 @app.get("/api/user")
 async def get_user_info(request: Request):
@@ -906,7 +896,10 @@ async def get_user_info(request: Request):
     now = datetime.datetime.utcnow()
     is_vip = user.get("vip_until", now) > now
     vip_days_left = (user.get("vip_until", now) - now).days if is_vip else 0
-    fav_count = await db.favorites.count_documents({"user_id": uid})
+    try:
+        fav_count = await db.favorites.count_documents({"user_id": uid})
+    except:
+        fav_count = 0
     return {"user_id": uid, "first_name": user.get("first_name", ""), "is_vip": is_vip, "vip_days_left": vip_days_left, "coins": user.get("coins", 0), "refer_count": user.get("refer_count", 0), "is_adult_verified": user.get("is_adult_verified", False), "fav_count": fav_count}
 
 @app.post("/api/favorite")
@@ -987,12 +980,10 @@ async def get_settings(request: Request):
     direct_links = dl_cfg.get('links', []) if dl_cfg else []
     adl_cfg = await db.settings.find_one({"id": "adult_direct_links"})
     adult_direct_links = adl_cfg.get('links', []) if adl_cfg else []
-    ad_count_cfg = await db.settings.find_one({"id": "ad_count"})
-    ad_count = ad_count_cfg.get('count', 2) if ad_count_cfg else 2
-    return {"tg_link": tg_link, "direct_links": direct_links, "adult_direct_links": adult_direct_links, "adult_channel": "https://t.me/+W5V9-mn08jMyYTE1", "ad_count": ad_count}
+    return {"tg_link": tg_link, "direct_links": direct_links, "adult_direct_links": adult_direct_links, "adult_channel": "https://t.me/+W5V9-mn08jMyYTE1"}
 
 # ==========================================
-# 10. ✅ Main Web App UI (আগের মতোই + অ্যাড সিস্টেম সহ)
+# 10. ✅ Main Web App UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -1008,26 +999,26 @@ async def web_ui():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; } 
-        body.oled-mode { background: #000000; }
-        #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }
+        body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; } 
+        body.oled-mode { background: #000; }
+        #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s; }
         body.oled-mode #welcomeScreen { background: #000; }
         #welcomeScreen.hide { opacity: 0; visibility: hidden; pointer-events: none; }
         .ws-brand { font-size: 48px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: pulse 1.5s infinite; }
         .ws-bn { font-size: 18px; color: #94a3b8; margin-top: 10px; opacity: 0; animation: fadeUp 1s 0.5s forwards; }
-        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-        @keyframes fadeUp { to { opacity: 1; transform: translateY(-10px); } }
-        header { display: flex; justify-content: center; align-items: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); z-index: 1000; cursor: pointer; }
-        body.oled-mode header { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
-        .logo { display: flex; align-items: center; font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        @keyframes pulse { 0%{transform:scale(1)}50%{transform:scale(1.05)}100%{transform:scale(1)} }
+        @keyframes fadeUp { to{opacity:1;transform:translateY(-10px)} }
+        header { display: flex; justify-content: center; align-items: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15,23,42,0.95); backdrop-filter: blur(10px); z-index: 1000; cursor: pointer; }
+        body.oled-mode header { background: rgba(0,0,0,0.95); border-color: #1a1a1a; }
+        .logo { font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .page-section { display: none; padding-bottom: 80px; }
         .page-section.active { display: block; }
         .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
         .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
-        .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+        .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239,68,68,0.4); }
         body.oled-mode .cat-chip { background: #0a0a0a; border-color: #1a1a1a; }
         .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
-        .movie-card { display: flex; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
+        .movie-card { display: flex; background: rgba(30,41,59,0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
         body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
         .movie-card:active { transform: scale(0.98); }
         .movie-card img { width: 110px; height: 160px; object-fit: cover; flex-shrink: 0; }
@@ -1039,18 +1030,15 @@ async def web_ui():
         .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
         .fav-btn.active { color: #ef4444; }
         .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 110px; height: 160px; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 30px; z-index: 5; }
-        .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
-        .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
-        .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
-        .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
-        body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
+        .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15,23,42,0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
+        body.oled-mode .bottom-nav { background: rgba(0,0,0,0.95); border-color: #1a1a1a; }
         .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
         .nav-item i { font-size: 20px; margin-bottom: 3px; }
         .nav-item.active { color: #ef4444; }
         .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
         .modal.show { display: flex; }
         .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
-        body.oled-mode .modal-content { background: #000000; }
+        body.oled-mode .modal-content { background: #000; }
         .detail-img { width: 100%; height: 250px; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
         .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
         .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
@@ -1058,7 +1046,6 @@ async def web_ui():
         .dl-file-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; color: white; font-weight: 700; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
         body.oled-mode .dl-file-btn { background: #050505; border-color: #1a1a1a; }
         .dl-file-btn i { color: #ef4444; font-size: 18px; }
-        .age-box { text-align: center; }
         .age-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-top: 15px; }
         .age-yes { background: #ef4444; color: white; }
         .age-no { background: #334155; color: white; }
@@ -1066,33 +1053,27 @@ async def web_ui():
         .ad-icon { font-size: 60px; margin-bottom: 10px; color: #fbbf24; }
         .ad-title { color: #fbbf24; font-size: 20px; font-weight: 800; margin-bottom: 15px; }
         .ad-box-orange { background: #ea580c; color: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: 600; }
-        .ad-box-black { background: #000000; color: #e2e8f0; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+        .ad-box-black { background: #000; color: #e2e8f0; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
         .ad-action-btn { width: 100%; padding: 15px; border-radius: 8px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
         .btn-ad-open { background: #ea580c; color: white; }
         .btn-ad-unlock { background: #10b981; color: white; }
         .btn-ad-tryagain { background: #ef4444; color: white; }
-        .search-box { padding: 0 15px 15px; }
         .search-input { width: 100%; padding: 14px; border-radius: 12px; border: none; outline: none; background: #1e293b; color: #fff; font-size: 15px; border: 1px solid #334155; }
         body.oled-mode .search-input { background: #0a0a0a; border-color: #1a1a1a; }
         .profile-card { background: #1e293b; margin: 15px; border-radius: 16px; padding: 20px; border: 1px solid #334155; }
         body.oled-mode .profile-card { background: #0a0a0a; border-color: #1a1a1a; }
-        .profile-action-btn { display: block; width: 100%; padding: 14px; border-radius: 12px; font-weight: 700; text-align: center; margin-bottom: 10px; border: none; color: white; text-decoration: none; cursor: pointer; font-size: 15px; transition: 0.2s; }
-        .profile-action-btn:active { transform: scale(0.97); }
+        .profile-action-btn { display: block; width: 100%; padding: 14px; border-radius: 12px; font-weight: 700; text-align: center; margin-bottom: 10px; border: none; color: white; text-decoration: none; cursor: pointer; font-size: 15px; }
         .btn-dark-mode { background: #334155; display: flex; align-items: center; justify-content: center; gap: 10px; }
-        .btn-fb { background: #1877F2; }
         .btn-main-ch { background: #24A1DE; }
         .btn-18-ch { background: #ef4444; }
-        .btn-sax-grp { background: #8B5CF6; }
         .skeleton { background: #1e293b; border-radius: 12px; height: 160px; position: relative; overflow: hidden; }
         .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
-        @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
-        .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
+        @keyframes shimmer { 0%{transform:translateX(-100%)}100%{transform:translateX(100%)} }
         .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }
-        .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }
+        .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 14px; }
         body.oled-mode .page-btn { background: #0a0a0a; border-color: #1a1a1a; }
-        .page-btn:hover { background: #334155; color: white; }
-        .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
-        .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
+        .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; }
+        .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; }
         .empty-state { text-align: center; padding: 40px; color: #64748b; font-size: 16px; }
         .vip-badge { display: inline-block; background: linear-gradient(45deg, #f59e0b, #d97706); color: #000; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 800; }
         .countdown-timer { color: #fbbf24; font-size: 13px; margin-top: 8px; font-weight: 600; }
@@ -1120,86 +1101,78 @@ async def web_ui():
     </div>
 
     <div id="tabSearch" class="page-section">
-        <div class="search-box" style="padding-top:15px;">
-            <input type="text" id="searchInputMain" class="search-input" placeholder="🔍 মুভি খুঁজুন..." oninput="debounceSearch()">
-        </div>
+        <div class="search-box" style="padding:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 মুভি খুঁজুন..." oninput="debounceSearch()"></div>
         <div class="movie-list" id="movieListSearch"></div>
         <div id="paginationSearch" class="pagination-container"></div>
     </div>
 
     <div id="tabFav" class="page-section">
-        <h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট মুভি</h3>
+        <h3 style="padding:15px;color:#fbbf24;">❤️ ফেভারিট</h3>
         <div class="movie-list" id="movieListFav"></div>
     </div>
 
     <div id="tabSurprise" class="page-section">
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; padding: 20px;">
-            <div style="font-size: 80px; margin-bottom: 20px; animation: pulse 1.5s infinite;">🎲</div>
-            <h2 style="margin-bottom: 15px; color: #fbbf24;">মুভি রুলেট!</h2>
-            <p style="color: #94a3b8; margin-bottom: 30px;">কী দেখবেন ঠিক করতে পারছেন না? বট আপনার জন্য একটি মুভি বেছে নিচ্ছে!</p>
-            <button onclick="loadSurprise()" style="padding: 15px 40px; background: linear-gradient(45deg, #ff416c, #ff4b2b); color: white; font-weight: 800; font-size: 18px; border: none; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 15px rgba(255,65,108,0.4);">🎲 Spin Now!</button>
-            <div id="surpriseResult" style="width: 100%; margin-top: 20px;"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;padding:20px;">
+            <div style="font-size:80px;margin-bottom:20px;animation:pulse 1.5s infinite;">🎲</div>
+            <h2 style="margin-bottom:15px;color:#fbbf24;">মুভি রুলেট!</h2>
+            <p style="color:#94a3b8;margin-bottom:30px;">কী দেখবেন ঠিক করতে পারছেন না? বট আপনার জন্য একটি মুভি বেছে নিচ্ছে!</p>
+            <button onclick="loadSurprise()" style="padding:15px 40px;background:linear-gradient(45deg,#ff416c,#ff4b2b);color:white;font-weight:800;font-size:18px;border:none;border-radius:12px;cursor:pointer;">🎲 Spin Now!</button>
+            <div id="surpriseResult" style="width:100%;margin-top:20px;"></div>
         </div>
     </div>
 
     <div id="tabProfile" class="page-section">
-        <div class="profile-card" id="profileCard">
-            <div style="text-align: center; margin-bottom: 15px;">
-                <div style="font-size: 60px; margin-bottom: 10px;">👤</div>
-                <h2 id="profileName">Loading...</h2>
-                <div id="profileVipBadge"></div>
+        <div class="profile-card">
+            <div style="text-align:center;margin-bottom:15px;"><div style="font-size:60px;margin-bottom:10px;">👤</div><h2 id="profileName">Loading...</h2><div id="profileVipBadge"></div></div>
+            <div style="display:flex;justify-content:space-around;margin-bottom:20px;text-align:center;">
+                <div><div style="font-size:24px;font-weight:800;" id="profileCoins">0</div><div style="font-size:12px;color:#94a3b8;">Coins</div></div>
+                <div><div style="font-size:24px;font-weight:800;" id="profileFavs">0</div><div style="font-size:12px;color:#94a3b8;">Favorites</div></div>
             </div>
-            <div style="display: flex; justify-content: space-around; margin-bottom: 20px; text-align: center;">
-                <div><div style="font-size: 24px; font-weight: 800;" id="profileCoins">0</div><div style="font-size: 12px; color: #94a3b8;">Coins</div></div>
-                <div><div style="font-size: 24px; font-weight: 800;" id="profileFavs">0</div><div style="font-size: 12px; color: #94a3b8;">Favorites</div></div>
-                <div><div style="font-size: 24px; font-weight: 800;" id="profileRefs">0</div><div style="font-size: 12px; color: #94a3b8;">Referrals</div></div>
-            </div>
-            <button class="profile-action-btn" style="background: linear-gradient(45deg, #10b981, #059669);" onclick="doCheckin()">📋 Daily Check-in (+5 Coins)</button>
-            <a id="refLink" href="#" class="profile-action-btn" style="background: linear-gradient(45deg, #f59e0b, #d97706);">🔗 Referral Link</a>
-            <button class="profile-action-btn btn-dark-mode" onclick="toggleOLED()">🌙 OLED/Dark Mode</button>
+            <button class="profile-action-btn" style="background:linear-gradient(45deg,#10b981,#059669);" onclick="doCheckin()">📋 Daily Check-in (+5 Coins)</button>
+            <button class="profile-action-btn btn-dark-mode" onclick="toggleOLED()">🌙 OLED Mode</button>
             <a id="mainChLink" href="#" class="profile-action-btn btn-main-ch">🚀 Join Channel</a>
             <a id="adultChLink" href="#" class="profile-action-btn btn-18-ch">🔴 18+ Channel</a>
         </div>
     </div>
 
-    <!-- MOVIE DETAIL MODAL -->
+    <!-- Movie Detail Modal -->
     <div id="movieModal" class="modal">
         <div class="modal-content">
             <button class="close-icon" onclick="closeModal()">✕</button>
             <img id="modalImg" class="detail-img" src="" alt="">
             <h2 class="detail-title" id="modalTitle"></h2>
             <div class="detail-meta" id="modalMeta"></div>
-            <div id="modalCats" style="margin-bottom: 15px;"></div>
+            <div id="modalCats" style="margin-bottom:15px;"></div>
             <div id="modalActions"></div>
             <div class="countdown-timer" id="modalTimer"></div>
         </div>
     </div>
 
-    <!-- AGE VERIFICATION MODAL -->
+    <!-- Age Verification Modal -->
     <div id="ageModal" class="modal">
-        <div class="modal-content" style="text-align: center;">
+        <div class="modal-content" style="text-align:center;">
             <button class="close-icon" onclick="closeAgeModal()">✕</button>
-            <div style="font-size: 60px; margin-bottom: 15px;">🔞</div>
-            <h2 style="color: #ef4444; margin-bottom: 10px;">Age Verification</h2>
-            <p style="color: #94a3b8; margin-bottom: 20px;">আপনি কি ১৮+ মুভি দেখতে চান?<br>এই কন্টেন্ট শুধুমাত্র প্রাপ্তবয়স্কদের জন্য।</p>
+            <div style="font-size:60px;margin-bottom:15px;">🔞</div>
+            <h2 style="color:#ef4444;margin-bottom:10px;">Age Verification</h2>
+            <p style="color:#94a3b8;margin-bottom:20px;">আপনি কি ১৮+?</p>
             <button class="age-btn age-yes" onclick="confirm18()">✅ হ্যাঁ, আমি ১৮+ আছি</button>
-            <button class="age-btn age-no" onclick="closeAgeModal()">❌ না, ফিরে যান</button>
+            <button class="age-btn age-no" onclick="closeAgeModal()">❌ না</button>
         </div>
     </div>
 
-    <!-- ✅ AD MODAL (আগের মতোই - ইনকাম সিস্টেম) -->
+    <!-- ✅ Ad Modal (ইনকাম সিস্টেম - আগের মতোই) -->
     <div id="adModal" class="modal">
-        <div class="modal-content" style="text-align: center;">
+        <div class="modal-content" style="text-align:center;">
             <button class="close-icon" onclick="closeAdModal()">✕</button>
             <div class="ad-box">
                 <div class="ad-icon">🎁</div>
                 <div class="ad-title">Watch Ad to Unlock!</div>
                 <div class="ad-box-orange" id="adLinkBox">
-                    <a id="adLinkHref" href="#" target="_blank" style="color: white; text-decoration: none; font-weight: 700;">📢 এই লিংকে ক্লিক করুন</a>
+                    <a id="adLinkHref" href="#" target="_blank" style="color:white;text-decoration:none;font-weight:700;">📢 এই লিংকে ক্লিক করুন</a>
                 </div>
                 <div class="ad-box-black">
                     ⏱️ লিংকে ক্লিক করে ১০ সেকেন্ড অপেক্ষা করুন,<br>তারপর নিচের বাটনে ক্লিক করুন।<br><br>
-                    <span id="adProgress">অ্যাড <b>0</b> / <b id="adTotal">2</b> দেখা হয়েছে</span>
+                    <span id="adProgress">অ্যাড <b>0</b> / <b>2</b> দেখা হয়েছে</span>
                 </div>
                 <button class="ad-action-btn btn-ad-open" id="adOpenBtn" onclick="openAdLink()">📢 Open Ad Link</button>
                 <button class="ad-action-btn btn-ad-unlock" id="adUnlockBtn" onclick="tryUnlock()" style="display:none;">✅ I Watched - Unlock Movie</button>
@@ -1218,326 +1191,192 @@ async def web_ui():
 
     <script>
         const tg = window.Telegram && Telegram.WebApp ? Telegram.WebApp : null;
-        let initData = '';
-        let userId = 0;
-        let currentCat = 'Home';
-        let currentPage = 1;
-        let searchQuery = '';
-        let adultVerified = false;
-        let myFavorites = new Set();
-        let pendingCatChip = null;
-        let searchTimeout = null;
-        let appSettings = {};
-        let currentMovieId = null;
-        let adsWatched = 0;
-        let adLinkOpened = false;
+        let initData = '', userId = 0, currentCat = 'Home', currentPage = 1, searchQuery = '';
+        let adultVerified = false, myFavorites = new Set(), pendingCatChip = null, searchTimeout = null;
+        let appSettings = {}, currentMovieId = null, adsWatched = 0, adLinkOpened = false;
+        const AD_COUNT = 2; // ✅ ফিক্সড ২টি অ্যাড
 
         if (tg) {
-            tg.ready();
-            tg.expand();
+            tg.ready(); tg.expand();
             initData = tg.initData || '';
-            try {
-                const parsed = new URLSearchParams(initData);
-                const userData = JSON.parse(parsed.get('user') || '{}');
-                userId = userData.id || 0;
-            } catch(e) {}
+            try { const p = new URLSearchParams(initData); const u = JSON.parse(p.get('user')||'{}'); userId = u.id||0; } catch(e) {}
         }
 
-        setTimeout(() => {
-            const ws = document.getElementById('welcomeScreen');
-            if(ws) ws.classList.add('hide');
-        }, 2000);
+        setTimeout(() => { const ws = document.getElementById('welcomeScreen'); if(ws) ws.classList.add('hide'); }, 2000);
 
-        async function loadSettings() {
-            try {
-                const res = await fetch('/api/settings', { headers: { 'X-Init-Data': initData } });
-                appSettings = await res.json();
-            } catch(e) {}
-        }
+        async function loadSettings() { try { const r = await fetch('/api/settings',{headers:{'X-Init-Data':initData}}); appSettings = await r.json(); } catch(e) {} }
         loadSettings();
 
         function switchTab(tab) {
-            document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            const tabMap = { home: 'tabHome', search: 'tabSearch', fav: 'tabFav', surprise: 'tabSurprise', profile: 'tabProfile' };
-            document.getElementById(tabMap[tab]).classList.add('active');
-            const navItems = document.querySelectorAll('.nav-item');
-            const tabIndex = { home: 0, search: 1, fav: 2, surprise: 3, profile: 4 };
-            navItems[tabIndex[tab]].classList.add('active');
-            if (tab === 'home') loadMovies();
-            if (tab === 'fav') loadFavorites();
-            if (tab === 'profile') loadProfile();
+            document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+            const m={home:'tabHome',search:'tabSearch',fav:'tabFav',surprise:'tabSurprise',profile:'tabProfile'};
+            document.getElementById(m[tab]).classList.add('active');
+            const idx={home:0,search:1,fav:2,surprise:3,profile:4};
+            document.querySelectorAll('.nav-item')[idx[tab]].classList.add('active');
+            if(tab==='home') loadMovies(); if(tab==='fav') loadFavorites(); if(tab==='profile') loadProfile();
         }
 
-        async function loadMovies(page = 1) {
-            currentPage = page;
-            const listEl = document.getElementById('movieListHome');
-            const pagEl = document.getElementById('paginationHome');
-            if (page === 1) listEl.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
+        async function loadMovies(page=1) {
+            currentPage=page;
+            const l=document.getElementById('movieListHome'),p=document.getElementById('paginationHome');
+            if(page===1) l.innerHTML='<div class="skeleton"></div><div class="skeleton"></div>';
             try {
-                let url = `/api/movies?category=${encodeURIComponent(currentCat)}&page=${page}`;
-                if (searchQuery) url += `&search=${encodeURIComponent(searchQuery)}`;
-                const res = await fetch(url, { headers: { 'X-Init-Data': initData } });
-                const data = await res.json();
-                renderMovies(data.movies, listEl);
-                renderPagination(pagEl, data.page, data.total_pages, 'loadMovies');
-            } catch(e) { listEl.innerHTML = '<div class="empty-state">❌ Error loading movies</div>'; }
+                let url=`/api/movies?category=${encodeURIComponent(currentCat)}&page=${page}`;
+                if(searchQuery) url+=`&search=${encodeURIComponent(searchQuery)}`;
+                const r=await fetch(url,{headers:{'X-Init-Data':initData}}); const d=await r.json();
+                renderMovies(d.movies,l); renderPagination(p,d.page,d.total_pages,'loadMovies');
+            } catch(e){ l.innerHTML='<div class="empty-state">❌ Error</div>'; }
         }
 
-        function renderMovies(movies, container) {
-            if (!movies || movies.length === 0) { container.innerHTML = '<div class="empty-state">🎬 কোনো মুভি পাওয়া যায়নি</div>'; return; }
-            container.innerHTML = movies.map(m => {
-                const isAdult = (m.categories || []).includes('Adult Content');
-                const isFav = myFavorites.has(m._id);
+        function renderMovies(movies,container) {
+            if(!movies||!movies.length){container.innerHTML='<div class="empty-state">🎬 কোনো মুভি পাওয়া যায়নি</div>';return;}
+            container.innerHTML=movies.map(m=>{
+                const isAdult=(m.categories||[]).includes('Adult Content'),isFav=myFavorites.has(m._id);
                 return `<div class="movie-card" onclick="openMovie('${m._id}')">
-                    <img src="https://via.placeholder.com/110x160/1e293b/94a3b8?text=${encodeURIComponent(m.title.substring(0,8))}" 
-                         onerror="this.src='https://via.placeholder.com/110x160/1e293b/94a3b8?text=🎬'" alt="${m.title}">
-                    ${isAdult && !adultVerified ? '<div class="adult-lock-overlay">🔒</div>' : ''}
+                    <img src="https://via.placeholder.com/110x160/1e293b/94a3b8?text=${encodeURIComponent(m.title.substring(0,8))}" onerror="this.src='https://via.placeholder.com/110x160/1e293b/94a3b8?text=🎬'" alt="${m.title}">
+                    ${isAdult&&!adultVerified?'<div class="adult-lock-overlay">🔒</div>':''}
                     <div class="movie-info">
                         <div class="movie-title">${m.title}</div>
-                        <div class="movie-meta"><span>📺 ${m.quality || 'HD'}</span><span>📅 ${m.year || 'N/A'}</span><span>👁️ ${m.clicks || 0}</span></div>
-                        <div class="movie-cats">${(m.categories||[]).slice(0,3).map(c => `<span class="movie-cat-tag">${c}</span>`).join('')}</div>
+                        <div class="movie-meta"><span>📺 ${m.quality||'HD'}</span><span>📅 ${m.year||'N/A'}</span><span>👁️ ${m.clicks||0}</span></div>
+                        <div class="movie-cats">${(m.categories||[]).slice(0,3).map(c=>`<span class="movie-cat-tag">${c}</span>`).join('')}</div>
                     </div>
-                    <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)">
-                        <i class="fa-${isFav ? 'solid' : 'regular'} fa-heart"></i>
-                    </button>
-                </div>`;
+                    <button class="fav-btn ${isFav?'active':''}" onclick="event.stopPropagation();toggleFav('${m._id}',this)">
+                        <i class="fa-${isFav?'solid':'regular'} fa-heart"></i>
+                    </button></div>`;
             }).join('');
         }
 
-        function renderPagination(container, current, total, fnName) {
-            if (total <= 1) { container.innerHTML = ''; return; }
-            let html = `<button class="page-btn" ${current <= 1 ? 'disabled' : ''} onclick="${fnName}(${current-1})">◀</button>`;
-            let start = Math.max(1, current - 2), end = Math.min(total, current + 2);
-            for (let i = start; i <= end; i++) html += `<button class="page-btn ${i === current ? 'active' : ''}" onclick="${fnName}(${i})">${i}</button>`;
-            html += `<button class="page-btn" ${current >= total ? 'disabled' : ''} onclick="${fnName}(${current+1})">▶</button>`;
-            container.innerHTML = html;
+        function renderPagination(container,current,total,fnName) {
+            if(total<=1){container.innerHTML='';return;}
+            let h=`<button class="page-btn" ${current<=1?'disabled':''} onclick="${fnName}(${current-1})">◀</button>`;
+            let s=Math.max(1,current-2),e=Math.min(total,current+2);
+            for(let i=s;i<=e;i++) h+=`<button class="page-btn ${i===current?'active':''}" onclick="${fnName}(${i})">${i}</button>`;
+            h+=`<button class="page-btn" ${current>=total?'disabled':''} onclick="${fnName}(${current+1})">▶</button>`;
+            container.innerHTML=h;
         }
 
-        function filterCat(cat, el) {
-            currentCat = cat; searchQuery = '';
-            document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
-            if (el) el.classList.add('active');
-            loadMovies(1);
-        }
+        function filterCat(cat,el) { currentCat=cat;searchQuery='';document.querySelectorAll('.cat-chip').forEach(c=>c.classList.remove('active'));if(el)el.classList.add('active');loadMovies(1); }
 
-        function verify18(el) {
-            if (!adultVerified) { pendingCatChip = el; document.getElementById('ageModal').classList.add('show'); }
-            else filterCat('Adult Content', el);
-        }
-        function confirm18() {
-            adultVerified = true;
-            fetch('/api/verify_18', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData }, body: JSON.stringify({ init_data: initData }) }).catch(() => {});
-            closeAgeModal();
-            if (pendingCatChip) filterCat('Adult Content', pendingCatChip);
-        }
+        function verify18(el) { if(!adultVerified){pendingCatChip=el;document.getElementById('ageModal').classList.add('show');}else filterCat('Adult Content',el); }
+        function confirm18() { adultVerified=true; fetch('/api/verify_18',{method:'POST',headers:{'Content-Type':'application/json','X-Init-Data':initData},body:JSON.stringify({init_data:initData})}).catch(()=>{}); closeAgeModal(); if(pendingCatChip) filterCat('Adult Content',pendingCatChip); }
         function closeAgeModal() { document.getElementById('ageModal').classList.remove('show'); }
 
         async function openMovie(id) {
             try {
-                const res = await fetch(`/api/movie/${id}`, { headers: { 'X-Init-Data': initData } });
-                const m = await res.json();
-                currentMovieId = m._id;
-                document.getElementById('modalImg').src = `https://via.placeholder.com/400x250/1e293b/94a3b8?text=${encodeURIComponent(m.title.substring(0,12))}`;
-                document.getElementById('modalTitle').textContent = m.title;
-                document.getElementById('modalMeta').innerHTML = `📺 ${m.quality || 'HD'} | 📅 ${m.year || 'N/A'} | 👁️ ${m.clicks || 0} views`;
-                document.getElementById('modalCats').innerHTML = (m.categories||[]).map(c => `<span style="background:rgba(255,255,255,0.1);padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600;color:#cbd5e1;">${c}</span>`).join(' ');
-                document.getElementById('modalActions').innerHTML = `
-                    <button class="dl-file-btn" onclick="requestFile('${m._id}')">
-                        <span>📥 Get Movie File</span><i class="fa-solid fa-download"></i>
-                    </button>
-                    <button class="dl-file-btn" onclick="toggleFav('${m._id}')" style="background:#1e293b;">
-                        <span>❤️ Add to Favorites</span><i class="fa-solid fa-heart" style="color:#ef4444;"></i>
-                    </button>`;
-                document.getElementById('modalTimer').innerHTML = '⏳ ফাইল ১ ঘণ্টা পর অটো-ডিলিট হবে';
+                const r=await fetch(`/api/movie/${id}`,{headers:{'X-Init-Data':initData}}); const m=await r.json();
+                currentMovieId=m._id;
+                document.getElementById('modalImg').src=`https://via.placeholder.com/400x250/1e293b/94a3b8?text=${encodeURIComponent(m.title.substring(0,12))}`;
+                document.getElementById('modalTitle').textContent=m.title;
+                document.getElementById('modalMeta').innerHTML=`📺 ${m.quality||'HD'} | 📅 ${m.year||'N/A'} | 👁️ ${m.clicks||0} views`;
+                document.getElementById('modalCats').innerHTML=(m.categories||[]).map(c=>`<span style="background:rgba(255,255,255,0.1);padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600;color:#cbd5e1;">${c}</span>`).join(' ');
+                document.getElementById('modalActions').innerHTML=`<button class="dl-file-btn" onclick="requestFile('${m._id}')"><span>📥 Get Movie File</span><i class="fa-solid fa-download"></i></button><button class="dl-file-btn" onclick="toggleFav('${m._id}')" style="background:#1e293b;"><span>❤️ Add to Favorites</span><i class="fa-solid fa-heart" style="color:#ef4444;"></i></button>`;
+                document.getElementById('modalTimer').innerHTML='⏳ ফাইল ১ ঘণ্টা পর অটো-ডিলিট হবে';
                 document.getElementById('movieModal').classList.add('show');
-            } catch(e) {}
+            } catch(e){}
         }
         function closeModal() { document.getElementById('movieModal').classList.remove('show'); }
 
-        // ✅ মুভি ফাইল রিকোয়েস্ট (অ্যাড সিস্টেম সহ)
+        // ✅ মুভি ফাইল রিকোয়েস্ট (অ্যাড সিস্টেম সহ - ইনকাম)
         async function requestFile(movieId) {
-            // VIP চেক
-            let isVip = false;
-            try {
-                const ures = await fetch('/api/user', { headers: { 'X-Init-Data': initData } });
-                const udata = await ures.json();
-                isVip = udata.is_vip;
-            } catch(e) {}
-
-            if (isVip) {
-                // VIP ইউজার - সরাসরি ফাইল পাঠাও
-                await sendFileNow(movieId);
-            } else {
-                // ✅ নন-VIP ইউজার - অ্যাড দেখতে হবে (ইনকাম সিস্টেম)
-                adsWatched = 0;
-                adLinkOpened = false;
-                const isAdult = (appSettings.adult_direct_links || []).length > 0;
-                const links = isAdult ? (appSettings.adult_direct_links || []) : (appSettings.direct_links || []);
-                const totalAds = appSettings.ad_count || 2;
-                document.getElementById('adTotal').textContent = totalAds;
-                
-                if (links.length > 0) {
-                    const randomLink = links[Math.floor(Math.random() * links.length)];
-                    document.getElementById('adLinkHref').href = randomLink;
-                    document.getElementById('adLinkHref').textContent = '📢 এই লিংকে ক্লিক করুন';
-                }
-                
-                document.getElementById('adProgress').innerHTML = `অ্যাড <b>0</b> / <b>${totalAds}</b> দেখা হয়েছে`;
-                document.getElementById('adOpenBtn').style.display = 'block';
-                document.getElementById('adUnlockBtn').style.display = 'none';
-                document.getElementById('adRetryBtn').style.display = 'none';
+            let isVip=false;
+            try { const r=await fetch('/api/user',{headers:{'X-Init-Data':initData}}); const d=await r.json(); isVip=d.is_vip; } catch(e){}
+            if(isVip) { await sendFileNow(movieId); }
+            else {
+                adsWatched=0; adLinkOpened=false;
+                const links=(appSettings.direct_links||[]).concat(appSettings.adult_direct_links||[]);
+                if(links.length>0){ const rl=links[Math.floor(Math.random()*links.length)]; document.getElementById('adLinkHref').href=rl; document.getElementById('adLinkHref').textContent='📢 এই লিংকে ক্লিক করুন'; }
+                document.getElementById('adTotal').textContent=AD_COUNT;
+                document.getElementById('adProgress').innerHTML=`অ্যাড <b>0</b> / <b>${AD_COUNT}</b> দেখা হয়েছে`;
+                document.getElementById('adOpenBtn').style.display='block';
+                document.getElementById('adUnlockBtn').style.display='none';
+                document.getElementById('adRetryBtn').style.display='none';
                 document.getElementById('adModal').classList.add('show');
             }
         }
 
         function openAdLink() {
-            const link = document.getElementById('adLinkHref').href;
-            if (link && link !== '#') {
-                window.open(link, '_blank');
-                adLinkOpened = true;
-            }
-            // ৩ সেকেন্ড পর unlock বাটন দেখাও
-            setTimeout(() => {
-                const totalAds = appSettings.ad_count || 2;
+            const link=document.getElementById('adLinkHref').href;
+            if(link&&link!=='#') { window.open(link,'_blank'); adLinkOpened=true; }
+            setTimeout(()=>{
                 adsWatched++;
-                document.getElementById('adProgress').innerHTML = `অ্যাড <b>${adsWatched}</b> / <b>${totalAds}</b> দেখা হয়েছে`;
-                document.getElementById('adOpenBtn').style.display = 'none';
-                if (adsWatched >= totalAds) {
-                    document.getElementById('adUnlockBtn').style.display = 'block';
-                } else {
-                    document.getElementById('adRetryBtn').style.display = 'block';
-                    // নতুন লিংক লোড
-                    const links = (appSettings.direct_links || []).concat(appSettings.adult_direct_links || []);
-                    if (links.length > 0) {
-                        const randomLink = links[Math.floor(Math.random() * links.length)];
-                        document.getElementById('adLinkHref').href = randomLink;
-                    }
+                document.getElementById('adProgress').innerHTML=`অ্যাড <b>${adsWatched}</b> / <b>${AD_COUNT}</b> দেখা হয়েছে`;
+                document.getElementById('adOpenBtn').style.display='none';
+                if(adsWatched>=AD_COUNT) { document.getElementById('adUnlockBtn').style.display='block'; }
+                else {
+                    document.getElementById('adRetryBtn').style.display='block';
+                    const links=(appSettings.direct_links||[]).concat(appSettings.adult_direct_links||[]);
+                    if(links.length>0){ const rl=links[Math.floor(Math.random()*links.length)]; document.getElementById('adLinkHref').href=rl; }
                 }
-            }, 3000);
+            },3000);
         }
 
         async function tryUnlock() {
-            const totalAds = appSettings.ad_count || 2;
-            if (adsWatched < totalAds) {
-                adLinkOpened = false;
-                document.getElementById('adRetryBtn').style.display = 'none';
-                document.getElementById('adOpenBtn').style.display = 'block';
-                return;
-            }
-            closeAdModal();
-            await sendFileNow(currentMovieId);
+            if(adsWatched<AD_COUNT){adLinkOpened=false;document.getElementById('adRetryBtn').style.display='none';document.getElementById('adOpenBtn').style.display='block';return;}
+            closeAdModal(); await sendFileNow(currentMovieId);
         }
-
         function closeAdModal() { document.getElementById('adModal').classList.remove('show'); }
 
-        // ✅ ফাইল পাঠানো (১ ঘণ্টা পর অটো-ডিলিট)
         async function sendFileNow(movieId) {
             try {
-                const res = await fetch('/api/send_file', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData },
-                    body: JSON.stringify({ movie_id: movieId, init_data: initData })
-                });
-                const data = await res.json();
-                if (data.status === 'sent') {
-                    if (tg) tg.showAlert('✅ ফাইল আপনার চ্যাটে পাঠানো হয়েছে!\\n⏳ ১ ঘণ্টা পর অটো-ডিলিট হবে।');
-                    closeModal();
-                } else if (data.status === 'need_adult_verify') {
-                    if (tg) tg.showAlert('🔞 প্রথমে ১৮+ ভেরিফিকেশন করুন।');
-                } else {
-                    if (tg) tg.showAlert('❌ ফাইল পাঠাতে সমস্যা হয়েছে।');
-                }
-            } catch(e) { if (tg) tg.showAlert('❌ Error occurred.'); }
+                const r=await fetch('/api/send_file',{method:'POST',headers:{'Content-Type':'application/json','X-Init-Data':initData},body:JSON.stringify({movie_id:movieId,init_data:initData})});
+                const d=await r.json();
+                if(d.status==='sent'){if(tg)tg.showAlert('✅ ফাইল পাঠানো হয়েছে!\\n⏳ ১ ঘণ্টা পর অটো-ডিলিট হবে।');closeModal();}
+                else if(d.status==='need_adult_verify'){if(tg)tg.showAlert('🔞 প্রথমে ১৮+ ভেরিফিকেশন করুন।');}
+                else{if(tg)tg.showAlert('❌ সমস্যা হয়েছে।');}
+            } catch(e){if(tg)tg.showAlert('❌ Error');}
         }
 
-        async function toggleFav(movieId, btnEl) {
+        async function toggleFav(movieId,btnEl) {
             try {
-                const res = await fetch('/api/favorite', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData },
-                    body: JSON.stringify({ movie_id: movieId, init_data: initData })
-                });
-                const data = await res.json();
-                if (data.status === 'added') { myFavorites.add(movieId); if(btnEl){btnEl.classList.add('active');btnEl.innerHTML='<i class="fa-solid fa-heart"></i>';} }
-                else { myFavorites.delete(movieId); if(btnEl){btnEl.classList.remove('active');btnEl.innerHTML='<i class="fa-regular fa-heart"></i>';} }
-            } catch(e) {}
+                const r=await fetch('/api/favorite',{method:'POST',headers:{'Content-Type':'application/json','X-Init-Data':initData},body:JSON.stringify({movie_id:movieId,init_data:initData})});
+                const d=await r.json();
+                if(d.status==='added'){myFavorites.add(movieId);if(btnEl){btnEl.classList.add('active');btnEl.innerHTML='<i class="fa-solid fa-heart"></i>';}}
+                else{myFavorites.delete(movieId);if(btnEl){btnEl.classList.remove('active');btnEl.innerHTML='<i class="fa-regular fa-heart"></i>';}}
+            } catch(e){}
         }
 
         async function loadFavorites() {
-            const listEl = document.getElementById('movieListFav');
-            listEl.innerHTML = '<div class="skeleton"></div>';
-            try {
-                const res = await fetch('/api/favorites', { headers: { 'X-Init-Data': initData } });
-                const data = await res.json();
-                data.movies.forEach(m => myFavorites.add(m._id));
-                renderMovies(data.movies, listEl);
-            } catch(e) { listEl.innerHTML = '<div class="empty-state">❌ Error</div>'; }
+            const l=document.getElementById('movieListFav'); l.innerHTML='<div class="skeleton"></div>';
+            try { const r=await fetch('/api/favorites',{headers:{'X-Init-Data':initData}}); const d=await r.json(); d.movies.forEach(m=>myFavorites.add(m._id)); renderMovies(d.movies,l); } catch(e){l.innerHTML='<div class="empty-state">❌ Error</div>';}
         }
 
-        function debounceSearch() {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
-                searchQuery = document.getElementById('searchInputMain').value.trim();
-                loadSearchResults(1);
-            }, 500);
-        }
+        function debounceSearch() { clearTimeout(searchTimeout); searchTimeout=setTimeout(()=>{searchQuery=document.getElementById('searchInputMain').value.trim();loadSearchResults(1);},500); }
 
-        async function loadSearchResults(page = 1) {
-            const listEl = document.getElementById('movieListSearch');
-            const pagEl = document.getElementById('paginationSearch');
-            if (!searchQuery) { listEl.innerHTML = '<div class="empty-state">🔍 কিছু টাইপ করে খুঁজুন...</div>'; pagEl.innerHTML=''; return; }
-            try {
-                const res = await fetch(`/api/movies?category=Home&page=${page}&search=${encodeURIComponent(searchQuery)}`, { headers: { 'X-Init-Data': initData } });
-                const data = await res.json();
-                renderMovies(data.movies, listEl);
-                renderPagination(pagEl, data.page, data.total_pages, 'loadSearchResults');
-            } catch(e) { listEl.innerHTML = '<div class="empty-state">❌ Error</div>'; }
+        async function loadSearchResults(page=1) {
+            const l=document.getElementById('movieListSearch'),p=document.getElementById('paginationSearch');
+            if(!searchQuery){l.innerHTML='<div class="empty-state">🔍 কিছু টাইপ করে খুঁজুন...</div>';p.innerHTML='';return;}
+            try { const r=await fetch(`/api/movies?category=Home&page=${page}&search=${encodeURIComponent(searchQuery)}`,{headers:{'X-Init-Data':initData}}); const d=await r.json(); renderMovies(d.movies,l); renderPagination(p,d.page,d.total_pages,'loadSearchResults'); } catch(e){l.innerHTML='<div class="empty-state">❌ Error</div>';}
         }
 
         async function loadSurprise() {
-            const el = document.getElementById('surpriseResult');
-            el.innerHTML = '<div class="skeleton"></div>';
-            try {
-                const res = await fetch('/api/surprise', { headers: { 'X-Init-Data': initData } });
-                const data = await res.json();
-                if (data.movie) {
-                    const m = data.movie;
-                    el.innerHTML = `<div class="movie-card" onclick="openMovie('${m._id}')" style="margin-top:15px;"><div class="movie-info"><div class="movie-title">🎉 ${m.title}</div><div class="movie-meta"><span>📺 ${m.quality||'HD'}</span><span>📅 ${m.year||'N/A'}</span></div></div></div>`;
-                } else { el.innerHTML = '<div class="empty-state">কোনো মুভি পাওয়া যায়নি 😢</div>'; }
-            } catch(e) { el.innerHTML = '<div class="empty-state">❌ Error</div>'; }
+            const el=document.getElementById('surpriseResult'); el.innerHTML='<div class="skeleton"></div>';
+            try { const r=await fetch('/api/surprise',{headers:{'X-Init-Data':initData}}); const d=await r.json();
+                if(d.movie){const m=d.movie;el.innerHTML=`<div class="movie-card" onclick="openMovie('${m._id}')" style="margin-top:15px;"><div class="movie-info"><div class="movie-title">🎉 ${m.title}</div><div class="movie-meta"><span>📺 ${m.quality||'HD'}</span><span>📅 ${m.year||'N/A'}</span></div></div></div>`;}
+                else{el.innerHTML='<div class="empty-state">কোনো মুভি পাওয়া যায়নি 😢</div>';}
+            } catch(e){el.innerHTML='<div class="empty-state">❌ Error</div>';}
         }
 
         async function loadProfile() {
-            try {
-                const res = await fetch('/api/user', { headers: { 'X-Init-Data': initData } });
-                const u = await res.json();
-                document.getElementById('profileName').textContent = u.first_name || 'User';
-                document.getElementById('profileCoins').textContent = u.coins || 0;
-                document.getElementById('profileFavs').textContent = u.fav_count || 0;
-                document.getElementById('profileRefs').textContent = u.refer_count || 0;
-                document.getElementById('profileVipBadge').innerHTML = u.is_vip ? `<span class="vip-badge">💎 VIP (${u.vip_days_left}d left)</span>` : '';
-                document.getElementById('refLink').href = `https://t.me/${'bdlatestmovie_bot'}?start=ref_${u.user_id}`;
-                document.getElementById('mainChLink').href = appSettings.tg_link || '#';
-                document.getElementById('adultChLink').href = appSettings.adult_channel || '#';
-                if (u.is_adult_verified) adultVerified = true;
-            } catch(e) {}
+            try { const r=await fetch('/api/user',{headers:{'X-Init-Data':initData}}); const u=await r.json();
+                document.getElementById('profileName').textContent=u.first_name||'User';
+                document.getElementById('profileCoins').textContent=u.coins||0;
+                document.getElementById('profileFavs').textContent=u.fav_count||0;
+                document.getElementById('profileVipBadge').innerHTML=u.is_vip?`<span class="vip-badge">💎 VIP (${u.vip_days_left}d)</span>`:'';
+                document.getElementById('mainChLink').href=appSettings.tg_link||'#';
+                document.getElementById('adultChLink').href=appSettings.adult_channel||'#';
+                if(u.is_adult_verified) adultVerified=true;
+            } catch(e){}
         }
 
         async function doCheckin() {
-            try {
-                const res = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Init-Data': initData }, body: JSON.stringify({ init_data: initData }) });
-                const data = await res.json();
-                if (tg) tg.showAlert(data.status === 'success' ? `✅ +${data.coins_earned} Coins!` : `⚠️ ${data.message}`);
-                loadProfile();
-            } catch(e) { if (tg) tg.showAlert('❌ Error'); }
+            try { const r=await fetch('/api/checkin',{method:'POST',headers:{'Content-Type':'application/json','X-Init-Data':initData},body:JSON.stringify({init_data:initData})});
+                const d=await r.json(); if(tg) tg.showAlert(d.status==='success'?`✅ +${d.coins_earned} Coins!`:`⚠️ ${d.message}`); loadProfile();
+            } catch(e){if(tg)tg.showAlert('❌ Error');}
         }
 
-        function toggleOLED() {
-            document.body.classList.toggle('oled-mode');
-            localStorage.setItem('oled', document.body.classList.contains('oled-mode'));
-        }
-        if (localStorage.getItem('oled') === 'true') document.body.classList.add('oled-mode');
+        function toggleOLED() { document.body.classList.toggle('oled-mode'); localStorage.setItem('oled',document.body.classList.contains('oled-mode')); }
+        if(localStorage.getItem('oled')==='true') document.body.classList.add('oled-mode');
 
         loadMovies();
     </script>
@@ -1546,7 +1385,7 @@ async def web_ui():
     return HTMLResponse(html_code)
 
 # ==========================================
-# 11. ✅ Startup & Main
+# 11. Startup & Main
 # ==========================================
 @app.on_event("startup")
 async def on_startup():
