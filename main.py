@@ -82,7 +82,7 @@ class AdminStates(StatesGroup):
     waiting_for_quality = State() 
     waiting_for_year = State()
     waiting_for_cats = State()
-    waiting_for_confirm = State()  # ✅ NEW: Confirmation step for smooth upload
+    waiting_for_confirm = State()
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
@@ -375,27 +375,8 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 7.5 ✅ SMOOTH Movie Upload with /upload command
+# 7.5 Single Movie Upload (✅ Smooth + Confirm)
 # ==========================================
-@dp.message(Command("upload"))
-async def upload_cmd(m: types.Message, state: FSMContext):
-    if m.from_user.id not in admin_cache: return
-    current_state = await state.get_state()
-    if current_state is not None:
-        await state.clear()
-    await m.answer(
-        "🎬 <b>Movie Upload Process Started!</b>\n\n"
-        "📌 <b>Step 1/5:</b> এখন <b>Video/Document</b> ফাইল পাঠান।\n\n"
-        "📋 <b>Upload Steps:</b>\n"
-        "1️⃣ Video/Document ফাইল\n"
-        "2️⃣ পোস্টার ছবি\n"
-        "3️⃣ মুভির নাম\n"
-        "4️⃣ কোয়ালিটি/এপিসোড\n"
-        "5️⃣ রিলিজ সাল + ক্যাটাগরি\n\n"
-        "⚠️ বাতিল করতে /cancel লিখুন।",
-        parse_mode="HTML"
-    )
-
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -406,22 +387,13 @@ async def receive_movie_file(m: types.Message, state: FSMContext):
     ftype = "video" if m.video else "document"
     await state.set_state(AdminStates.waiting_for_photo)
     await state.update_data(file_id=fid, file_type=ftype, categories=[])
-    await m.answer(
-        "✅ <b>ফাইল রিসিভ হয়েছে!</b>\n\n"
-        "📌 <b>Step 2/5:</b> এখন <b>পোস্টার (ছবি)</b> পাঠান।\n\n"
-        "⚠️ শুধুমাত্র Photo পাঠান, ফাইল নয়।",
-        parse_mode="HTML"
-    )
+    await m.answer("✅ ফাইল পেয়েছি! এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_photo, F.photo)
 async def receive_movie_photo(m: types.Message, state: FSMContext):
     await state.update_data(photo_id=m.photo[-1].file_id)
     await state.set_state(AdminStates.waiting_for_title)
-    await m.answer(
-        "✅ <b>পোস্টার রিসিভ হয়েছে!</b>\n\n"
-        "📌 <b>Step 3/5:</b> এখন <b>মুভি/সিরিজের নাম</b> লিখুন।",
-        parse_mode="HTML"
-    )
+    await m.answer("✅ এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
@@ -431,12 +403,7 @@ async def fallback_photo(m: types.Message):
 async def receive_movie_title(m: types.Message, state: FSMContext):
     await state.update_data(title=m.text.strip())
     await state.set_state(AdminStates.waiting_for_quality)
-    await m.answer(
-        "✅ <b>মুভির নাম সেভ হয়েছে!</b>\n\n"
-        "📌 <b>Step 4/5:</b> এখন <b>এপিসোড বা কোয়ালিটি</b> লিখুন।\n"
-        "📝 উদাহরণ: 1080p, 720p, EP-01, Season-01 ইত্যাদি",
-        parse_mode="HTML"
-    )
+    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title)
 async def fallback_title(m: types.Message):
@@ -446,12 +413,7 @@ async def fallback_title(m: types.Message):
 async def receive_movie_quality(m: types.Message, state: FSMContext):
     await state.update_data(quality=m.text.strip())
     await state.set_state(AdminStates.waiting_for_year)
-    await m.answer(
-        "✅ <b>কোয়ালিটি সেভ হয়েছে!</b>\n\n"
-        "📌 <b>Step 5/5:</b> এখন <b>রিলিজ সাল</b> লিখুন।\n"
-        "📝 উদাহরণ: 2024, 2025 ইত্যাদি",
-        parse_mode="HTML"
-    )
+    await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_quality)
 async def fallback_quality(m: types.Message):
@@ -467,11 +429,7 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
         builder.button(text=cat, callback_data=f"selcat_{index}")
     builder.button(text="✅ Done", callback_data="cats_done")
     builder.adjust(2) 
-    await m.answer(
-        "✅ <b>রিলিজ সাল সেভ হয়েছে!</b>\n\n"
-        "📌 <b>Final Step:</b> এখন <b>ক্যাটাগরি সিলেক্ট</b> করুন এবং Done চাপুন।",
-        reply_markup=builder.as_markup(), parse_mode="HTML"
-    )
+    await m.answer("✅ এবার <b>ক্যাটাগরি সিলেক্ট</b> করুন।", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_year)
 async def fallback_year(m: types.Message):
@@ -502,7 +460,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     
-    # ✅ NEW: Show confirmation preview before saving
+    # ✅ Smooth Upload: Preview + Confirm step
     await state.set_state(AdminStates.waiting_for_confirm)
     
     preview_text = (
@@ -510,9 +468,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         f"🎬 Title: <b>{data['title']}</b>\n"
         f"📺 Quality: <b>{data['quality']}</b>\n"
         f"📅 Year: <b>{data.get('year', 'N/A')}</b>\n"
-        f"📂 Categories: <b>{', '.join(selected_cats)}</b>\n"
-        f"📁 File Type: <b>{data['file_type']}</b>\n\n"
-        f"🔍 সব ঠিক আছে কি? কনফার্ম করুন।"
+        f"📂 Categories: <b>{', '.join(selected_cats)}</b>\n\n"
+        f"সব ঠিক আছে কি? কনফার্ম করুন।"
     )
     
     builder = InlineKeyboardBuilder()
@@ -533,14 +490,12 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     
     await c.answer()
 
-# ✅ NEW: Confirm upload callback
 @dp.callback_query(AdminStates.waiting_for_confirm, F.data == "confirm_upload")
 async def confirm_movie_upload(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     await state.clear()
     
-    # Save movie to database
     await db.movies.insert_one({
         "title": data["title"],
         "quality": data["quality"],
@@ -553,12 +508,14 @@ async def confirm_movie_upload(c: types.CallbackQuery, state: FSMContext):
         "created_at": datetime.datetime.utcnow()
     })
     
-    await c.message.edit_caption(
-        caption=f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...\n⏰ নোটিফিকেশন ১ দিন পর অটো-ডিলিট হবে।",
-        parse_mode="HTML"
-    )
+    try:
+        await c.message.edit_caption(
+            caption=f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 ব্যাকগ্রাউন্ডে সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...",
+            parse_mode="HTML"
+        )
+    except:
+        await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!", parse_mode="HTML")
     
-    # Send to LOG channel
     if LOG_CHANNEL_ID:
         try:
             log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
@@ -567,94 +524,50 @@ async def confirm_movie_upload(c: types.CallbackQuery, state: FSMContext):
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    # ✅ Auto broadcast to ALL users
+    # ✅ Auto message to ALL users
     asyncio.create_task(run_movie_broadcast(data, selected_cats, c.from_user.id))
     await c.answer()
 
-# ✅ NEW: Cancel upload callback
 @dp.callback_query(AdminStates.waiting_for_confirm, F.data == "cancel_upload")
 async def cancel_movie_upload(c: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await c.message.edit_caption(caption="❌ <b>Movie Upload বাতিল করা হয়েছে!</b>", parse_mode="HTML")
+    try:
+        await c.message.edit_caption(caption="❌ <b>Movie Upload বাতিল করা হয়েছে!</b>", parse_mode="HTML")
+    except:
+        await c.message.edit_text("❌ <b>Movie Upload বাতিল করা হয়েছে!</b>", parse_mode="HTML")
     await c.answer()
 
-# ✅ UPDATED: Auto broadcast with 1 DAY auto-delete
+# ✅ Auto broadcast to ALL users + 1 DAY auto delete
 async def run_movie_broadcast(data, selected_cats, admin_id):
     bcast_success = 0
-    bcast_fail = 0
-    total_users = await db.users.count_documents({})
-    
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    
-    bcast_kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))],
-        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
-    ]
+    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
-    bcast_text = (
-        f"🆕 <b>New Movie Alert!</b>\n\n"
-        f"🎬 <b>{data['title']}</b>\n"
-        f"📺 Quality: <b>{data['quality']}</b>\n"
-        f"📅 Year: <b>{data.get('year', 'N/A')}</b>\n"
-        f"📂 Category: <b>{', '.join(selected_cats)}</b>\n\n"
-        f"👇 এখনই দেখুন!"
-    )
-    
+    bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
     now = datetime.datetime.utcnow()
-    # ✅ CHANGED: Auto-delete after 1 DAY (24 hours = 1440 minutes)
+    # ✅ 1 DAY auto delete
     delete_at = now + datetime.timedelta(days=1)
     
     async for u in db.users.find():
         try:
-            sent_msg = await bot.send_photo(
-                u['user_id'],
-                photo=data["photo_id"],
-                caption=bcast_text,
-                reply_markup=bcast_markup,
-                parse_mode="HTML"
-            )
-            # ✅ Save for auto-delete after 1 day
-            await db.auto_delete.insert_one({
-                "chat_id": u['user_id'],
-                "message_id": sent_msg.message_id,
-                "delete_at": delete_at
-            })
+            sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+            await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
             await asyncio.sleep(0.3)
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after)
             try:
-                sent_msg = await bot.send_photo(
-                    u['user_id'],
-                    photo=data["photo_id"],
-                    caption=bcast_text,
-                    reply_markup=bcast_markup,
-                    parse_mode="HTML"
-                )
-                await db.auto_delete.insert_one({
-                    "chat_id": u['user_id'],
-                    "message_id": sent_msg.message_id,
-                    "delete_at": delete_at
-                })
+                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+                await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
                 bcast_success += 1
-            except:
-                bcast_fail += 1
-        except:
-            bcast_fail += 1
+            except: pass
+        except: pass
         
     try:
-        await bot.send_message(
-            admin_id,
-            f"✅ <b>অটো-ব্রডকাস্ট শেষ!</b>\n\n"
-            f"👥 Total Users: <b>{total_users}</b>\n"
-            f"✅ সফল: <b>{bcast_success}</b>\n"
-            f"❌ ব্যর্থ: <b>{bcast_fail}</b>\n\n"
-            f"⏰ নোটিফিকেশনগুলো <b>১ দিন (২৪ ঘণ্টা)</b> পর অটো-ডিলিট হবে।",
-            parse_mode="HTML"
-        )
+        await bot.send_message(admin_id, f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>১ দিন</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
     except: pass
 
 @dp.message(Command("cast"))
@@ -955,38 +868,9 @@ async def web_ui():
             <button class="nav-item" onclick="switchTab('profile')"><i class="fa-solid fa-user"></i>Profile</button>
         </div>
 
-        <!-- Movie Detail Modal -->
-        <div class="modal" id="movieModal">
-            <div class="modal-content" id="movieModalContent"></div>
-        </div>
-
-        <!-- Age Verification Modal -->
-        <div class="modal" id="ageModal">
-            <div class="modal-content">
-                <div class="age-box">
-                    <div style="font-size: 60px;">🔞</div>
-                    <h2 style="margin: 15px 0; color: #ef4444;">Age Verification</h2>
-                    <p style="color: #94a3b8; margin-bottom: 15px;">এই কন্টেন্টটি শুধুমাত্র ১৮+ দর্শকদের জন্য। আপনি কি ১৮ বছরের বেশি বয়সী?</p>
-                    <button class="age-btn age-yes" onclick="confirmAge()">✅ হ্যাঁ, আমি ১৮+</button>
-                    <button class="age-btn age-no" onclick="denyAge()">❌ না, ফিরে যান</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Ad Modal -->
-        <div class="modal" id="adModal">
-            <div class="modal-content">
-                <div class="ad-box">
-                    <div class="ad-icon">📺</div>
-                    <div class="ad-title">Watch Ad to Unlock</div>
-                    <div class="ad-box-orange">🎬 বিজ্ঞাপন দেখে মুভি আনলক করুন!</div>
-                    <div class="ad-box-black">নিচের লিংকে ক্লিক করে ১০ সেকেন্ড অপেক্ষা করুন, তারপর ফিরে এসে আনলক বাটনে ক্লিক করুন।</div>
-                    <button class="ad-action-btn btn-ad-open" id="adOpenBtn" onclick="openAdLink()">🔗 Open Ad Link</button>
-                    <button class="ad-action-btn btn-ad-unlock" id="adUnlockBtn" onclick="verifyAdUnlock()" style="display:none;">✅ Unlock Movie</button>
-                    <button class="ad-action-btn btn-ad-tryagain" onclick="closeAdModal()">❌ Cancel</button>
-                </div>
-            </div>
-        </div>
+        <div class="modal" id="movieModal"><div class="modal-content" id="movieModalContent"></div></div>
+        <div class="modal" id="ageModal"><div class="modal-content"><div class="age-box"><div style="font-size: 60px;">🔞</div><h2 style="margin: 15px 0; color: #ef4444;">Age Verification</h2><p style="color: #94a3b8; margin-bottom: 15px;">এই কন্টেন্টটি শুধুমাত্র ১৮+ দর্শকদের জন্য। আপনি কি ১৮ বছরের বেশি বয়সী?</p><button class="age-btn age-yes" onclick="confirmAge()">✅ হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="denyAge()">❌ না, ফিরে যান</button></div></div></div>
+        <div class="modal" id="adModal"><div class="modal-content"><div class="ad-box"><div class="ad-icon">📺</div><div class="ad-title">Watch Ad to Unlock</div><div class="ad-box-orange">🎬 বিজ্ঞাপন দেখে মুভি আনলক করুন!</div><div class="ad-box-black">নিচের লিংকে ক্লিক করে ১০ সেকেন্ড অপেক্ষা করুন, তারপর ফিরে এসে আনলক বাটনে ক্লিক করুন।</div><button class="ad-action-btn btn-ad-open" id="adOpenBtn" onclick="openAdLink()">🔗 Open Ad Link</button><button class="ad-action-btn btn-ad-unlock" id="adUnlockBtn" onclick="verifyAdUnlock()" style="display:none;">✅ Unlock Movie</button><button class="ad-action-btn btn-ad-tryagain" onclick="closeAdModal()">❌ Cancel</button></div></div></div>
 
         <script>
             let tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
@@ -1002,13 +886,10 @@ async def web_ui():
             const PER_PAGE = 10;
 
             if(tg) { tg.ready(); tg.expand(); }
-
             setTimeout(() => { let ws = document.getElementById('welcomeScreen'); if(ws) ws.classList.add('hide'); }, 2000);
 
             async function init() {
-                if(tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
-                    currentUser = tg.initDataUnsafe.user;
-                }
+                if(tg && tg.initDataUnsafe && tg.initDataUnsafe.user) { currentUser = tg.initDataUnsafe.user; }
                 await fetchMovies();
                 loadProfile();
             }
@@ -1023,14 +904,10 @@ async def web_ui():
 
             function renderMovies() {
                 let filtered = currentCat === 'Home' ? allMovies : allMovies.filter(m => m.categories && m.categories.includes(currentCat));
-                if(currentCat === 'Home' || currentCat !== 'Adult Content') {
-                    // show all
-                }
                 const total = Math.ceil(filtered.length / PER_PAGE);
                 if(currentPage > total) currentPage = total || 1;
                 const start = (currentPage - 1) * PER_PAGE;
                 const pageMovies = filtered.slice(start, start + PER_PAGE);
-                
                 const container = document.getElementById('movieListHome');
                 if(pageMovies.length === 0) {
                     container.innerHTML = '<div style="text-align:center;padding:40px;color:#64748b;">🎬 কোনো মুভি পাওয়া যায়নি</div>';
@@ -1086,7 +963,7 @@ async def web_ui():
                 document.querySelectorAll('.page-section').forEach(s=>s.classList.remove('active'));
                 document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
                 document.getElementById('tab'+tab.charAt(0).toUpperCase()+tab.slice(1)).classList.add('active');
-                event.target.closest('.nav-item')?.classList.add('active');
+                if(event && event.target) { const ni = event.target.closest('.nav-item'); if(ni) ni.classList.add('active'); }
                 if(tab==='fav') renderFavs();
             }
 
@@ -1113,13 +990,12 @@ async def web_ui():
             }
 
             function showMovieModal(m) {
-                const isUnlocked = true; // simplified
                 let html = `<button class="close-icon" onclick="closeModal()"><i class="fa-solid fa-xmark"></i></button>`;
                 html += `<img class="detail-img" src="https://api.telegram.org/file/bot''' + TOKEN + '''/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x250/1e293b/94a3b8?text=🎬'" alt="${m.title}">`;
                 html += `<div class="detail-title">${m.title}</div>`;
                 html += `<div class="detail-meta">📺 ${m.quality || 'HD'} &nbsp;📅 ${m.year || 'N/A'} &nbsp;👁 ${m.clicks || 0} views</div>`;
                 html += `<div style="margin-bottom:15px;">${(m.categories||[]).map(c=>'<span class="movie-cat-tag" style="margin-right:5px;">'+c+'</span>').join('')}</div>`;
-                html += `<button class="dl-file-btn ${isUnlocked?'unlocked':''}" onclick="downloadMovie('${m._id}')"><span><i class="fa-solid fa-${isUnlocked?'unlock':'lock'}"></i> ${isUnlocked?'Download File':'Watch Ad to Unlock'}</span><i class="fa-solid fa-download"></i></button>`;
+                html += `<button class="dl-file-btn" onclick="downloadMovie('${m._id}')"><span><i class="fa-solid fa-lock"></i> Download File</span><i class="fa-solid fa-download"></i></button>`;
                 document.getElementById('movieModalContent').innerHTML = html;
                 document.getElementById('movieModal').style.display = 'flex';
             }
@@ -1129,7 +1005,6 @@ async def web_ui():
 
             function confirmAge() { adultVerified = true; document.getElementById('ageModal').style.display = 'none'; renderMovies(); }
             function denyAge() { document.getElementById('ageModal').style.display = 'none'; }
-
             function verify18(el) { document.getElementById('ageModal').style.display = 'flex'; }
 
             async function downloadMovie(id) {
@@ -1167,10 +1042,7 @@ async def web_ui():
 
             function verifyAdUnlock() {
                 const elapsed = (Date.now() - adClickTime) / 1000;
-                if(elapsed < 5) {
-                    alert('⚠️ দয়া করে কিছুক্ষণ অপেক্ষা করুন!');
-                    return;
-                }
+                if(elapsed < 5) { alert('⚠️ দয়া করে কিছুক্ষণ অপেক্ষা করুন!'); return; }
                 const movieId = document.getElementById('adOpenBtn').getAttribute('data-movieid');
                 const m = allMovies.find(x => x._id === movieId);
                 if(m) sendFile(m);
@@ -1179,13 +1051,9 @@ async def web_ui():
 
             async function sendFile(m) {
                 try {
-                    if(tg) {
-                        await tg.sendData(JSON.stringify({action:'download', movie_id: m._id, file_id: m.file_id}));
-                    }
+                    if(tg) { await tg.sendData(JSON.stringify({action:'download', movie_id: m._id, file_id: m.file_id})); }
                     closeModal();
-                } catch(e) {
-                    alert('❌ ফাইল পাঠাতে সমস্যা হয়েছে। বটে ফিরে গিয়ে আবার চেষ্টা করুন।');
-                }
+                } catch(e) { alert('❌ ফাইল পাঠাতে সমস্যা হয়েছে। বটে ফিরে গিয়ে আবার চেষ্টা করুন।'); }
             }
 
             async function searchMovies() {
