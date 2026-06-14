@@ -154,6 +154,24 @@ async def auto_delete_worker():
             pass
         await asyncio.sleep(60)
 
+async def auto_lock_worker():
+    while True:
+        try:
+            # ২৪ ঘণ্টা আগের সময় বের করা হচ্ছে
+            expire_time = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            
+            # ডেটাবেস থেকে ২৪ ঘণ্টা আগে আনলক করা মুভিগুলো ডিলিট করা হচ্ছে
+            result = await db.user_unlocks.delete_many({"unlocked_at": {"$lte": expire_time}})
+            
+            # কনসোলে লগ দেখানোর জন্য (প্রয়োজন না হলে রাখতে পারেন)
+            if result.deleted_count > 0:
+                print(f"🔒 Auto-locked {result.deleted_count} movies (24 hrs expired).")
+        except Exception as e:
+            print(f"Auto-lock worker error: {e}")
+            
+        # প্রতি ১ ঘণ্টা পর পর চেক করবে
+        await asyncio.sleep(3600)
+
 # নতুন কিউ ওয়ার্কার (ব্রডকাস্ট একটি একটি করে পাঠাবে)
 async def broadcast_queue_worker():
     while True:
@@ -174,6 +192,15 @@ async def on_startup():
     await load_banned_users()
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    asyncio.create_task(auto_delete_worker())
+    asyncio.create_task(broadcast_queue_worker())
+    asyncio.create_task(auto_lock_worker()) # <--- এই লাইনটি নতুন যোগ করা হয়েছে
 
 # ==========================================
 # 6. Telegram Bot Commands
