@@ -386,18 +386,25 @@ async def addfile_start(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_addfile_title)
     await m.answer("📝 যে মুভিতে নতুন কোয়ালিটি যোগ করতে চান তার <b>সঠিক নাম (Title)</b> লিখুন:\n\n⚠️ নামটি ডেটাবেসের সাথে হুবহু মিলতে হবে।", parse_mode="HTML")
 
+import re # <-- এটি আপনার কোডের উপরে import সেকশনে যোগ করে নিবেন (না থাকলে)
+
 @dp.message(AdminStates.waiting_for_addfile_title, F.text)
 async def addfile_title_received(m: types.Message, state: FSMContext):
     title = m.text.strip()
-    # চেক করছি মুভিটি ডেটাবেসে আছে কিনা
-    movie = await db.movies.find_one({"title": {"$regex": f"^{title}$", "$options": "i"}})
+    
+    # Regex এর স্পেশাল ক্যারেক্টার এসকেপ করা হচ্ছে (যেমন + সাইন)
+    escaped_title = re.escape(title)
+    
+    # ডেটাবেসে কেস-ইনসেন্সিটিভ এবং এক্সাক্ট ম্যাচ খোঁজা হচ্ছে
+    movie = await db.movies.find_one({"title": {"$regex": f"^{escaped_title}$", "$options": "i"}})
+    
     if not movie:
         await state.clear()
-        return await m.answer("❌ এই নামে কোনো মুভি পাওয়া যায়নি! আবার চেষ্টা করুন।", parse_mode="HTML")
+        return await m.answer("❌ এই নামে কোনো মুভি পাওয়া যায়নি!\n\nসমস্যা হতে পারে: আপনি যে নামটি দিচ্ছেন সেটি ডেটাবেসের নামের সাথে হুবহু মিলছে না। অ্যাডমিন প্যানেল থেকে মুভির সঠিক নাম কপি করে পাঠান।", parse_mode="HTML")
     
     await state.update_data(movie_id=movie["_id"], movie_title=movie["title"])
     await state.set_state(AdminStates.waiting_for_addfile_file)
-    await m.answer("✅ মুভি পাওয়া গেছে! এখন নতুন <b>ফাইল (ভিডিও/ডকুমেন্ট)</b> পাঠান।", parse_mode="HTML")
+    await m.answer(f"✅ মুভি পাওয়া গেছে: <b>{movie['title']}</b>!\n\nএখন নতুন <b>ফাইল (ভিডিও/ডকুমেন্ট)</b> পাঠান।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_addfile_file, F.content_type.in_({'video', 'document'}))
 async def addfile_file_received(m: types.Message, state: FSMContext):
