@@ -88,6 +88,10 @@ class AdminStates(StatesGroup):
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
+    # নতুন যোগ করা হলো
+    waiting_for_aq_title = State()
+    waiting_for_aq_file = State()
+    waiting_for_aq_quality = State()
 
 # ==========================================
 # 3. Database Initialization & Caching
@@ -154,6 +158,15 @@ async def auto_delete_worker():
             pass
         await asyncio.sleep(60)
 
+async def reset_weekly_clicks_worker():
+    while True:
+        try:
+            await db.movies.update_many({}, {"$set": {"weekly_clicks": 0}})
+            print("🔄 Weekly clicks reset successfully.")
+        except Exception as e:
+            print(f"Weekly reset error: {e}")
+        await asyncio.sleep(86400 * 7) # 7 দিন পর পর রিসেট হবে
+
 async def auto_lock_worker():
     while True:
         try:
@@ -193,6 +206,7 @@ async def on_startup():
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
+    asyncio.create_task(reset_weekly_clicks_worker())
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -502,7 +516,17 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
-    await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
+    quality_key = data.get("quality", "Main")
+    await db.movies.insert_one({
+        "title": data["title"], 
+        "photo_id": data["photo_id"], 
+        "year": data.get("year", "N/A"), 
+        "categories": selected_cats, 
+        "files": {quality_key: data["file_id"]}, # এখানে ফাইলগুলো ডিকশনারি আকারে সেভ হবে
+        "clicks": 0, 
+        "weekly_clicks": 0, # ট্রেন্ডিং এর জন্য
+        "created_at": datetime.datetime.utcnow()
+    })
     
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
     
@@ -510,10 +534,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
         try:
             log_kb = [
                 [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
-                [
-                    types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62"),
-                    types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")
-                ]
+                [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
+                [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
             ]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
@@ -531,12 +553,11 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
     bcast_kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], 
-        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
-        [
-            types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62"),
-            types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")
-        ]
+        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))],
+        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)],
+        [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
+        [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
+        [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
     ]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
@@ -604,6 +625,43 @@ async def run_manual_broadcast(m, prog_msg, admin_id):
     except:
         try: await bot.send_message(admin_id, stats_text, parse_mode="HTML")
         except: pass
+
+# ==========================================
+# 7.6 Add Quality Command (No Broadcast)
+# ==========================================
+@dp.message(Command("addquality"))
+async def add_quality_start(m: types.Message, state: FSMContext):
+    if m.from_user.id not in admin_cache: return
+    await state.set_state(AdminStates.waiting_for_aq_title)
+    await m.answer("📝 যে মুভিতে নতুন কোয়ালিটি যোগ করতে চান তার <b>নাম</b> লিখুন:", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_aq_title, F.text)
+async def aq_receive_title(m: types.Message, state: FSMContext):
+    movie = await db.movies.find_one({"title": m.text.strip()})
+    if not movie:
+        await state.clear()
+        return await m.answer("❌ এই নামে কোনো মুভি পাওয়া যায়নি!", parse_mode="HTML")
+    await state.update_data(title=m.text.strip())
+    await state.set_state(AdminStates.waiting_for_aq_file)
+    await m.answer("✅ মুভি পাওয়া গেছে! এবার <b>ভিডিও/ডকুমেন্ট ফাইল</b> পাঠান।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_aq_file, F.content_type.in_({'video', 'document'}))
+async def aq_receive_file(m: types.Message, state: FSMContext):
+    fid = m.video.file_id if m.video else m.document.file_id
+    await state.update_data(file_id=fid)
+    await state.set_state(AdminStates.waiting_for_aq_quality)
+    await m.answer("✅ এবার এই ফাইলের <b>কোয়ালিটি</b> লিখুন (যেমন: 1080p, 720p):", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_aq_quality, F.text)
+async def aq_receive_quality(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    quality = m.text.strip()
+    await db.movies.update_one(
+        {"title": data["title"]},
+        {"$set": {f"files.{quality}": data["file_id"]}}
+    )
+    await state.clear()
+    await m.answer(f"✅ <b>{data['title']}</b> এ {quality} কোয়ালিটি যোগ হয়েছে!\n\n⚠️ এটি শুধু আপডেট, তাই আর ব্রডকাস্ট হবে না।", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
@@ -690,10 +748,17 @@ async def admin_movies(auth: bool = Depends(verify_admin)):
     return movies
 
 @app.delete("/api/admin/movie/{movie_id}")
+    
 async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
     if result.deleted_count == 1: return {"ok": True}
     raise HTTPException(status_code=404, detail="Movie not found")
+   
+@app.get("/api/trending")
+async def get_trending_movies():
+    trending = await db.movies.find().sort("weekly_clicks", -1).limit(10).to_list(10)
+    for m in trending: m["_id"] = str(m["_id"])
+    return trending
 
 # ==========================================
 # 9. Main Web App UI
@@ -1013,11 +1078,8 @@ async def web_ui():
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(1); loadFavorites();
         </script>
-    </body></html>'''
-    html_code = html_code.replace("__DL_JSON__", dl_json)
-    html_code = html_code.replace("__ADL_JSON__", adl_json) 
-    return html_code
-
+    </body></html>
+    
 # ==========================================
 # 10. Main Web App APIs
 # ==========================================
