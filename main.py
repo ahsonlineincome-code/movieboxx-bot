@@ -758,7 +758,7 @@ async def get_all_movies():
     return movies
 
 # ==========================================
-# 9. Main Web App UI (YouTube Style)
+# 9. Main Web App UI (1 Movie Per Row & Trending Fixed)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -787,6 +787,8 @@ async def web_ui():
             .logo { display: flex; align-items: center; font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
             .page-section { display: none; padding-bottom: 80px; }
             .page-section.active { display: block; }
+            
+            /* Trending Slider */
             .trending-container { padding: 15px 15px 5px 15px; }
             .trending-title { font-size: 16px; font-weight: 800; margin-bottom: 10px; color: #fbbf24; display: flex; align-items: center; gap: 8px; }
             .trending-slider { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: 10px; -ms-overflow-style: none; scrollbar-width: none; }
@@ -796,22 +798,28 @@ async def web_ui():
             .trending-info { padding: 8px; position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,0.95)); padding: 20px 8px 8px; }
             .trending-info h4 { margin: 0; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .trending-badge { background: #ef4444; padding: 4px 8px; border-radius: 6px; font-size: 10px; font-weight: 700; position: absolute; top: 8px; left: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+
+            /* Categories */
             .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
             .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
-            .movie-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 0 15px; }
-            .movie-card { display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
+            
+            /* Movie List - 1 Item Per Row (YouTube Style) */
+            .movie-list { display: flex; flex-direction: column; gap: 12px; padding: 0 15px; }
+            .movie-card { display: flex; flex-direction: row; background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
             body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
             .movie-card:active { transform: scale(0.98); }
-            .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
-            .movie-info { padding: 8px; display: flex; flex-direction: column; justify-content: center; flex: 1; }
-            .movie-title { font-size: 13px; font-weight: 700; margin-bottom: 3px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .movie-meta { font-size: 11px; color: #94a3b8; margin-bottom: 5px; display: flex; gap: 8px; }
-            .movie-cats { display: flex; flex-wrap: wrap; gap: 3px; }
+            .movie-card img { width: 140px; aspect-ratio: 16/9; object-fit: cover; flex-shrink: 0; } /* বাম পাশে থাম্বনেইল */
+            .movie-info { padding: 10px; display: flex; flex-direction: column; justify-content: center; flex: 1; overflow: hidden; }
+            .movie-title { font-size: 14px; font-weight: 700; margin-bottom: 4px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .movie-meta { font-size: 11px; color: #94a3b8; margin-bottom: 6px; display: flex; gap: 8px; }
+            .movie-cats { display: flex; flex-wrap: wrap; gap: 4px; }
             .movie-cat-tag { background: rgba(239,68,68,0.2); color: #ef4444; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 700; }
             .fav-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); border: none; width: 28px; height: 28px; border-radius: 50%; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
-            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; aspect-ratio: 16/9; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 30px; z-index: 5; }
+            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 140px; aspect-ratio: 16/9; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 24px; z-index: 5; }
+
+            /* Modals & Buttons */
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             body.oled-mode .modal-content { background: #000000; }
@@ -842,12 +850,16 @@ async def web_ui():
         <div id="tabHome" class="page-section active">
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             
+            <!-- ১. ক্যাটাগরি বাটন উপরে -->
+            <div class="cat-row" id="catRow"></div>
+            
+            <!-- ২. ট্রেন্ডিং স্লাইডার ক্যাটাগরির নিচে -->
             <div class="trending-container" id="trendingContainer" style="display:none;">
                 <div class="trending-title"><i class="fa-solid fa-fire"></i> Trending Now</div>
                 <div class="trending-slider" id="trendingSlider"></div>
             </div>
 
-            <div class="cat-row" id="catRow"></div>
+            <!-- ৩. মুভি লিস্ট (একটার নিচে আরেকটা) -->
             <div class="movie-list" id="movieList"></div>
         </div>
 
@@ -917,7 +929,7 @@ async def web_ui():
                 }
 
                 if(filtered.length === 0) {
-                    list.innerHTML = '<div style="text-align:center; color:#64748b; grid-column: 1/-1; padding:40px;">কোনো মুভি পাওয়া যায়নি</div>';
+                    list.innerHTML = '<div style="text-align:center; color:#64748b; padding:40px;">কোনো মুভি পাওয়া যায়নি</div>';
                     return;
                 }
 
@@ -926,7 +938,7 @@ async def web_ui():
                     return `
                     <div class="movie-card" onclick="openModal('${m._id}')">
                         ${isAdult ? '<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>' : ''}
-                        <img src="${m.photo_id}">
+                        <img src="${m.photo_url || m.photo_id}">
                         <button class="fav-btn" onclick="event.stopPropagation(); toggleFav(this)"><i class="fa-regular fa-heart"></i></button>
                         <div class="movie-info">
                             <div class="movie-title">${m.title}</div>
@@ -947,7 +959,7 @@ async def web_ui():
                         slider.innerHTML = trending.map(m => `
                             <div class="trending-card" onclick="openModal('${m._id}')">
                                 <div class="trending-badge"><i class="fa-solid fa-fire"></i> TOP</div>
-                                <img src="${m.photo_id}" alt="${m.title}">
+                                <img src="${m.photo_url || m.photo_id}" alt="${m.title}">
                                 <div class="trending-info">
                                     <h4>${m.title} (${m.year || 'N/A'})</h4>
                                 </div>
@@ -973,7 +985,7 @@ async def web_ui():
             function openModal(id) {
                 const m = allMovies.find(x => x._id === id);
                 if(!m) return;
-                document.getElementById('detailImg').src = m.photo_id;
+                document.getElementById('detailImg').src = m.photo_url || m.photo_id;
                 document.getElementById('detailTitle').innerText = m.title;
                 document.getElementById('detailMeta').innerHTML = `Year: ${m.year || 'N/A'} | Category: ${(m.categories||[]).join(', ')}`;
                 
