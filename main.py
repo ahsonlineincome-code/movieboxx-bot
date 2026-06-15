@@ -88,6 +88,11 @@ class AdminStates(StatesGroup):
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
+    
+    # নতুন যোগ করা স্টেটগুলো (/addfile এর জন্য)
+    waiting_for_addfile_title = State()
+    waiting_for_addfile_file = State()
+    waiting_for_addfile_quality = State()
 
 # ==========================================
 # 3. Database Initialization & Caching
@@ -375,6 +380,67 @@ async def del_movie_cmd(m: types.Message):
         else: await m.answer("⚠️ পাওয়া যায়নি")
     except: await m.answer("⚠️ /delmovie মুভির নাম", parse_mode="HTML")
 
+@dp.message(Command("addfile"))
+async def addfile_start(m: types.Message, state: FSMContext):
+    if m.from_user.id not in admin_cache: return
+    await state.set_state(AdminStates.waiting_for_addfile_title)
+    await m.answer("📝 যে মুভিতে নতুন কোয়ালিটি যোগ করতে চান তার <b>সঠিক নাম (Title)</b> লিখুন:\n\n⚠️ নামটি ডেটাবেসের সাথে হুবহু মিলতে হবে।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_addfile_title, F.text)
+async def addfile_title_received(m: types.Message, state: FSMContext):
+    title = m.text.strip()
+    # চেক করছি মুভিটি ডেটাবেসে আছে কিনা
+    movie = await db.movies.find_one({"title": {"$regex": f"^{title}$", "$options": "i"}})
+    if not movie:
+        await state.clear()
+        return await m.answer("❌ এই নামে কোনো মুভি পাওয়া যায়নি! আবার চেষ্টা করুন।", parse_mode="HTML")
+    
+    await state.update_data(movie_id=movie["_id"], movie_title=movie["title"])
+    await state.set_state(AdminStates.waiting_for_addfile_file)
+    await m.answer("✅ মুভি পাওয়া গেছে! এখন নতুন <b>ফাইল (ভিডিও/ডকুমেন্ট)</b> পাঠান।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_addfile_file, F.content_type.in_({'video', 'document'}))
+async def addfile_file_received(m: types.Message, state: FSMContext):
+    fid = m.video.file_id if m.video else m.document.file_id
+    ftype = "video" if m.video else "document"
+    await state.update_data(file_id=fid, file_type=ftype)
+    await state.set_state(AdminStates.waiting_for_addfile_quality)
+    await m.answer("✅ ফাইল পেয়েছি! এখন এই ফাইলের <b>কোয়ালিটি (যেমন: 1080p, 420p)</b> লিখুন।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_addfile_quality, F.text)
+async def addfile_quality_received(m: types.Message, state: FSMContext):
+    data = await state.get_data()
+    movie_id = data["movie_id"]
+    new_quality = m.text.strip()
+    
+    new_file_obj = {
+        "quality": new_quality,
+        "file_id": data["file_id"],
+        "file_type": data["file_type"]
+    }
+    
+    # ডেটাবেসের মুভিতে files অ্যারেতে নতুন ফাইল পুশ করা হচ্ছে
+    await db.movies.update_one(
+        {"_id": movie_id},
+        {"$push": {"files": new_file_obj}}
+    )
+    
+    await state.clear()
+    await m.answer(f"✅ <b>{data['movie_title']}</b> মুভিতে নতুন কোয়ালিটি (<b>{new_quality}</b>) সফলভাবে যোগ হয়েছে!\n\n🚫 কোনো ব্রডকাস্ট যায়নি।", parse_mode="HTML")
+
+# ভুল ইনপুট হ্যান্ডলিং (Fallback)
+@dp.message(AdminStates.waiting_for_addfile_title)
+async def fallback_addfile_title(m: types.Message):
+    await m.answer("⚠️ দয়া করে মুভির <b>নাম (টেক্সট)</b> লিখুন অথবা /cancel লিখুন।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_addfile_file)
+async def fallback_addfile_file(m: types.Message):
+    await m.answer("⚠️ দয়া করে <b>ভিডিও বা ডকুমেন্ট</b> ফাইল পাঠান। অথবা /cancel লিখুন।", parse_mode="HTML")
+
+@dp.message(AdminStates.waiting_for_addfile_quality)
+async def fallback_addfile_quality(m: types.Message):
+    await m.answer("⚠️ দয়া করে <b>কোয়ালিটি (টেক্সট)</b> লিখুন (যেমন: 720p)। অথবা /cancel লিখুন।", parse_mode="HTML")
+
 @dp.message(Command("addvip"))
 async def add_vip_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
@@ -502,15 +568,30 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
-    await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     
-    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
+    # নতুন স্ট্রাকচার: files এর মধ্যে ফাইল এবং কোয়ালিটি রাখা হচ্ছে
+    initial_file = {
+        "quality": data["quality"], 
+        "file_id": data["file_id"], 
+        "file_type": data["file_type"]
+    }
+    
+    await db.movies.insert_one({
+        "title": data["title"], 
+        "photo_id": data["photo_id"], 
+        "year": data.get("year", "N/A"), 
+        "categories": selected_cats, 
+        "files": [initial_file],  # এখানে অ্যারে হিসেবে সেভ হবে
+        "clicks": 0, 
+        "created_at": datetime.datetime.utcnow()
+    })
+    
+    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যোগ হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
     
     if LOG_CHANNEL_ID:
         try:
             log_kb = [
                 [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
-                [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
                 [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
                 [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
             ]
@@ -519,7 +600,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    # সরাসরি রান না করে কিউতে পাঠানো হচ্ছে
+    # ব্রডকাস্ট কিউতে পাঠানো হচ্ছে (শুধুমাত্র নতুন মুভি আপলোডের সময়ই হবে)
     await broadcast_queue.put({"data": data, "selected_cats": selected_cats, "admin_id": c.from_user.id})
     await c.answer()
 
