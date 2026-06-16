@@ -89,7 +89,6 @@ class AdminStates(StatesGroup):
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
     
-    # Add Quality States
     waiting_for_addq_title = State()
     waiting_for_addq_file = State()
     waiting_for_addq_quality = State()
@@ -148,7 +147,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return True
 
 # ==========================================
-# 5. Background Tasks (Optimized for Render)
+# 5. Background Tasks
 # ==========================================
 async def auto_delete_worker():
     while True:
@@ -427,9 +426,6 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
-# ==========================================
-# 7.5 Add Quality to Existing Movie (NEW)
-# ==========================================
 @dp.message(Command("addquality"))
 async def add_quality_start(m: types.Message, state: FSMContext):
     if m.from_user.id not in admin_cache: return
@@ -467,9 +463,6 @@ async def addq_quality(m: types.Message, state: FSMContext):
     await state.clear()
     await m.answer(f"✅ <b>{data['movie_title']}</b> এর নতুন কোয়ালিটি <b>{m.text.strip()}</b> যোগ করা হয়েছে!\n\n(কোনো ব্রডকাস্ট পাঠানো হয়নি।)", parse_mode="HTML")
 
-# ==========================================
-# 7.6 Single Movie Upload
-# ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -682,7 +675,7 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. APIs for Web App File Serving (Optimized with Caching)
+# 8. APIs for Web App File Serving
 # ==========================================
 @app.get("/api/poster/{file_id:path}")
 async def get_poster(file_id: str):
@@ -713,7 +706,13 @@ async def get_file(file_id: str):
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    html_code = '''
+    admin_btn_html = f'''
+    <div class="btn-group">
+        <a href="https://t.me/{BOT_USERNAME}?start=addmovie" target="_blank" class="admin-btn btn-add-new"><i class="fa-solid fa-plus"></i> Add New Movie</a>
+        <a href="https://t.me/{BOT_USERNAME}?start=addquality" target="_blank" class="admin-btn btn-add-quality"><i class="fa-solid fa-layer-group"></i> Add Quality</a>
+    </div>
+    '''
+    html_code = f'''
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -722,34 +721,29 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <title>Admin Panel - Movie Box</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }
-            .header { text-align: center; margin-bottom: 30px; color: #fff; }
-            .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
-            .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-            .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-            .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
-            .btn-group { display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
-            .admin-btn { padding: 15px 25px; border-radius: 12px; font-weight: 800; border: none; color: white; text-decoration: none; font-size: 16px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: 0.2s; }
-            .admin-btn:hover { transform: translateY(-2px); }
-            .btn-add-new { background: linear-gradient(45deg, #10b981, #059669); }
-            .btn-add-quality { background: linear-gradient(45deg, #3b82f6, #2563eb); }
-            .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
-            .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-            .table-header h2 { margin: 0; color: #fff; font-size: 20px; }
-            table { width: 100%; border-collapse: collapse; min-width: 600px; } th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; } td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; } tr:last-child td { border-bottom: none; } tr:hover { background: rgba(255,255,255,0.03); }
-            .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
-            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; } .delete-btn:hover { background: #ef4444; color: white; }
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }}
+            .header {{ text-align: center; margin-bottom: 30px; color: #fff; }}
+            .header h1 {{ margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }}
+            .stat-card {{ background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+            .stat-card h3 {{ margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }}
+            .stat-card .value {{ font-size: 32px; font-weight: 800; color: #fff; }}
+            .btn-group {{ display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }}
+            .admin-btn {{ padding: 15px 25px; border-radius: 12px; font-weight: 800; border: none; color: white; text-decoration: none; font-size: 16px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: 0.2s; }}
+            .admin-btn:hover {{ transform: translateY(-2px); }}
+            .btn-add-new {{ background: linear-gradient(45deg, #10b981, #059669); }}
+            .btn-add-quality {{ background: linear-gradient(45deg, #3b82f6, #2563eb); }}
+            .table-container {{ background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }}
+            .table-header {{ padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }}
+            .table-header h2 {{ margin: 0; color: #fff; font-size: 20px; }}
+            table {{ width: 100%; border-collapse: collapse; min-width: 600px; }} th {{ text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; }} td {{ padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; }} tr:last-child td {{ border-bottom: none; }} tr:hover {{ background: rgba(255,255,255,0.03); }}
+            .view-badge {{ background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }}
+            .delete-btn {{ background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }} .delete-btn:hover {{ background: #ef4444; color: white; }}
         </style>
     </head>
     <body>
         <div class="header"><h1><i class="fa-solid fa-shield-halved"></i> Admin Panel</h1><p>Movie Box Control Center</p></div>
-        
-        <div class="btn-group">
-            <a href="https://t.me/BOT_USERNAME?start=addmovie" target="_blank" class="admin-btn btn-add-new"><i class="fa-solid fa-plus"></i> Add New Movie</a>
-            <a href="https://t.me/BOT_USERNAME?start=addquality" target="_blank" class="admin-btn btn-add-quality"><i class="fa-solid fa-layer-group"></i> Add Quality</a>
-        </div>
-        
+        {admin_btn_html}
         <div class="stats-grid">
             <div class="stat-card"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users" style="color:#3b82f6"></i> <span id="totalUsers">0</span></div></div>
             <div class="stat-card"><h3>Today Users</h3><div class="value"><i class="fa-solid fa-user-plus" style="color:#10b981"></i> <span id="todayUsers">0</span></div></div>
@@ -759,12 +753,12 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Poster</th><th>Title</th><th>Qualities</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" style="text-align:center; padding:40px;">Loading data...</td></tr></tbody></table></div>
         
         <script>
-            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; } catch(e) {} }
-            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><img src="/api/poster/${m.photo_id}" style="width: 80px; height: 45px; object-fit: cover; border-radius: 6px;"></td><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${(m.qualities || []).map(q => '<span class="view-badge">' + q.label + '</span>').join(' ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
-            async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
+            async function fetchStats() {{ try {{ const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; }} catch(e) {{}} }}
+            async function fetchMovies() {{ try {{ const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) {{ tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">No movies yet.</td></tr>'; return; }} tbody.innerHTML = movies.map(m => `<tr id="row-${{m._id}}"><td><img src="/api/poster/${{m.photo_id}}" style="width: 80px; height: 45px; object-fit: cover; border-radius: 6px;"></td><td><strong>${{m.title}}</strong><br><small>${{m.year || 'N/A'}}</small></td><td>${{(m.qualities || []).map(q => '<span class="view-badge">' + q.label + '</span>').join(' ')}}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${{m.clicks || 0}}</span></td><td><button class="delete-btn" onclick="deleteMovie('${{m._id}}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); }} catch(e) {{}} }}
+            async function deleteMovie(id) {{ if(!confirm("Delete this file?")) return; try {{ const res = await fetch(`/api/admin/movie/${{id}}`, {{ method: 'DELETE' }}); const data = await res.json(); if(data.ok) {{ document.getElementById(`row-${{id}}`).remove(); fetchStats(); }} }} catch(e) {{}} }}
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
-    </body></html>'''.replace("BOT_USERNAME", BOT_USERNAME)
+    </body></html>'''
     return HTMLResponse(html_code)
 
 @app.get("/api/admin/stats")
@@ -841,7 +835,6 @@ async def web_ui():
             .cat-chip {{ background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }}
             .cat-chip.active {{ background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }}
             
-            /* Trending Carousel */
             .trending-section {{ margin: 0 0 15px 0; }}
             .trending-title {{ padding: 0 15px 10px; color: #ef4444; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }}
             .carousel-container {{ position: relative; overflow: hidden; border-radius: 12px; margin: 0 15px; }}
@@ -855,7 +848,6 @@ async def web_ui():
             .carousel-dot {{ width: 8px; height: 8px; border-radius: 50%; background: #334155; cursor: pointer; transition: 0.3s; }}
             .carousel-dot.active {{ background: #ef4444; width: 20px; border-radius: 4px; }}
 
-            /* Movie Grid 16:9 */
             .movie-list {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 0 15px; }}
             .movie-card {{ display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }}
             .movie-card:active {{ transform: scale(0.98); }}
@@ -871,7 +863,6 @@ async def web_ui():
             .nav-item i {{ font-size: 20px; margin-bottom: 3px; }}
             .nav-item.active {{ color: #ef4444; }}
             
-            /* Modal & Ads */
             .modal {{ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }}
             .modal-content {{ background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }}
             .detail-img {{ width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }}
@@ -900,15 +891,11 @@ async def web_ui():
 
         <div id="tabHome" class="page-section active">
             <div class="cat-row" id="catRow"></div>
-            
             <div id="trendingSection" class="trending-section" style="display:none;">
                 <div class="trending-title"><i class="fa-solid fa-fire"></i> Trending Now</div>
-                <div class="carousel-container">
-                    <div class="carousel-track" id="trendingTrack"></div>
-                </div>
+                <div class="carousel-container"><div class="carousel-track" id="trendingTrack"></div></div>
                 <div class="carousel-dots" id="trendingDots"></div>
             </div>
-            
             <div class="movie-list" id="movieList"></div>
             <div class="pagination-container" id="pagination"></div>
         </div>
