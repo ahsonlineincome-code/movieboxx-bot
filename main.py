@@ -46,7 +46,7 @@ OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
-BOT_USERNAME = "bdlatestmovie_bot" 
+BOT_USERNAME = os.getenv("BOT_USERNAME", "bdlatestmovie_bot") 
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
 
@@ -68,6 +68,7 @@ db = client['movie_database']
 
 admin_cache = set([OWNER_ID]) 
 banned_cache = set() 
+file_path_cache = {} # 🚀 Caching system to save Render GB and API calls
 
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
@@ -116,7 +117,6 @@ async def init_db():
     await db.users.create_index("joined_at")
     await db.payments.create_index("trx_id", unique=True)
 
-# Migration Script to support new structure without breaking old data
 async def migrate_old_movies():
     async for m in db.movies.find({"qualities": {"$exists": False}}):
         if m.get("file_id"):
@@ -148,7 +148,7 @@ def verify_admin(credentials: HTTPBasicCredentials = Depends(security)):
     return True
 
 # ==========================================
-# 5. Background Tasks
+# 5. Background Tasks (Optimized for Render)
 # ==========================================
 async def auto_delete_worker():
     while True:
@@ -171,7 +171,7 @@ async def auto_lock_worker():
             expire_time = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
             result = await db.user_unlocks.delete_many({"unlocked_at": {"$lte": expire_time}})
             if result.deleted_count > 0:
-                print(f"🔒 Auto-locked {result.deleted_count} movies (24 hrs expired).")
+                print(f"🔒 Auto-locked {result.deleted_count} movies.")
         except Exception as e:
             print(f"Auto-lock worker error: {e}")
         await asyncio.sleep(3600)
@@ -191,7 +191,7 @@ async def on_startup():
     await init_db()
     await load_admins()
     await load_banned_users()
-    await migrate_old_movies() # Migrate old DB structure
+    await migrate_old_movies()
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
@@ -465,7 +465,6 @@ async def addq_quality(m: types.Message, state: FSMContext):
         {"$push": {"qualities": new_q}}
     )
     await state.clear()
-    # Broadcast is NOT called here
     await m.answer(f"✅ <b>{data['movie_title']}</b> এর নতুন কোয়ালিটি <b>{m.text.strip()}</b> যোগ করা হয়েছে!\n\n(কোনো ব্রডকাস্ট পাঠানো হয়নি।)", parse_mode="HTML")
 
 # ==========================================
@@ -491,7 +490,7 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
-    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
@@ -501,7 +500,7 @@ async def receive_movie_title(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_title)
 async def fallback_title(m: types.Message):
-    await m.answer("⚠️ দয়া করে <b>মুভির নাম (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ দয়া করে <b>মুভির নাম (টেক্সট)</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_quality, F.text)
 async def receive_movie_quality(m: types.Message, state: FSMContext):
@@ -511,7 +510,7 @@ async def receive_movie_quality(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_quality)
 async def fallback_quality(m: types.Message):
-    await m.answer("⚠️ দয়া করে <b>কোয়ালিটি (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ দয়া করে <b>কোয়ালিটি (টেক্সট)</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_year, F.text)
 async def receive_movie_year(m: types.Message, state: FSMContext):
@@ -527,7 +526,7 @@ async def receive_movie_year(m: types.Message, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_year)
 async def fallback_year(m: types.Message):
-    await m.answer("⚠️ দয়া করে <b>রিলিজ সাল (টেক্সট)</b> লিখুন। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ দয়া করে <b>রিলিজ সাল (টেক্সট)</b> লিখুন।", parse_mode="HTML")
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
@@ -683,22 +682,28 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
-# 8. APIs for Web App File Serving
+# 8. APIs for Web App File Serving (Optimized with Caching)
 # ==========================================
 @app.get("/api/poster/{file_id:path}")
 async def get_poster(file_id: str):
+    if file_id in file_path_cache:
+        return RedirectResponse(f"https://api.telegram.org/file/bot{TOKEN}/{file_path_cache[file_id]}")
     try:
         file_info = await bot.get_file(file_id)
         file_path = file_info.file_path
+        file_path_cache[file_id] = file_path
         return RedirectResponse(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
     except:
         return RedirectResponse("https://via.placeholder.com/320x180?text=No+Poster")
 
 @app.get("/api/file/{file_id:path}")
 async def get_file(file_id: str):
+    if file_id in file_path_cache:
+        return RedirectResponse(f"https://api.telegram.org/file/bot{TOKEN}/{file_path_cache[file_id]}")
     try:
         file_info = await bot.get_file(file_id)
         file_path = file_info.file_path
+        file_path_cache[file_id] = file_path
         return RedirectResponse(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}")
     except:
         raise HTTPException(status_code=404, detail="File not found")
@@ -724,8 +729,6 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
             .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
             .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
-            .stat-card.users .value i { color: #3b82f6; } .stat-card.today-users .value i { color: #10b981; } .stat-card.clicks .value i { color: #f59e0b; } .stat-card.today-clicks .value i { color: #ef4444; }
-            .stat-card.live-users { border-color: #10b981; } .stat-card.live-users .value { color: #10b981; }
             .btn-group { display: flex; gap: 15px; margin-bottom: 30px; flex-wrap: wrap; }
             .admin-btn { padding: 15px 25px; border-radius: 12px; font-weight: 800; border: none; color: white; text-decoration: none; font-size: 16px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.2); transition: 0.2s; }
             .admin-btn:hover { transform: translateY(-2px); }
@@ -748,17 +751,16 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         </div>
         
         <div class="stats-grid">
-            <div class="stat-card users"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users"></i> <span id="totalUsers">0</span></div></div>
-            <div class="stat-card today-users"><h3>Today's New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
-            <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
-            <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
-            <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
+            <div class="stat-card"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users" style="color:#3b82f6"></i> <span id="totalUsers">0</span></div></div>
+            <div class="stat-card"><h3>Today Users</h3><div class="value"><i class="fa-solid fa-user-plus" style="color:#10b981"></i> <span id="todayUsers">0</span></div></div>
+            <div class="stat-card"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye" style="color:#f59e0b"></i> <span id="totalClicks">0</span></div></div>
+            <div class="stat-card"><h3>Today Clicks</h3><div class="value"><i class="fa-solid fa-chart-line" style="color:#ef4444"></i> <span id="todayClicks">0</span></div></div>
         </div>
-        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Poster</th><th>Title</th><th>Qualities</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Poster</th><th>Title</th><th>Qualities</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" style="text-align:center; padding:40px;">Loading data...</td></tr></tbody></table></div>
         
         <script>
-            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
-            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><img src="/api/poster/${m.photo_id}" style="width: 80px; height: 45px; object-fit: cover; border-radius: 6px;"></td><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${(m.qualities || []).map(q => '<span class="view-badge">' + q.label + '</span>').join(' ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
+            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; } catch(e) {} }
+            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><img src="/api/poster/${m.photo_id}" style="width: 80px; height: 45px; object-fit: cover; border-radius: 6px;"></td><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${(m.qualities || []).map(q => '<span class="view-badge">' + q.label + '</span>').join(' ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
             async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
@@ -769,17 +771,16 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
 async def admin_stats(auth: bool = Depends(verify_admin)):
     now = datetime.datetime.utcnow(); today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total_users = await db.users.count_documents({}); today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    five_mins_ago = now - datetime.timedelta(minutes=5); active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
     total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1); total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
-    return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
+    return {"total_users": total_users, "today_users": today_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
 
 @app.get("/api/admin/movies")
 async def admin_movies(auth: bool = Depends(verify_admin)):
     movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
     for m in movies: 
         m["_id"] = str(m["_id"])
-        if "qualities" not in m: # Fallback
+        if "qualities" not in m: 
             m["qualities"] = [{"label": m.get("quality", "Main"), "file_id": m.get("file_id"), "file_type": m.get("file_type", "video")}]
     return movies
 
@@ -802,12 +803,21 @@ async def get_trending():
             m["qualities"] = [{"label": m.get("quality", "Main"), "file_id": m.get("file_id"), "file_type": m.get("file_type", "video")}]
     return movies
 
+@app.get("/api/movies")
+async def api_movies():
+    movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
+    for m in movies:
+        m["_id"] = str(m["_id"])
+        if "qualities" not in m: 
+            m["qualities"] = [{"label": m.get("quality", "Main"), "file_id": m.get("file_id"), "file_type": m.get("file_type", "video")}]
+    return movies
+
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
     dl_cfg = await db.settings.find_one({"id": "direct_links"}); direct_links = dl_cfg.get('links', []) if dl_cfg else []; dl_json = json.dumps(direct_links)
     adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); adult_direct_links = adl_cfg.get('links', []) if adl_cfg else []; adl_json = json.dumps(adult_direct_links)
 
-    html_code = '''
+    html_code = f'''
     <!DOCTYPE html>
     <html lang="bn">
     <head>
@@ -817,90 +827,75 @@ async def web_ui():
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; } 
-            body.oled-mode { background: #000000; }
-            #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }
-            #welcomeScreen.hide { opacity: 0; visibility: hidden; }
-            .ws-brand { font-size: 48px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: pulse 1.5s infinite; }
-            .ws-bn { font-size: 18px; color: #94a3b8; margin-top: 10px; opacity: 0; animation: fadeUp 1s 0.5s forwards; }
-            @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-            @keyframes fadeUp { to { opacity: 1; transform: translateY(-10px); } }
-            header { display: flex; justify-content: center; align-items: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); z-index: 1000; cursor: pointer; }
-            body.oled-mode header { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
-            .logo { display: flex; align-items: center; font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-            .page-section { display: none; padding-bottom: 80px; }
-            .page-section.active { display: block; }
-            .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
-            .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
-            .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ background: #0f172a; font-family: 'Inter', system-ui, sans-serif; color: #fff; overscroll-behavior-y: none; }} 
+            #welcomeScreen {{ position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }}
+            #welcomeScreen.hide {{ opacity: 0; visibility: hidden; }}
+            .ws-brand {{ font-size: 48px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: pulse 1.5s infinite; }}
+            @keyframes pulse {{ 0% {{ transform: scale(1); }} 50% {{ transform: scale(1.05); }} 100% {{ transform: scale(1); }} }}
+            header {{ display: flex; justify-content: center; padding: 15px; border-bottom: 1px solid #1e293b; position: sticky; top: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); z-index: 1000; cursor: pointer; }}
+            .logo {{ font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+            .page-section {{ display: none; padding-bottom: 80px; }}
+            .page-section.active {{ display: block; }}
+            .cat-row {{ display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }}
+            .cat-chip {{ background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }}
+            .cat-chip.active {{ background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }}
             
             /* Trending Carousel */
-            .trending-section { margin: 0 0 15px 0; }
-            .trending-title { padding: 0 15px 10px; color: #ef4444; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
-            .carousel-container { position: relative; overflow: hidden; border-radius: 12px; margin: 0 15px; }
-            .carousel-track { display: flex; transition: transform 0.5s ease-in-out; }
-            .carousel-slide { min-width: 100%; box-sizing: border-box; position: relative; cursor: pointer; }
-            .carousel-slide img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; border-radius: 12px; }
-            .carousel-caption { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,0.9)); padding: 30px 15px 15px; border-radius: 0 0 12px 12px; }
-            .carousel-caption h3 { font-size: 18px; margin-bottom: 5px; }
-            .carousel-caption p { font-size: 12px; color: #94a3b8; }
-            .carousel-dots { display: flex; justify-content: center; gap: 6px; margin-top: 10px; }
-            .carousel-dot { width: 8px; height: 8px; border-radius: 50%; background: #334155; cursor: pointer; transition: 0.3s; }
-            .carousel-dot.active { background: #ef4444; width: 20px; border-radius: 4px; }
+            .trending-section {{ margin: 0 0 15px 0; }}
+            .trending-title {{ padding: 0 15px 10px; color: #ef4444; font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 8px; }}
+            .carousel-container {{ position: relative; overflow: hidden; border-radius: 12px; margin: 0 15px; }}
+            .carousel-track {{ display: flex; transition: transform 0.5s ease-in-out; }}
+            .carousel-slide {{ min-width: 100%; box-sizing: border-box; position: relative; cursor: pointer; }}
+            .carousel-slide img {{ width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; border-radius: 12px; }}
+            .carousel-caption {{ position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,0.9)); padding: 30px 15px 15px; border-radius: 0 0 12px 12px; }}
+            .carousel-caption h3 {{ font-size: 18px; margin-bottom: 5px; }}
+            .carousel-caption p {{ font-size: 12px; color: #94a3b8; }}
+            .carousel-dots {{ display: flex; justify-content: center; gap: 6px; margin-top: 10px; }}
+            .carousel-dot {{ width: 8px; height: 8px; border-radius: 50%; background: #334155; cursor: pointer; transition: 0.3s; }}
+            .carousel-dot.active {{ background: #ef4444; width: 20px; border-radius: 4px; }}
 
             /* Movie Grid 16:9 */
-            .movie-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 0 15px; }
-            .movie-card { display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
-            body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
-            .movie-card:active { transform: scale(0.98); }
-            .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
-            .movie-info { padding: 10px; display: flex; flex-direction: column; justify-content: center; flex: 1; }
-            .movie-title { font-size: 14px; font-weight: 700; margin-bottom: 5px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-            .movie-meta { font-size: 11px; color: #94a3b8; margin-bottom: 8px; display: flex; gap: 10px; }
-            .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
-            .movie-cat-tag { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 600; color: #cbd5e1; }
-            .fav-btn { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); border: none; width: 28px; height: 28px; border-radius: 50%; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
-            .fav-btn.active { color: #ef4444; }
+            .movie-list {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; padding: 0 15px; }}
+            .movie-card {{ display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }}
+            .movie-card:active {{ transform: scale(0.98); }}
+            .movie-card img {{ width: 100%; aspect-ratio: 16/9; object-fit: cover; }}
+            .movie-info {{ padding: 10px; display: flex; flex-direction: column; justify-content: center; flex: 1; }}
+            .movie-title {{ font-size: 14px; font-weight: 700; margin-bottom: 5px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+            .movie-meta {{ font-size: 11px; color: #94a3b8; margin-bottom: 8px; display: flex; gap: 10px; }}
+            .movie-cats {{ display: flex; flex-wrap: wrap; gap: 5px; }}
+            .movie-cat-tag {{ background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 600; color: #cbd5e1; }}
             
-            .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
-            body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
-            .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
-            .nav-item i { font-size: 20px; margin-bottom: 3px; }
-            .nav-item.active { color: #ef4444; }
+            .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }}
+            .nav-item {{ display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }}
+            .nav-item i {{ font-size: 20px; margin-bottom: 3px; }}
+            .nav-item.active {{ color: #ef4444; }}
             
             /* Modal & Ads */
-            .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
-            .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
-            body.oled-mode .modal-content { background: #000000; }
-            .detail-img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
-            .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
-            .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
-            .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
-            .dl-file-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; color: white; font-weight: 700; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
-            body.oled-mode .dl-file-btn { background: #050505; border-color: #1a1a1a; }
-            .dl-file-btn i { color: #ef4444; font-size: 18px; }
+            .modal {{ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }}
+            .modal-content {{ background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }}
+            .detail-img {{ width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }}
+            .detail-title {{ font-size: 22px; font-weight: 800; margin-bottom: 5px; }}
+            .detail-meta {{ color: #94a3b8; font-size: 14px; margin-bottom: 15px; }}
+            .close-icon {{ position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }}
+            .dl-file-btn {{ display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; color: white; font-weight: 700; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }}
+            .dl-file-btn i {{ color: #ef4444; font-size: 18px; }}
             
-            .ad-box { text-align: center; padding: 20px; }
-            .ad-icon { font-size: 50px; margin-bottom: 10px; color: #fbbf24; }
-            .ad-title { color: #fbbf24; font-size: 18px; font-weight: 800; margin-bottom: 15px; }
-            .ad-action-btn { width: 100%; padding: 15px; border-radius: 8px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
-            .btn-ad-unlock { background: #10b981; color: white; }
-            .btn-ad-tryagain { background: #ef4444; color: white; opacity: 0.6; cursor: not-allowed; }
+            .ad-box {{ text-align: center; padding: 20px; }}
+            .ad-icon {{ font-size: 50px; margin-bottom: 10px; color: #fbbf24; }}
+            .ad-title {{ color: #fbbf24; font-size: 18px; font-weight: 800; margin-bottom: 15px; }}
+            .ad-action-btn {{ width: 100%; padding: 15px; border-radius: 8px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; }}
+            .btn-ad-unlock {{ background: #10b981; color: white; }}
+            .btn-ad-tryagain {{ background: #ef4444; color: white; opacity: 0.6; cursor: not-allowed; }}
             
-            .search-box { padding: 0 15px 15px; }
-            .search-input { width: 100%; padding: 14px; border-radius: 12px; border: none; outline: none; background: #1e293b; color: #fff; font-size: 15px; border: 1px solid #334155; }
-            body.oled-mode .search-input { background: #0a0a0a; border-color: #1a1a1a; }
-            
-            .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }
-            .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }
-            .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; }
-            .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
+            .pagination-container {{ display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }}
+            .page-btn {{ background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }}
+            .page-btn.active {{ background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; }}
+            .page-btn:disabled {{ background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }}
         </style>
     </head>
     <body>
-        <div id="welcomeScreen"><div class="ws-brand">Movie Box</div><div class="ws-bn">মুভি বক্স জগতে স্বাগতম</div></div>
+        <div id="welcomeScreen"><div class="ws-brand">Movie Box</div></div>
         <header onclick="switchTab('home')"><div class="logo">Movie Box</div></header>
 
         <div id="tabHome" class="page-section active">
@@ -946,8 +941,8 @@ async def web_ui():
         </div>
 
         <script>
-            const directLinks = JSON.parse('${dl_json}');
-            const adultDirectLinks = JSON.parse('${adl_json}');
+            const directLinks = JSON.parse('{dl_json}');
+            const adultDirectLinks = JSON.parse('{adl_json}');
             let allMovies = [];
             let filteredMovies = [];
             let currentCat = 'All';
@@ -957,198 +952,179 @@ async def web_ui():
             let adTimer = null;
             let adCountdown = 10;
             let currentDownloadFileId = null;
-            let currentDownloadFileType = null;
             let isAdValid = false;
             
             let trendingSlideIndex = 0;
             let trendingInterval;
 
-            // Init Telegram WebApp
             const tg = window.Telegram && window.Telegram.WebApp;
-            if(tg) { tg.expand(); tg.ready(); }
+            if(tg) {{ tg.expand(); tg.ready(); }}
             setTimeout(() => document.getElementById('welcomeScreen').classList.add('hide'), 1500);
 
-            async function fetchMovies() {
-                try {
+            async function fetchMovies() {{
+                try {{
                     const res = await fetch('/api/movies'); 
                     allMovies = await res.json();
                     filteredMovies = allMovies;
                     renderCategories();
                     renderMovies();
                     fetchTrending();
-                } catch(e) { console.error(e); }
-            }
+                }} catch(e) {{ console.error(e); }}
+            }}
 
-            async function fetchTrending() {
-                try {
+            async function fetchTrending() {{
+                try {{
                     const res = await fetch('/api/trending');
                     const trending = await res.json();
-                    if(trending.length > 0) {
+                    if(trending.length > 0) {{
                         document.getElementById('trendingSection').style.display = 'block';
                         renderTrending(trending);
-                    }
-                } catch(e) {}
-            }
+                    }}
+                }} catch(e) {{}}
+            }}
 
-            function renderTrending(movies) {
+            function renderTrending(movies) {{
                 const track = document.getElementById('trendingTrack');
                 const dots = document.getElementById('trendingDots');
                 track.innerHTML = movies.map(m => `
-                    <div class="carousel-slide" onclick="showMovieDetail('${m._id}')">
-                        <img src="/api/poster/${m.photo_id}" alt="${m.title}">
+                    <div class="carousel-slide" onclick="showMovieDetail('$${m._id}')">
+                        <img src="/api/poster/$${m.photo_id}" alt="$${m.title}">
                         <div class="carousel-caption">
-                            <h3>${m.title}</h3>
-                            <p>${m.year || ''} | ${(m.qualities||[]).map(q=>q.label).join(', ')}</p>
+                            <h3>$${m.title}</h3>
+                            <p>$${m.year || ''} | $${(m.qualities||[]).map(q=>q.label).join(', ')}</p>
                         </div>
                     </div>
                 `).join('');
                 
-                dots.innerHTML = movies.map((_, i) => `<div class="carousel-dot ${i===0?'active':''}" onclick="goToSlide(${i})"></div>`).join('');
+                dots.innerHTML = movies.map((_, i) => `<div class="carousel-dot $${i===0?'active':''}" onclick="goToSlide($${i})"></div>`).join('');
                 
                 clearInterval(trendingInterval);
-                trendingInterval = setInterval(() => {
+                trendingInterval = setInterval(() => {{
                     trendingSlideIndex = (trendingSlideIndex + 1) % movies.length;
                     goToSlide(trendingSlideIndex);
-                }, 3000);
-            }
+                }}, 3000);
+            }}
 
-            function goToSlide(index) {
+            function goToSlide(index) {{
                 trendingSlideIndex = index;
-                document.getElementById('trendingTrack').style.transform = `translateX(-${index * 100}%)`;
+                document.getElementById('trendingTrack').style.transform = `translateX(-$${index * 100}%)`;
                 document.querySelectorAll('.carousel-dot').forEach((d, i) => d.classList.toggle('active', i === index));
-            }
+            }}
 
-            function renderCategories() {
+            function renderCategories() {{
                 const cats = ['All', ...new Set(allMovies.flatMap(m => m.categories || []))];
-                document.getElementById('catRow').innerHTML = cats.map(c => `<div class="cat-chip ${c===currentCat?'active':''}" onclick="filterCat('${c}')">${c}</div>`).join('');
-            }
+                document.getElementById('catRow').innerHTML = cats.map(c => `<div class="cat-chip $${c===currentCat?'active':''}" onclick="filterCat('$${c}')">$${c}</div>`).join('');
+            }}
 
-            function filterCat(cat) {
+            function filterCat(cat) {{
                 currentCat = cat;
                 currentPage = 1;
                 filteredMovies = cat === 'All' ? allMovies : allMovies.filter(m => (m.categories||[]).includes(cat));
                 renderCategories();
                 renderMovies();
-            }
+            }}
 
-            function renderMovies() {
+            function renderMovies() {{
                 const start = (currentPage - 1) * moviesPerPage;
                 const end = start + moviesPerPage;
                 const pageMovies = filteredMovies.slice(start, end);
                 
                 document.getElementById('movieList').innerHTML = pageMovies.map(m => `
-                    <div class="movie-card" onclick="showMovieDetail('${m._id}')">
-                        <img src="/api/poster/${m.photo_id}" alt="${m.title}">
+                    <div class="movie-card" onclick="showMovieDetail('$${m._id}')">
+                        <img src="/api/poster/$${m.photo_id}" alt="$${m.title}">
                         <div class="movie-info">
-                            <div class="movie-title">${m.title}</div>
-                            <div class="movie-meta"><span><i class="fa-solid fa-calendar"></i> ${m.year||'N/A'}</span></div>
-                            <div class="movie-cats">${(m.qualities||[]).map(q=>`<span class="movie-cat-tag">${q.label}</span>`).join('')}</div>
+                            <div class="movie-title">$${m.title}</div>
+                            <div class="movie-meta"><span><i class="fa-solid fa-calendar"></i> $${m.year||'N/A'}</span></div>
+                            <div class="movie-cats">$${(m.qualities||[]).map(q=>`<span class="movie-cat-tag">$${q.label}</span>`).join('')}</div>
                         </div>
                     </div>
                 `).join('');
                 
                 renderPagination();
-            }
+            }}
 
-            function renderPagination() {
+            function renderPagination() {{
                 const totalPages = Math.ceil(filteredMovies.length / moviesPerPage);
-                if(totalPages <= 1) { document.getElementById('pagination').innerHTML = ''; return; }
-                let html = `<button class="page-btn" ${currentPage===1?'disabled':''} onclick="goToPage(${currentPage-1})">Prev</button>`;
-                for(let i=1; i<=totalPages; i++) html += `<button class="page-btn ${i===currentPage?'active':''}" onclick="goToPage(${i})">${i}</button>`;
-                html += `<button class="page-btn" ${currentPage===totalPages?'disabled':''} onclick="goToPage(${currentPage+1})">Next</button>`;
+                if(totalPages <= 1) {{ document.getElementById('pagination').innerHTML = ''; return; }}
+                let html = `<button class="page-btn" $${currentPage===1?'disabled':''} onclick="goToPage($${currentPage-1})">Prev</button>`;
+                for(let i=1; i<=totalPages; i++) html += `<button class="page-btn $${i===currentPage?'active':''}" onclick="goToPage($${i})">$${i}</button>`;
+                html += `<button class="page-btn" $${currentPage===totalPages?'disabled':''} onclick="goToPage($${currentPage+1})">Next</button>`;
                 document.getElementById('pagination').innerHTML = html;
-            }
+            }}
 
-            function goToPage(p) { currentPage = p; renderMovies(); window.scrollTo(0,0); }
+            function goToPage(p) {{ currentPage = p; renderMovies(); window.scrollTo(0,0); }}
 
-            function showMovieDetail(id) {
+            function showMovieDetail(id) {{
                 const m = allMovies.find(x => x._id === id);
                 if(!m) return;
-                document.getElementById('detailImg').src = `/api/poster/${m.photo_id}`;
+                document.getElementById('detailImg').src = `/api/poster/$${m.photo_id}`;
                 document.getElementById('detailTitle').innerText = m.title;
-                document.getElementById('detailMeta').innerText = `Year: ${m.year||'N/A'} | Categories: ${(m.categories||[]).join(', ')}`;
+                document.getElementById('detailMeta').innerText = `Year: $${m.year||'N/A'} | Categories: $${(m.categories||[]).join(', ')}`;
                 
                 const isAdult = (m.categories || []).includes("Adult Content");
                 const qContainer = document.getElementById('detailQualities');
                 qContainer.innerHTML = '';
                 
-                (m.qualities || []).forEach(q => {
+                (m.qualities || []).forEach(q => {{
                     const btn = document.createElement('button');
                     btn.className = 'dl-file-btn';
-                    btn.innerHTML = `<span><i class="fa-solid fa-play"></i> ${q.label}</span> <i class="fa-solid fa-download"></i>`;
-                    btn.onclick = () => showDownloadAd(q.file_id, q.file_type, isAdult);
+                    btn.innerHTML = `<span><i class="fa-solid fa-play"></i> $${q.label}</span> <i class="fa-solid fa-download"></i>`;
+                    btn.onclick = () => showDownloadAd(q.file_id, isAdult);
                     qContainer.appendChild(btn);
-                });
+                }});
                 
                 document.getElementById('movieModal').style.display = 'flex';
-            }
+            }}
 
-            function showDownloadAd(fileId, fileType, isAdult) {
+            function showDownloadAd(fileId, isAdult) {{
                 currentDownloadFileId = fileId;
-                currentDownloadFileType = fileType;
                 isAdValid = false;
                 adCountdown = 10;
                 
                 const adLinks = isAdult ? adultDirectLinks : directLinks;
-                if(adLinks.length > 0) {
+                if(adLinks.length > 0) {{
                     const randomAd = adLinks[Math.floor(Math.random() * adLinks.length)];
                     window.open(randomAd, '_blank');
-                }
+                }}
                 
                 document.getElementById('adModal').style.display = 'flex';
                 const adBtn = document.getElementById('adActionBtn');
                 adBtn.disabled = true;
-                adBtn.innerText = `ডাউনলোড (${adCountdown}s)`;
+                adBtn.innerText = `ডাউনলোড ($${adCountdown}s)`;
                 adBtn.className = 'ad-action-btn btn-ad-tryagain';
                 
                 clearInterval(adTimer);
-                adTimer = setInterval(() => {
+                adTimer = setInterval(() => {{
                     adCountdown--;
-                    if(adCountdown <= 0) {
+                    if(adCountdown <= 0) {{
                         clearInterval(adTimer);
                         isAdValid = true;
                         adBtn.disabled = false;
                         adBtn.innerText = "ডাউনলোড করুন ✅";
                         adBtn.className = 'ad-action-btn btn-ad-unlock';
-                    } else {
-                        adBtn.innerText = `ডাউনলোড (${adCountdown}s)`;
-                    }
-                }, 1000);
-            }
+                    }} else {{
+                        adBtn.innerText = `ডাউনলোড ($${adCountdown}s)`;
+                    }}
+                }}, 1000);
+            }}
 
-            function handleAdAction() {
-                if(!isAdValid) {
+            function handleAdAction() {{
+                if(!isAdValid) {{
                     alert("আপনি এখনও সম্পূর্ণ ১০ সেকেন্ড বিজ্ঞাপন দেখেননি। অনুগ্রহ করে ১০ সেকেন্ড বিজ্ঞাপন দেখার পর Download করুন।");
                     return;
-                }
-                triggerDirectDownload();
+                }}
+                window.open(`/api/file/$${currentDownloadFileId}`, '_blank');
                 closeModal('adModal');
-            }
+            }}
 
-            function triggerDirectDownload() {
-                if(!currentDownloadFileId) return;
-                window.open(`/api/file/${currentDownloadFileId}`, '_blank');
-            }
-
-            function closeModal(id) { document.getElementById(id).style.display = 'none'; }
-
-            function switchTab(tab) {
-                // Simple routing if needed
-            }
+            function closeModal(id) {{ document.getElementById(id).style.display = 'none'; }}
+            function switchTab(tab) {{}}
 
             fetchMovies();
         </script>
     </body></html>'''
     return HTMLResponse(html_code)
 
-@app.get("/api/movies")
-async def api_movies():
-    movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
-    for m in movies:
-        m["_id"] = str(m["_id"])
-        if "qualities" not in m: 
-            m["qualities"] = [{"label": m.get("quality", "Main"), "file_id": m.get("file_id"), "file_type": m.get("file_type", "video")}]
-    return movies
-
+# Render Optimization: Turning off access logs to save I/O and processing power
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)), access_log=False)
