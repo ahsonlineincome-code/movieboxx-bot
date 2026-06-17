@@ -71,6 +71,9 @@ banned_cache = set()
 
 CATEGORIES = ["Bangla", "Bangla Dubbed", "Hindi Dubbed", "Hollywood", "K-Drama", "Anime", "Horror", "Web Series", "Adult Content"]
 
+# কিউ সিস্টেম যোগ করা হলো (একসাথে একাধিক ব্রডকাস্ট রান করে বট যেন হ্যাং না করে)
+broadcast_queue = asyncio.Queue()
+
 # ==========================================
 # 2. FSM States
 # ==========================================
@@ -146,10 +149,50 @@ async def auto_delete_worker():
                 except:
                     pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
-                await asyncio.sleep(0.5) # FIXED: বট ব্যান না হওয়ার জন্য ডিলে যোগ করা হয়েছে
+                await asyncio.sleep(0.5)
         except:
             pass
         await asyncio.sleep(60)
+
+async def auto_lock_worker():
+    while True:
+        try:
+            # ২৪ ঘণ্টা আগের সময় বের করা হচ্ছে
+            expire_time = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            
+            # ডেটাবেস থেকে ২৪ ঘণ্টা আগে আনলক করা মুভিগুলো ডিলিট করা হচ্ছে
+            result = await db.user_unlocks.delete_many({"unlocked_at": {"$lte": expire_time}})
+            
+            # কনসোলে লগ দেখানোর জন্য (প্রয়োজন না হলে রাখতে পারেন)
+            if result.deleted_count > 0:
+                print(f"🔒 Auto-locked {result.deleted_count} movies (24 hrs expired).")
+        except Exception as e:
+            print(f"Auto-lock worker error: {e}")
+            
+        # প্রতি ১ ঘণ্টা পর পর চেক করবে
+        await asyncio.sleep(3600)
+
+# নতুন কিউ ওয়ার্কার (ব্রডকাস্ট একটি একটি করে পাঠাবে)
+async def broadcast_queue_worker():
+    while True:
+        try:
+            # কিউ থেকে ডেটা নিবে (আগের ব্রডকাস্ট শেষ না হলে এখানে অপেক্ষা করবে)
+            task_data = await broadcast_queue.get()
+            await run_movie_broadcast(task_data['data'], task_data['selected_cats'], task_data['admin_id'])
+            broadcast_queue.task_done()
+        except Exception as e:
+            print(f"Queue Worker Error: {e}")
+            await asyncio.sleep(5)
+
+# স্টার্টআপ ইভেন্ট
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    asyncio.create_task(auto_delete_worker())
+    asyncio.create_task(broadcast_queue_worker())
+    asyncio.create_task(auto_lock_worker())
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -449,7 +492,7 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
         prefix = "✅ " if ct in selected_cats else ""
         builder.button(text=f"{prefix}{ct}", callback_data=f"selcat_{i}")
     builder.button(text="✅ Done", callback_data="cats_done")
-    builder.adjust(2)
+    builder.adjust(3) # এখানে 2 থেকে 3 করা হয়েছে
     await c.message.edit_reply_markup(reply_markup=builder.as_markup())
     await c.answer()
 
@@ -460,17 +503,24 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     await state.clear()
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
-    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📢 ব্যাকগ্রাউন্ডে সকল ইউজারকে নোটিফিকেশন পাঠানো হচ্ছে...", parse_mode="HTML")
+    
+    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
     
     if LOG_CHANNEL_ID:
         try:
-            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
+            log_kb = [
+                [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
+                [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
+                [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
+                
+            ]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    asyncio.create_task(run_movie_broadcast(data, selected_cats, c.from_user.id))
+    # সরাসরি রান না করে কিউতে পাঠানো হচ্ছে
+    await broadcast_queue.put({"data": data, "selected_cats": selected_cats, "admin_id": c.from_user.id})
     await c.answer()
 
 async def run_movie_broadcast(data, selected_cats, admin_id):
@@ -479,22 +529,30 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
+    bcast_kb = [
+        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], 
+        [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
+        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)],
+        [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
+        [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")],
+        
+    ]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
+    
     now = datetime.datetime.utcnow()
-    time_cfg = await db.settings.find_one({"id": "del_time"})
-    del_minutes = time_cfg['minutes'] if time_cfg else 60
-    delete_at = now + datetime.timedelta(minutes=del_minutes)
+    # ২৪ ঘণ্টা (১ দিন) পর ডিলিট হবে
+    delete_at = now + datetime.timedelta(days=1) 
     
     async for u in db.users.find():
         try:
             sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
-            await asyncio.sleep(0.3) # FIXED: বট হ্যাং ও ব্যান না হওয়ার জন্য ডিলে বাড়ানো হয়েছে
+            await asyncio.sleep(0.05) # ১ লাখ ইউজারের জন্য স্পিড বাড়ানো হয়েছে
         except TelegramRetryAfter as e:
-            await asyncio.sleep(e.retry_after)
+            # টেলিগ্রাম যদি বল কিছুক্ষন অপেক্ষা করতে, তাহলে অপেক্ষা করবে
+            await asyncio.sleep(e.retry_after + 1)
             try:
                 sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
                 await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
@@ -503,7 +561,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
         except: pass
         
     try:
-        await bot.send_message(admin_id, f"✅ অটো-ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>{del_minutes}</b> মিনিট পর অটো-ডিলিট হবে।", parse_mode="HTML")
+        await bot.send_message(admin_id, f"✅ <b>{data['title']}</b> এর ব্রডকাস্ট শেষ!\n\nসফলভাবে পাঠানো হয়েছে: <b>{bcast_success}</b> জনকে।\n⏳ নোটিফিকেশনগুলো <b>২৪ ঘণ্টা</b> পর অটো-ডিলিট হবে।", parse_mode="HTML")
     except: pass
 
 @dp.message(Command("cast"))
@@ -605,10 +663,39 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
             <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
         </div>
-        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+        <div class="table-container"><div class="table-header">
+    <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
+    <input type="text" id="movieSearchInput" placeholder="🔍 Search movie..." style="padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px;">
+</div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
         <script>
             async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
-            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
+            let allMovies = [];
+async function fetchMovies() { 
+    try { 
+        const res = await fetch('/api/admin/movies'); 
+        allMovies = await res.json(); 
+        renderMovies(allMovies); 
+    } catch(e) {} 
+}
+
+function renderMovies(moviesToRender) {
+    const tbody = document.getElementById('movieTableBody'); 
+    if(moviesToRender.length === 0) { 
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
+        return; 
+    } 
+    tbody.innerHTML = moviesToRender.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); 
+}
+
+document.getElementById('movieSearchInput').addEventListener('input', function(e) {
+    const searchTerm = e.target.value.toLowerCase();
+    const filteredMovies = allMovies.filter(m => 
+        (m.title || '').toLowerCase().includes(searchTerm) || 
+        (m.quality || '').toLowerCase().includes(searchTerm) ||
+        (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
+    );
+    renderMovies(filteredMovies);
+});
             async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
