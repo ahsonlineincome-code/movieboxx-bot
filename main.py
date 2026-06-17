@@ -191,8 +191,16 @@ async def on_startup():
     await load_admins()
     await load_banned_users()
     asyncio.create_task(auto_delete_worker())
+    asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    await load_admins()
+    await load_banned_users()
+    asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
-    asyncio.create_task(auto_lock_worker())
+    asyncio.create_task(auto_lock_worker()) # <--- এই লাইনটি নতুন যোগ করা হয়েছে
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -508,9 +516,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     
     if LOG_CHANNEL_ID:
         try:
-            log_kb = [
+           log_kb = [
                 [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
-                [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
                 [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
                 [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
             ]
