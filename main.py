@@ -191,16 +191,8 @@ async def on_startup():
     await load_admins()
     await load_banned_users()
     asyncio.create_task(auto_delete_worker())
-    asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
-
-@app.on_event("startup")
-async def on_startup():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
-    asyncio.create_task(auto_lock_worker()) # <--- এই লাইনটি নতুন যোগ করা হয়েছে
+    asyncio.create_task(auto_lock_worker())
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -520,6 +512,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
                 [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
                 [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
                 [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
+                
             ]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
@@ -537,11 +530,12 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
     bcast_kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))],
+        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], 
+        [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
         [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)],
         [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
-        [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
-        [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
+        [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")],
+        
     ]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
