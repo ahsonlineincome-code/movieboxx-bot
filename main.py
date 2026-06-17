@@ -1137,7 +1137,8 @@ async def get_image(photo_id: str):
             return StreamingResponse(io.BytesIO(content), media_type=mt, headers={"Cache-Control": "public, max-age=604800"})
     except Exception as e:
         print(f"Image error: {e}")
-    return StreamingResponse(io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg" width="110" height="160"><rect width="110" height="160" fill="#1e293b"/><text x="55" y="80" text-anchor="middle" fill="#64748b" font-size="30">🎬</text></svg>'), media_type="image/svg+xml")
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="160"><rect width="110" height="160" fill="#1e293b"/><text x="55" y="80" text-anchor="middle" fill="#64748b" font-size="30">?</text></svg>'
+    return StreamingResponse(io.BytesIO(svg.encode()), media_type="image/svg+xml")
 
 # ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
