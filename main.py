@@ -184,15 +184,6 @@ async def broadcast_queue_worker():
             print(f"Queue Worker Error: {e}")
             await asyncio.sleep(5)
 
-# স্টার্টআপ ইভেন্ট
-@app.on_event("startup")
-async def on_startup():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    asyncio.create_task(auto_delete_worker())
-    asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
-
 @app.on_event("startup")
 async def on_startup():
     await init_db()
