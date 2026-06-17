@@ -10,7 +10,6 @@ import urllib.parse
 import secrets
 import json
 import math
-import io
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -155,24 +154,6 @@ async def auto_delete_worker():
             pass
         await asyncio.sleep(60)
 
-async def auto_lock_worker():
-    while True:
-        try:
-            # ২৪ ঘণ্টা আগের সময় বের করা হচ্ছে
-            expire_time = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-            
-            # ডেটাবেস থেকে ২৪ ঘণ্টা আগে আনলক করা মুভিগুলো ডিলিট করা হচ্ছে
-            result = await db.user_unlocks.delete_many({"unlocked_at": {"$lte": expire_time}})
-            
-            # কনসোলে লগ দেখানোর জন্য (প্রয়োজন না হলে রাখতে পারেন)
-            if result.deleted_count > 0:
-                print(f"🔒 Auto-locked {result.deleted_count} movies (24 hrs expired).")
-        except Exception as e:
-            print(f"Auto-lock worker error: {e}")
-            
-        # প্রতি ১ ঘণ্টা পর পর চেক করবে
-        await asyncio.sleep(3600)
-
 # নতুন কিউ ওয়ার্কার (ব্রডকাস্ট একটি একটি করে পাঠাবে)
 async def broadcast_queue_worker():
     while True:
@@ -192,8 +173,7 @@ async def on_startup():
     await load_admins()
     await load_banned_users()
     asyncio.create_task(auto_delete_worker())
-    asyncio.create_task(broadcast_queue_worker())
-    asyncio.create_task(auto_lock_worker())
+    asyncio.create_task(broadcast_queue_worker()) # নতুন ওয়ার্কার যোগ করা হয়েছে
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -509,12 +489,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     
     if LOG_CHANNEL_ID:
         try:
-            log_kb = [
-                [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
-                [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
-                [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
-                
-            ]
+            log_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
@@ -530,14 +505,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id):
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
     web_app_url = APP_URL if APP_URL else "https://t.me/" 
-    bcast_kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], 
-        [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
-        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)],
-        [types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)],
-        [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")],
-        
-    ]
+    bcast_kb = [[types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=web_app_url))], [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]]
     bcast_markup = types.InlineKeyboardMarkup(inline_keyboard=bcast_kb)
     bcast_text = f"🆕 <b>New Movie Alert!</b>\n\n🎬 <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n\n👇 এখনই দেখুন!"
     
@@ -664,72 +632,15 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
             <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
         </div>
-        <div class="table-container"><div class="table-header">
-    <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
-    <input type="text" id="movieSearchInput" placeholder="🔍 Search movie..." style="padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px;">
-</div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+        <div class="table-container"><div class="table-header"><h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2></div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
         <script>
             async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
-            let allMovies = [];
-async function fetchMovies() { 
-    try { 
-        const res = await fetch('/api/admin/movies'); 
-        allMovies = await res.json(); 
-        renderMovies(allMovies); 
-    } catch(e) {} 
-}
-
-function renderMovies(moviesToRender) {
-    const tbody = document.getElementById('movieTableBody'); 
-    if(moviesToRender.length === 0) { 
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
-        return; 
-    } 
-    tbody.innerHTML = moviesToRender.map(m => `<tr id="row-${m._id}"><td><div style="display:flex;gap:10px;align-items:center"><img src="/api/image/${m.photo_id}" style="width:45px;height:65px;object-fit:cover;border-radius:6px" onerror="this.style.display='none'"><div><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></div></div></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); 
-}
-
-document.getElementById('movieSearchInput').addEventListener('input', function(e) {
-    const searchTerm = e.target.value.toLowerCase();
-    const filteredMovies = allMovies.filter(m => 
-        (m.title || '').toLowerCase().includes(searchTerm) || 
-        (m.quality || '').toLowerCase().includes(searchTerm) ||
-        (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
-    );
-    renderMovies(filteredMovies);
-});
+            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); const movies = await res.json(); const tbody = document.getElementById('movieTableBody'); if(movies.length === 0) { tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies yet.</td></tr>'; return; } tbody.innerHTML = movies.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); } catch(e) {} }
             async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
     </body></html>'''
     return HTMLResponse(html_code)
-    
-# ==========================================
-# 🖼️ IMAGE PROXY ENDPOINT
-# ==========================================
-@app.get("/api/image/{file_id:path}")
-async def serve_telegram_image(file_id: str):
-    try:
-        file = await bot.get_file(file_id)
-        if file.file_path:
-            content = await bot.download_file(file.file_path)
-            file_path_lower = file.file_path.lower()
-            if file_path_lower.endswith('.png'):
-                media_type = 'image/png'
-            elif file_path_lower.endswith('.webp'):
-                media_type = 'image/webp'
-            elif file_path_lower.endswith('.gif'):
-                media_type = 'image/gif'
-            else:
-                media_type = 'image/jpeg'
-            return StreamingResponse(
-                io.BytesIO(content),
-                media_type=media_type,
-                headers={"Cache-Control": "public, max-age=604800"}
-            )
-    except Exception as e:
-        print(f"Image error: {e}")
-    placeholder = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="#1e293b"/><text x="100" y="150" text-anchor="middle" fill="#64748b" font-size="40">🎬</text></svg>'''
-    return StreamingResponse(io.BytesIO(placeholder.encode()), media_type="image/svg+xml")
 
 @app.get("/api/admin/stats")
 async def admin_stats(auth: bool = Depends(verify_admin)):
@@ -1123,22 +1034,18 @@ async def random_movie():
     m = movies[0]
     return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "is_adult": "Adult Content" in m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
 
-@app.get("/api/image/{photo_id:path}")
+@app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
     try:
-        file_info = await bot.get_file(photo_id)
-        if file_info.file_path:
-            content = await bot.download_file(file_info.file_path)
-            ext = file_info.file_path.lower()
-            if ext.endswith('.png'): mt = 'image/png'
-            elif ext.endswith('.webp'): mt = 'image/webp'
-            elif ext.endswith('.gif'): mt = 'image/gif'
-            else: mt = 'image/jpeg'
-            return StreamingResponse(io.BytesIO(content), media_type=mt, headers={"Cache-Control": "public, max-age=604800"})
-    except Exception as e:
-        print(f"Image error: {e}")
-    svg = '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="160"><rect width="110" height="160" fill="#1e293b"/><text x="55" y="80" text-anchor="middle" fill="#64748b" font-size="30">?</text></svg>'
-    return StreamingResponse(io.BytesIO(svg.encode()), media_type="image/svg+xml")
+        cache = await db.file_cache.find_one({"photo_id": photo_id})
+        now = datetime.datetime.utcnow()
+        if cache and cache.get("expires_at", now) > now: file_path = cache["file_path"]
+        else:
+            file_info = await bot.get_file(photo_id); file_path = file_info.file_path
+            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(hours=1)}}, upsert=True)
+        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        return RedirectResponse(url=file_url)
+    except: return RedirectResponse(url="https://via.placeholder.com/110x160")
 
 # ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
