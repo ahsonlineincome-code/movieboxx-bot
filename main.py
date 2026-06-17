@@ -10,6 +10,7 @@ import urllib.parse
 import secrets
 import json
 import math
+import io
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -684,7 +685,7 @@ function renderMovies(moviesToRender) {
         tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
         return; 
     } 
-    tbody.innerHTML = moviesToRender.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); 
+    tbody.innerHTML = moviesToRender.map(m => `<tr id="row-${m._id}"><td><div style="display:flex;gap:10px;align-items:center"><img src="/api/image/${m.photo_id}" style="width:45px;height:65px;object-fit:cover;border-radius:6px" onerror="this.style.display='none'"><div><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></div></div></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); 
 }
 
 document.getElementById('movieSearchInput').addEventListener('input', function(e) {
@@ -701,6 +702,34 @@ document.getElementById('movieSearchInput').addEventListener('input', function(e
         </script>
     </body></html>'''
     return HTMLResponse(html_code)
+    
+# ==========================================
+# 🖼️ IMAGE PROXY ENDPOINT
+# ==========================================
+@app.get("/api/image/{file_id:path}")
+async def serve_telegram_image(file_id: str):
+    try:
+        file = await bot.get_file(file_id)
+        if file.file_path:
+            content = await bot.download_file(file.file_path)
+            file_path_lower = file.file_path.lower()
+            if file_path_lower.endswith('.png'):
+                media_type = 'image/png'
+            elif file_path_lower.endswith('.webp'):
+                media_type = 'image/webp'
+            elif file_path_lower.endswith('.gif'):
+                media_type = 'image/gif'
+            else:
+                media_type = 'image/jpeg'
+            return StreamingResponse(
+                io.BytesIO(content),
+                media_type=media_type,
+                headers={"Cache-Control": "public, max-age=604800"}
+            )
+    except Exception as e:
+        print(f"Image error: {e}")
+    placeholder = '''<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="#1e293b"/><text x="100" y="150" text-anchor="middle" fill="#64748b" font-size="40">🎬</text></svg>'''
+    return StreamingResponse(io.BytesIO(placeholder.encode()), media_type="image/svg+xml")
 
 @app.get("/api/admin/stats")
 async def admin_stats(auth: bool = Depends(verify_admin)):
@@ -1094,18 +1123,21 @@ async def random_movie():
     m = movies[0]
     return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "is_adult": "Adult Content" in m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
 
-@app.get("/api/image/{photo_id}")
+@app.get("/api/image/{photo_id:path}")
 async def get_image(photo_id: str):
     try:
-        cache = await db.file_cache.find_one({"photo_id": photo_id})
-        now = datetime.datetime.utcnow()
-        if cache and cache.get("expires_at", now) > now: file_path = cache["file_path"]
-        else:
-            file_info = await bot.get_file(photo_id); file_path = file_info.file_path
-            await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(hours=1)}}, upsert=True)
-        file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
-        return RedirectResponse(url=file_url)
-    except: return RedirectResponse(url="https://via.placeholder.com/110x160")
+        file_info = await bot.get_file(photo_id)
+        if file_info.file_path:
+            content = await bot.download_file(file_info.file_path)
+            ext = file_info.file_path.lower()
+            if ext.endswith('.png'): mt = 'image/png'
+            elif ext.endswith('.webp'): mt = 'image/webp'
+            elif ext.endswith('.gif'): mt = 'image/gif'
+            else: mt = 'image/jpeg'
+            return StreamingResponse(io.BytesIO(content), media_type=mt, headers={"Cache-Control": "public, max-age=604800"})
+    except Exception as e:
+        print(f"Image error: {e}")
+    return StreamingResponse(io.BytesIO(b'<svg xmlns="http://www.w3.org/2000/svg" width="110" height="160"><rect width="110" height="160" fill="#1e293b"/><text x="55" y="80" text-anchor="middle" fill="#64748b" font-size="30">🎬</text></svg>'), media_type="image/svg+xml")
 
 # ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
