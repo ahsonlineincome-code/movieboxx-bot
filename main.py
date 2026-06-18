@@ -956,40 +956,31 @@ async def web_ui():
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
             .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
             
-            /* ✅ RAINBOW NEON BORDER STYLE */
+            /* ✅ STATIC RAINBOW BORDER STYLE (No Animation) */
             .movie-card { 
                 display: flex; 
                 flex-direction: column; 
-                background: #0f172a; /* Dark background for the card content */
+                background: #0f172a; 
                 border-radius: 16px; 
                 overflow: hidden; 
                 cursor: pointer; 
                 transition: 0.3s; 
                 position: relative; 
                 z-index: 1;
-                /* Border removed here to use pseudo-element */
                 border: none; 
             }
             body.oled-mode .movie-card { background: #000; }
             .movie-card:active { transform: scale(0.98); }
             
-            /* The Rainbow Gradient Border */
+            /* Static Beautiful Gradient Border */
             .movie-card::before {
                 content: "";
                 position: absolute;
                 inset: -3px; /* Border thickness */
                 z-index: -1;
-                /* Rainbow Gradient */
-                background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000);
-                background-size: 400%;
+                /* Theme matching Gradient (Red to Orange to Purple) */
+                background: linear-gradient(45deg, #ff416c, #ff4b2b, #ff8c00, #b91c1c);
                 border-radius: 18px; /* Slightly larger than card radius */
-                animation: glowing 20s linear infinite;
-            }
-
-            @keyframes glowing {
-                0% { background-position: 0 0; }
-                50% { background-position: 400% 0; }
-                100% { background-position: 0 0; }
             }
 
             .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
@@ -999,6 +990,22 @@ async def web_ui():
             .movie-cat-tag { background: rgba(239, 68, 68, 0.8); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #fff; }
             .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
+            .admin-view-badge {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                background: rgba(0,0,0,0.8);
+                color: #fbbf24; /* Gold */
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 800;
+                z-index: 10;
+                border: 1px solid #fbbf24;
+                display: flex;
+                align-items: center;
+                gap: 3px;
+            }
             .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
             .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
@@ -1224,7 +1231,7 @@ async def web_ui():
                 </div>
             </div>
 
-            <!-- ✅ RECENTLY ADDED HEADER ADDED BACK -->
+            <!-- ✅ RECENTLY ADDED HEADER -->
             <div style="padding: 0 15px 10px 15px;">
                 <div class="section-header" style="margin-bottom: 5px; margin-left: 0px;">
                     <i class="fa-solid fa-clock"></i> Recently Added
@@ -1308,14 +1315,26 @@ async def web_ui():
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             const TOKEN = "__BOT_TOKEN__";
-            let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
+            let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
+            let isUserVip = false; 
+            let isAdmin = false; // Admin Variable
+            let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
             let trendingMovies = []; 
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
-            async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
+            
+            async function fetchUserInfo() { 
+                try { 
+                    const res = await fetch('/api/user/' + uid); 
+                    const data = await res.json(); 
+                    isUserVip = data.vip; 
+                    isAdmin = data.is_admin || false; // Set Admin Status
+                } catch(e) {} 
+            }
+            
             function switchTab(tabName, btnEl) { document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); if(tabName === 'home') { activeCat = 'Home'; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); } document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); if(btnEl) btnEl.classList.add('active'); if(tabName === 'home') loadHomeMovies(1); if(tabName === 'fav') loadFavorites(); window.scrollTo({top:0, behavior:'smooth'}); }
             function filterCat(cat, btnEl) { activeCat = cat; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(1); }
             
@@ -1448,11 +1467,18 @@ async def web_ui():
                 let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index})"`;
+
+                // Admin View Count Badge
+                let adminViewBadge = '';
+                if(isAdmin) {
+                    adminViewBadge = `<div class="admin-view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
+                }
                 
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
                     <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
                     ${lockOverlay}
+                    ${adminViewBadge}
                 </div>
                 <div class="movie-info">
                     <div class="movie-title">${m.title}</div>
@@ -1474,7 +1500,8 @@ async def web_ui():
                 let m = currentViewMovies[index]; 
                 if(!m) return; 
                 document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; 
-                document.getElementById('detailTitle').innerText = m.title; 
+                // Fix for "undefined" title
+                document.getElementById('detailTitle').innerText = m.title || 'Unknown Movie'; 
                 document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
                 
@@ -1489,7 +1516,6 @@ async def web_ui():
                     }).join('');
                 } else {
                     // Handle Single File (The current bot structure)
-                    // We pass the movie ID (_id) as the file reference since there is only one file_id
                     let isFree = isUserVip; 
                     btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${m.quality || 'Full Movie'}</span></button>`;
                 }
@@ -1546,13 +1572,21 @@ async def web_ui():
 # ==========================================
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
-    now = datetime.datetime.utcnow()
-    await db.users.update_one({"user_id": uid}, {"$set": {"last_active": now}})
     user = await db.users.find_one({"user_id": uid})
-    if not user: return {"vip": False}
-    vip_until = user.get("vip_until")
-    is_vip = vip_until and vip_until > now
-    return {"vip": is_vip}
+    if not user:
+        # ইউজার না থাকলে ডিফল্ট রিটার্ন
+        return {"vip": False, "is_admin": False}
+    
+    # ভিআইপি চেক
+    is_vip = user.get("vip_until", datetime.datetime.min) > datetime.datetime.utcnow()
+    
+    # অ্যাডমিন চেক (Owner ID এর সাথে মিলিয়ে)
+    is_admin = (uid == OWNER_ID)
+    
+    return {
+        "vip": is_vip,
+        "is_admin": is_admin
+    }
 
 # ✅ Pagination API Updated
 @app.get("/api/list")
@@ -1587,12 +1621,17 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     return {"movies": movies, "total_pages": total_pages}
 
 @app.get("/api/random")
-async def random_movie():
-    pipeline = [{"$sample": {"size": 1}}]
-    movies = await db.movies.aggregate(pipeline).to_list(1)
-    if not movies: return {"movie": None}
-    m = movies[0]
-    return {"movie": {"_id": m["title"], "photo_id": m["photo_id"], "year": m.get("year", "N/A"), "categories": m.get("categories", []), "is_adult": "Adult Content" in m.get("categories", []), "files": [{"id": str(m["_id"]), "quality": m.get("quality", "Main")}]}}
+async def get_random_movie():
+    try:
+        # ডাটাবেস থেকে র‍্যান্ডমলি ১টি মুভি আনা
+        movie = await db.movies.aggregate([{"$sample": {"size": 1}}]).to_list(1)
+        if movie:
+            m = movie[0]
+            m["_id"] = str(m["_id"]) # ObjectId কে স্ট্রিং-এ কনভার্ট করা
+            return {"movie": m}
+        return {"movie": None}
+    except Exception as e:
+        return {"movie": None}
 
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
