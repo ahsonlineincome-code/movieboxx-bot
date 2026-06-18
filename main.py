@@ -501,7 +501,27 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
+    
+    # state.clear() এখানে দেওয়া হলো না, কারণ নিচের বাটনে ক্লিক করার পর ডেটা লাগবে
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🚀 New Movie (Broadcast & Log)", callback_data="action_new_bcast")
+    builder.button(text="➕ Add File Only (No Broadcast)", callback_data="action_add_file")
+    builder.adjust(1)
+    await c.message.edit_text(
+        "✅ সব তথ্য নেওয়া হয়েছে!\n\n👇 এখন আপনি কি করতে চান তা নিচের যেকোনো একটি বাটনে ক্লিক করে নির্বাচন করুন:",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    await c.answer()
+
+
+# নতুন মুভি হিসেবে ব্রডকাস্ট করার ফাংশন
+@dp.callback_query(F.data == "action_new_bcast")
+async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected_cats = data.get("categories", [])
     await state.clear()
+    
     await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
     
     await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
@@ -512,16 +532,27 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
                 [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")],
                 [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
                 [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
-                
             ]
             log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
             log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
             await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
         except: pass
 
-    # সরাসরি রান না করে কিউতে পাঠানো হচ্ছে
     await broadcast_queue.put({"data": data, "selected_cats": selected_cats, "admin_id": c.from_user.id})
-    await c.answer()
+    await c.answer("🚀 ব্রডকাস্ট শুরু হচ্ছে...")
+
+
+# শুধু ফাইল অ্যাড করার ফাংশন (কোনো ব্রডকাস্ট বা লগ হবে না)
+@dp.callback_query(F.data == "action_add_file")
+async def action_add_file_only(c: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    selected_cats = data.get("categories", [])
+    await state.clear()
+    
+    await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
+    
+    await c.message.edit_text(f"✅ <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n❌ কোনো ব্রডকাস্ট বা লগ পোস্ট করা হয়নি। ফাইলটি শুধুমাত্র ওয়েব অ্যাপে যুক্ত হয়েছে।", parse_mode="HTML")
+    await c.answer("✅ ফাইল অ্যাড হয়েছে!")
 
 async def run_movie_broadcast(data, selected_cats, admin_id):
     bcast_success = 0
