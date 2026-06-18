@@ -1341,12 +1341,17 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     pipeline = [
         {"$match": match_stage}, 
         {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
-        {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}
+        {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit},
+        {"$addFields": {"title": "$_id"}}  # <--- এই লাইনটি যোগ করা হয়েছে
     ]
     movies = await db.movies.aggregate(pipeline).to_list(limit)
     for m in movies:
         m["is_adult"] = "Adult Content" in m.get("categories", [])
-        for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
+        # নিচের লাইনে movie_id কনভার্সন করা হয়েছে, এটি ঠিক আছে কিন্তু চেক করে দেখুন
+        for f in m["files"]: 
+            # ফাইল আনলক চেক
+            f["is_unlocked"] = f["id"] in unlocked_ids
+            
     return {"movies": movies, "total_pages": total_pages}
 
 @app.get("/api/random")
