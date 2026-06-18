@@ -715,7 +715,17 @@ function renderMovies(moviesToRender) {
         tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
         return; 
     } 
-    tbody.innerHTML = moviesToRender.map(m => `<tr id="row-${m._id}"><td><strong>${m.title}</strong><br><small>${m.year || 'N/A'}</small></td><td>${m.quality || 'Main'}</td><td>${(m.categories || []).join(', ')}</td><td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td><td><button class="delete-btn" onclick="deleteMovie('${m._id}')"><i class="fa-solid fa-trash"></i> Delete</button></td></tr>`).join(''); 
+    tbody.innerHTML = moviesToRender.map(m => `
+        <tr id="row-${m._id}">
+            <td><strong>${m.title}</strong><br><small>ID: ${m._id}</small></td>
+            <td>${m.quality || 'N/A'}</td>
+            <td>${(m.categories || []).join(', ')}</td>
+            <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
+            <td>
+                <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Delete</button>
+                <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding: 6px 12px; font-size: 12px; background: #22B8FF; border:none; color:white; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+            </td>
+        </tr>`).join(''); 
 }
 
 document.getElementById('movieSearchInput').addEventListener('input', function(e) {
@@ -730,6 +740,54 @@ document.getElementById('movieSearchInput').addEventListener('input', function(e
             async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
+        function openEditModal(id) {
+    const movie = allMovies.find(m => m._id === id);
+    if (!movie) return;
+
+    document.getElementById('editId').value = movie._id;
+    document.getElementById('editTitle').value = movie.title || '';
+    document.getElementById('editPhoto').value = movie.photo_id || '';
+    document.getElementById('editQuality').value = movie.quality || '';
+    document.getElementById('editYear').value = movie.year || '';
+    document.getElementById('editCategories').value = (movie.categories || []).join(', ');
+
+    document.getElementById('editModal').style.display = 'flex';
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').style.display = 'none';
+}
+
+async function saveMovieEdit() {
+    const id = document.getElementById('editId').value;
+    const data = {
+        title: document.getElementById('editTitle').value,
+        photo_id: document.getElementById('editPhoto').value,
+        quality: document.getElementById('editQuality').value,
+        year: document.getElementById('editYear').value,
+        categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s !== '')
+    };
+
+    try {
+        const res = await fetch(`/api/admin/movie/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await res.json();
+        if (result.ok) {
+            alert('✅ Movie Updated Successfully!');
+            closeEditModal();
+            fetchMovies(); // টেবিল রিফ্রেশ করার জন্য
+        } else {
+            alert('❌ Error updating movie: ' + (result.detail || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error(error);
+        alert('❌ An error occurred');
+    }
+}
     </body></html>'''
     return HTMLResponse(html_code)
 
@@ -753,6 +811,18 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
     if result.deleted_count == 1: return {"ok": True}
     raise HTTPException(status_code=404, detail="Movie not found")
+
+@app.put("/api/admin/movie/{movie_id}")
+async def update_movie(movie_id: str, movie_data: dict = Body(...), auth: bool = Depends(verify_admin)):
+    # খালি ভ্যালু ফিল্টার করা
+    update_data = {k: v for k, v in movie_data.items() if v is not None and v != ""}
+    
+    # ডাটাবেস আপডেট
+    result = await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$set": update_data})
+    
+    if result.modified_count > 0:
+        return {"ok": True, "message": "Movie updated successfully"}
+    raise HTTPException(status_code=400, detail="Failed to update movie")
 
 # ==========================================
 # 9. Main Web App UI
@@ -1112,6 +1182,56 @@ async def web_ui():
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             fetchUserInfo(); loadHomeMovies(1); loadFavorites();
         </script>
+    <!-- Edit Modal Styles -->
+<style>
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
+    .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
+    .modal-content h3 { margin-top: 0; color: #ef4444; }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
+    .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
+    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
+    .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
+</style>
+
+<!-- Edit Modal HTML -->
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h3>✏️ Edit Movie</h3>
+        <input type="hidden" id="editId">
+        
+        <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="editTitle">
+        </div>
+        
+        <div class="form-group">
+            <label>Poster Photo ID (File ID)</label>
+            <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
+        </div>
+
+        <div class="form-group">
+            <label>Quality</label>
+            <input type="text" id="editQuality">
+        </div>
+
+        <div class="form-group">
+            <label>Year</label>
+            <input type="text" id="editYear">
+        </div>
+
+        <div class="form-group">
+            <label>Categories (Comma separated)</label>
+            <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
+        </div>
+
+        <div class="modal-buttons">
+            <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
+            <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
+        </div>
+    </div>
+</div>
     </body></html>'''
     html_code = html_code.replace("__DL_JSON__", dl_json)
     html_code = html_code.replace("__ADL_JSON__", adl_json) 
