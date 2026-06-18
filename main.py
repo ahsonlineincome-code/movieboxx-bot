@@ -854,6 +854,23 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
     return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
 
+@app.get("/api/movies/trending")
+async def get_trending_movies():
+    try:
+        now = datetime.datetime.utcnow()
+        # গত ৭ দিন আগের তারিখ বের করা হচ্ছে
+        seven_days_ago = now - datetime.timedelta(days=7)
+        
+        # গত ৭ দিনের মুভি ডাটাবেস থেকে আনা হচ্ছে
+        movies = await db.movies.find({"created_at": {"$gte": seven_days_ago}}).sort("created_at", -1).to_list(50)
+        
+        # ObjectId কে String এ কনভার্ট করা (জাভাস্ক্রিপ্টের জন্য)
+        for m in movies:
+            m["_id"] = str(m["_id"])
+        return movies
+    except Exception as e:
+        return []
+
 @app.get("/api/admin/movies")
 async def admin_movies(auth: bool = Depends(verify_admin)):
     movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
@@ -1027,7 +1044,88 @@ async def web_ui():
          margin-left: 4px;
          display: inline-block;
          }
-         
+
+         /* ========================= */
+         /* ✅ TRENDING SECTION STYLES */
+         /* ========================= */
+         .section-header { 
+            padding: 20px 15px 5px; 
+            font-size: 20px; 
+            font-weight: 800; 
+            color: #fff; 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+         }
+         .section-header i { color: #ff4b2b; }
+
+         .trending-grid { 
+            display: grid; 
+            grid-template-columns: repeat(2, 1fr); /* ২টি কলামে ভাগ হবে, তাই দেখতে চওড়া লাগবে */ 
+            gap: 12px; 
+            padding: 0 15px 20px; 
+         }
+
+         .movie-card-wide { 
+            background: #1e293b; 
+            border-radius: 16px; 
+            overflow: hidden; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
+            cursor: pointer; 
+            transition: transform 0.2s; 
+            position: relative; 
+         }
+         .movie-card-wide:active { transform: scale(0.98); }
+
+         .poster-container-wide { 
+            width: 100%; 
+            aspect-ratio: 16/9; /* পোস্টার অনুপাত চওড়া */ 
+            position: relative; 
+         }
+         .poster-container-wide img { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            display: block; 
+         }
+
+         /* 18+ Badge Style */
+         .badge-18 { 
+            position: absolute; 
+            top: 8px; 
+            left: 8px; 
+            background: #ef4444; 
+            color: white; 
+            font-size: 10px; 
+            font-weight: 800; 
+            padding: 3px 8px; 
+            border-radius: 6px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5); 
+            z-index: 2; 
+         }
+
+         .info-container-wide { 
+            padding: 10px; 
+            background: #0f172a; 
+         }
+         body.oled-mode .info-container-wide { background: #000; }
+
+         .movie-title-wide { 
+            font-size: 13px; 
+            color: #fff; 
+            font-weight: 600; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; /* লম্বা টাইটেল হলে ... দেখাবে */ 
+         }
+         .movie-meta-wide { 
+            font-size: 11px; 
+            color: #94a3b8; 
+            margin-top: 4px; 
+            display: flex; 
+            justify-content: space-between; 
+         }
+
         </style>
     </head>
     <body>
@@ -1048,6 +1146,14 @@ async def web_ui():
                 <div class="cat-chip" onclick="filterCat('Horror', this)">HORROR</div>
                 <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
+            
+            <!-- ✅ NEW: TRENDING NOW SECTION -->
+            <div class="section-header"><i class="fa-solid fa-fire"></i> Trending Now</div>
+            <div class="trending-grid" id="trendingContainer">
+                <!-- JS দিয়ে মুভি এখানে লোড হবে -->
+                <div style="grid-column: span 2; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
+            </div>
+
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="paginationHome" class="pagination-container"></div>
         </div>
@@ -1124,9 +1230,12 @@ async def web_ui():
         <script>
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
+            // BOT TOKEN ইনজেক্ট করা হচ্ছে (ছবি লোড করার জন্য প্রয়োজন হতে পারে)
+            const TOKEN = "__BOT_TOKEN__";
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
+            let trendingMovies = []; // ট্রেন্ডিং মুভি স্টোর করার জন্য
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
@@ -1141,6 +1250,62 @@ async def web_ui():
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
             
+            // ✅ TRENDING MOVIES LOAD FUNCTION
+            async function loadTrending() {
+                try {
+                    const res = await fetch('/api/movies/trending');
+                    const movies = await res.json();
+                    trendingMovies = movies; // গ্লোবাল ভেরিয়েবলে সেভ করা হলো
+                    const container = document.getElementById('trendingContainer');
+                    
+                    if (movies.length === 0) {
+                        container.style.display = 'none'; // মুভি না থাকলে লুকিয়ে রাখুন
+                        return;
+                    }
+
+                    container.innerHTML = movies.map((m, index) => {
+                        // 18+ ব্যাজ যোগ করার লজিক
+                        const badgeHtml = m.categories && m.categories.includes('Adult Content') 
+                            ? '<div class="badge-18">18+</div>' 
+                            : '';
+                        
+                        // ছবির লিংক (Proxy রুট ব্যবহার করা হয়েছে)
+                        const imgUrl = `/api/image/${m.photo_id}`;
+
+                        return `
+                        <div class="movie-card-wide" onclick="openTrendingDetail(${index})">
+                            <div class="poster-container-wide">
+                                <img src="${imgUrl}" loading="lazy" alt="${m.title}">
+                                ${badgeHtml}
+                            </div>
+                            <div class="info-container-wide">
+                                <div class="movie-title-wide">${m.title}</div>
+                                <div class="movie-meta-wide">
+                                    <span>${m.quality || 'HD'}</span>
+                                    <span>${m.year || 'N/A'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        `;
+                    }).join('');
+                } catch (error) {
+                    console.error("Trending Error:", error);
+                    const container = document.getElementById('trendingContainer');
+                    container.style.display = 'none';
+                }
+            }
+
+            // ট্রেন্ডিং মুভি তে ক্লিক করলে ডিটেইল ওপেন করার ফাংশন
+            function openTrendingDetail(index) {
+                // বর্তমান ভিউ লিস্ট টেম্পোরারিলি ট্রেন্ডিং মুভিতে সেট করা হচ্ছে
+                // যাতে বিদ্যমান openDetail ফাংশন কাজ করে
+                const originalView = currentViewMovies;
+                currentViewMovies = trendingMovies;
+                openDetail(index);
+                // ডিটেইল মডাল বন্ধ হলে আবার আগের লিস্টে ফেরত আনা যেতে পারে, কিন্তু এখানে সিম্পল রাখা হয়েছে
+                currentViewMovies = originalView;
+            }
+
             // ✅ Pagination Functions
             async function loadHomeMovies(page = 1) { 
                 homeCurrentPage = page;
@@ -1249,62 +1414,15 @@ async def web_ui():
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
-            fetchUserInfo(); loadHomeMovies(1); loadFavorites();
+            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); // ট্রেন্ডিং লোড করা হচ্ছে
         </script>
-    <!-- Edit Modal Styles -->
-<style>
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
-    .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
-    .modal-content h3 { margin-top: 0; color: #ef4444; }
-    .form-group { margin-bottom: 15px; }
-    .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
-    .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
-    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
-    .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
-    .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
-</style>
-
-<!-- Edit Modal HTML -->
-<div id="editModal" class="modal">
-    <div class="modal-content">
-        <h3>✏️ Edit Movie</h3>
-        <input type="hidden" id="editId">
-        
-        <div class="form-group">
-            <label>Title</label>
-            <input type="text" id="editTitle">
-        </div>
-        
-        <div class="form-group">
-            <label>Poster Photo ID (File ID)</label>
-            <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
-        </div>
-
-        <div class="form-group">
-            <label>Quality</label>
-            <input type="text" id="editQuality">
-        </div>
-
-        <div class="form-group">
-            <label>Year</label>
-            <input type="text" id="editYear">
-        </div>
-
-        <div class="form-group">
-            <label>Categories (Comma separated)</label>
-            <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
-        </div>
-
-        <div class="modal-buttons">
-            <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
-            <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
-        </div>
-    </div>
-</div>
     </body></html>'''
+    
+    # পাইথন ভেরিয়েবল রিপ্লেস করা হচ্ছে
     html_code = html_code.replace("__DL_JSON__", dl_json)
-    html_code = html_code.replace("__ADL_JSON__", adl_json) 
-    return html_code
+    html_code = html_code.replace("__ADL_JSON__", adl_json)
+    html_code = html_code.replace("__BOT_TOKEN__", TOKEN) # TOKEN রিপ্লেস করা হয়েছে
+    return HTMLResponse(html_code)
 
 # ==========================================
 # 10. Main Web App APIs
