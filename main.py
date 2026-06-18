@@ -938,7 +938,7 @@ async def web_ui():
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; }
+            body { background: #0f172a; font-family: 'Inter', sans-serif; color: #fff; overscroll-behavior-y: none; transition: background 0.3s; } 
             body.oled-mode { background: #000000; }
             #welcomeScreen { position: fixed; top:0; left:0; width:100%; height:100%; background: #0f172a; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease; }
             #welcomeScreen.hide { opacity: 0; visibility: hidden; }
@@ -951,13 +951,22 @@ async def web_ui():
             .logo { display: flex; align-items: center; font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
             .page-section { display: none; padding-bottom: 80px; }
             .page-section.active { display: block; }
-            .cat-row { display: flex; overflow-x: auto; gap: 8px; padding: 12px 15px; -ms-overflow-style: none; scrollbar-width: none; }
-            .cat-row::-webkit-scrollbar { display: none; }
-            .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; flex-shrink: 0; }
+            .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
+            .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
-            .fav-btn { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); border: none; width: 28px; height: 28px; border-radius: 50%; color: white; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+            .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
+            .movie-card { display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
+            body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
+            .movie-card:active { transform: scale(0.98); }
+            .movie-thumb { width: 100%; padding-bottom: 56.25%; position: relative; background: #000; }
+            .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+            .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
+            .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: normal; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
+            .movie-cat-tag { background: rgba(239, 68, 68, 0.8); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #fff; }
+            .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
-            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; border-radius: 10px 10px 0 0; }
+            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
             .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
@@ -969,8 +978,8 @@ async def web_ui():
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             body.oled-mode .modal-content { background: #000000; }
-            .detail-img { width: 100%; height: 220px; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
-            .detail-title { font-size: 20px; font-weight: 800; margin-bottom: 5px; }
+            .detail-img { width: 100%; height: 250px; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
+            .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
             .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
             .dl-file-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; color: white; font-weight: 700; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
@@ -1006,72 +1015,159 @@ async def web_ui():
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
-            .year-badge { background-color: #22B8FF; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
-            .cat-small-tag { background: rgba(255,255,255,0.1); color: #cbd5e1; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 4px; display: inline-block; }
-            .movie-info { padding: 8px 10px 10px 10px; }
-            .movie-title { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .movie-meta-row { display: flex; justify-content: space-between; align-items: center; }
-
-            /* ===== PAGINATION ===== */
-            .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 30px 15px; }
+            
+            /* ✅ Pagination Styles */
+            .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }
             .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }
             body.oled-mode .page-btn { background: #0a0a0a; border-color: #1a1a1a; }
             .page-btn:hover { background: #334155; color: white; }
-            .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+            .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
             .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
 
-            /* ===== TRENDING SECTION ===== */
-            .section-wrapper { margin: 0 15px 15px 15px; }
-            .section-header { font-size: 17px; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
-            .trending-slider-container { overflow-x: auto; display: flex; gap: 12px; scroll-behavior: smooth; padding-bottom: 5px; -ms-overflow-style: none; scrollbar-width: none; }
-            .trending-slider-container::-webkit-scrollbar { display: none; }
+            /* নতুন মেটা রো (Year এবং Category এর জন্য) */
+           .movie-meta-row {
+            display: flex;
+            justify-content: space-between; /* Year বামে, Category ডানে */
+            align-items: center;
+            margin-top: 5px;
+           }
 
-            /* Trending card - ছবির মতো 16:9 wide card */
-            .trending-card-new {
-                flex: 0 0 auto;
-                width: 200px;
-                border-radius: 12px;
-                overflow: hidden;
-                cursor: pointer;
-                position: relative;
-                transition: transform 0.2s;
-                background: #0f172a;
-                border: 2px solid transparent;
-            }
-            body.oled-mode .trending-card-new { background: #000; border-color: #1a1a1a; }
-            .trending-card-new:active { transform: scale(0.95); }
-            .trending-poster { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
-            .top-badge { position: absolute; top: 6px; left: 6px; background: #ef4444; color: white; font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 4px; letter-spacing: 1px; }
-            .view-count-badge { position: absolute; bottom: 38px; left: 6px; background: rgba(0,0,0,0.75); color: white; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px; display: flex; align-items: center; gap: 3px; }
-            .ep-badge { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.75); color: white; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid #444; }
-            .trending-card-title { font-size: 12px; color: #fff; font-weight: 700; padding: 6px 8px 2px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: #0f172a; }
-            body.oled-mode .trending-card-title { background: #000; }
-            .trending-card-meta { font-size: 10px; color: #94a3b8; padding: 0 8px 8px 8px; background: #0f172a; }
-            body.oled-mode .trending-card-meta { background: #000; }
+          /* বাম পাশের Year বাটনের স্টাইল */
+         .year-badge {
+          background-color: #22B8FF; /* Bright Sky Blue */
+          color: #fff;
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 700;
+         }
 
-            /* ===== RECENTLY ADDED - 2 COLUMN GRID ===== */
-            .recently-grid {
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 12px;
-            }
-            .recent-card {
-                background: #1e293b;
-                border-radius: 12px;
-                overflow: hidden;
-                cursor: pointer;
-                position: relative;
-                transition: transform 0.2s;
-                border: 1px solid #334155;
-            }
-            body.oled-mode .recent-card { background: #0a0a0a; border-color: #1a1a1a; }
-            .recent-card:active { transform: scale(0.97); }
-            .recent-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
-            .recent-card-info { padding: 8px; }
-            .recent-card-title { font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 5px; }
-            .recent-card-meta { display: flex; justify-content: space-between; align-items: center; }
-            .recent-fav-btn { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.6); border: none; width: 26px; height: 26px; border-radius: 50%; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
-            .recent-fav-btn.active { color: #ef4444; }
+         /* ডান পাশের ছোট Category ট্যাগের স্টাইল */
+         .cat-small-tag {
+         background: rgba(255, 255, 255, 0.1);
+         color: #cbd5e1;
+         padding: 2px 6px;
+         border-radius: 4px;
+         font-size: 10px;
+         margin-left: 4px;
+         display: inline-block;
+         }
+
+         /* ========================= */
+         /* ✅ TRENDING SLIDER STYLES */
+         /* ========================= */
+         .trending-section-wrapper {
+            background: rgba(30, 41, 59, 0.4); /* Side Grid Color - Light Dark Background */
+            margin: 10px 15px 20px 15px; /* Spacing/Margin */
+            padding: 15px;
+            border-radius: 16px;
+            border: 1px solid #334155;
+         }
+         body.oled-mode .trending-section-wrapper { background: #0a0a0a; border-color: #1a1a1a; }
+
+         .section-header { 
+            padding-bottom: 10px; 
+            font-size: 18px; 
+            font-weight: 800; 
+            color: #fff; 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+            margin-bottom: 10px;
+         }
+         .section-header i { color: #ff4b2b; }
+
+         .trending-slider-container {
+            overflow-x: auto;
+            display: flex;
+            gap: 15px;
+            scroll-behavior: smooth;
+            padding-bottom: 5px;
+            /* Hide Scrollbar */
+            -ms-overflow-style: none;  
+            scrollbar-width: none;  
+         }
+         .trending-slider-container::-webkit-scrollbar { display: none; }
+
+         .trending-card { 
+            flex: 0 0 auto; /* কার্ড সংকুচিত হবে না */
+            width: 140px; /* কার্ডের প্রস্থ */
+            background: #0f172a;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.2s;
+         }
+         body.oled-mode .trending-card { background: #000; border: 1px solid #1a1a1a; }
+         .trending-card:active { transform: scale(0.95); }
+
+         .poster-slider { 
+            width: 100%; 
+            aspect-ratio: 2/3; /* পোস্টার স্টাইল একটু লম্বা */
+            position: relative; 
+         }
+         .poster-slider img { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            display: block; 
+         }
+
+         /* 18+ Badge */
+         .badge-18-slider { 
+            position: absolute; 
+            top: 5px; 
+            left: 5px; 
+            background: #ef4444; 
+            color: white; 
+            font-size: 9px; 
+            font-weight: 800; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            z-index: 2; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+         }
+
+         /* র‍্যাংকিং ব্যাজ (Top 1, 2, 3...) */
+         .rank-badge {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fbbf24; /* Gold color */
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 800;
+            z-index: 2;
+            border: 1px solid #fbbf24;
+         }
+
+         .info-slider { 
+            padding: 8px; 
+         }
+         .movie-title-slider { 
+            font-size: 12px; 
+            color: #fff; 
+            font-weight: 600; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            margin-bottom: 2px;
+         }
+         .movie-meta-slider { 
+            font-size: 10px; 
+            color: #94a3b8; 
+            display: flex; 
+            justify-content: space-between;
+         }
+
         </style>
     </head>
     <body>
@@ -1079,7 +1175,7 @@ async def web_ui():
         <header onclick="switchTab('home')"><div class="logo">Movie Box</div></header>
 
         <div id="tabHome" class="page-section active">
-            <div class="search-box" style="padding-top:12px;"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
+            <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             <div class="cat-row">
                 <div class="cat-chip active" onclick="filterCat('Home', this)">HOME</div>
                 <div class="cat-chip" onclick="filterCat('Bangla', this)">BANGLA</div>
@@ -1092,56 +1188,35 @@ async def web_ui():
                 <div class="cat-chip" onclick="filterCat('Horror', this)">HORROR</div>
                 <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
-
-            <!-- TRENDING NOW -->
-            <div class="section-wrapper" id="trendingWrapper">
-                <div class="section-header">
-                    <i class="fa-solid fa-bolt" style="color:#fbbf24;"></i>
-                    <span style="color:#ef4444; font-style:italic;">Trending</span>&nbsp;now
-                </div>
+            
+            <!-- ✅ NEW: TRENDING AUTO SLIDER SECTION -->
+            <div class="trending-section-wrapper">
+                <div class="section-header"><i class="fa-solid fa-fire"></i> Top 5 Trending</div>
                 <div class="trending-slider-container" id="trendingSlider">
-                    <div style="color:#64748b; padding:10px;">Loading...</div>
+                    <!-- JS দিয়ে মুভি এখানে লোড হবে -->
+                    <div style="width: 100%; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
                 </div>
             </div>
 
-            <!-- RECENTLY ADDED -->
-            <div class="section-wrapper" id="recentWrapper">
-                <div class="section-header">
-                    <i class="fa-solid fa-clock-rotate-left" style="color:#ef4444;"></i> Recently Added
-                </div>
-                <div class="recently-grid" id="recentGrid">
-                    <div class="skeleton"></div><div class="skeleton"></div>
-                    <div class="skeleton"></div><div class="skeleton"></div>
-                </div>
-                <div id="paginationHome" class="pagination-container"></div>
-            </div>
+            <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
+            <div id="paginationHome" class="pagination-container"></div>
         </div>
 
-        <div id="tabSearch" class="page-section">
-            <div class="search-box" style="padding-top:15px;">
-                <input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()">
-            </div>
-            <div class="recently-grid" style="padding: 0 15px;" id="movieListSearch"></div>
-            <div id="paginationSearch" class="pagination-container"></div>
-        </div>
-
-        <div id="tabFav" class="page-section">
-            <h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3>
-            <div class="recently-grid" style="padding: 0 15px;" id="movieListFav"></div>
-        </div>
-
+        <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div><div id="paginationSearch" class="pagination-container"></div></div>
+        <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
+        
         <div id="tabSurprise" class="page-section">
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:60vh;text-align:center;padding:20px;">
-                <div style="font-size:80px;margin-bottom:20px;animation:pulse 1.5s infinite;">🎲</div>
-                <h2 style="margin-bottom:15px;color:#fbbf24;">মুভি রুলেট!</h2>
-                <p style="color:#94a3b8;margin-bottom:30px;">কী দেখবেন ঠিক করতে পারছেন না? বট আপনার জন্য একটি মুভি বেছে নিচ্ছে!</p>
-                <button onclick="loadSurprise()" style="padding:15px 40px;background:linear-gradient(45deg,#ff416c,#ff4b2b);color:white;border:none;border-radius:30px;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 0 20px rgba(255,65,108,0.5);">🎲 Surprise Me!</button>
+            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; padding: 20px;">
+                <div style="font-size: 80px; margin-bottom: 20px; animation: pulse 1.5s infinite;">🎲</div>
+                <h2 style="margin-bottom: 15px; color: #fbbf24;">মুভি রুলেট!</h2>
+                <p style="color: #94a3b8; margin-bottom: 30px;">কী দেখবেন ঠিক করতে পারছেন না? বট আপনার জন্য একটি মুভি বেছে নিচ্ছে!</p>
+                <button onclick="loadSurprise()" style="padding: 15px 40px; background: linear-gradient(45deg, #ff416c, #ff4b2b); color: white; border: none; border-radius: 30px; font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 0 20px rgba(255, 65, 108, 0.5);">🎲 Surprise Me!</button>
             </div>
         </div>
 
         <div id="tabProfile" class="page-section">
             <div class="profile-card">
-                <div style="text-align:center;margin-bottom:20px;"><h2 id="profileName">User</h2></div>
+                <div style="text-align: center; margin-bottom: 20px;"><h2 id="profileName">User</h2></div>
                 <button class="profile-action-btn btn-dark-mode" onclick="toggleOledMode()">🌙 ডার্ক মোড (OLED) <span id="darkModeStatus">OFF</span></button>
                 <a href="https://facebook.com/" class="profile-action-btn btn-fb" target="_blank">📘 Facebook Group</a>
                 <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" class="profile-action-btn btn-main-ch" target="_blank">🚀 Main Channel</a>
@@ -1161,7 +1236,7 @@ async def web_ui():
             <button class="nav-item" onclick="switchTab('profile', this)"><i class="fa-solid fa-user"></i>Profile</button>
         </div>
 
-        <div id="ageModal" class="modal"><div class="modal-content age-box"><h2 style="color:#ef4444;">⚠️ বয়স সীমাবদ্ধতা</h2><p style="color:#cbd5e1;margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p><button class="age-btn age-yes" onclick="access18()">হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="closeModal('ageModal')">না</button></div></div>
+        <div id="ageModal" class="modal"><div class="modal-content age-box"><h2 style="color:#ef4444;">⚠️ বয়স সীমাবদ্ধতা</h2><p style="color:#cbd5e1; margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p><button class="age-btn age-yes" onclick="access18()">হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="closeModal('ageModal')">না</button></div></div>
 
         <div id="detailModal" class="modal">
             <div class="modal-content">
@@ -1169,7 +1244,7 @@ async def web_ui():
                 <img id="detailImg" class="detail-img" src="">
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
-                <div id="detailCats" style="margin-bottom:15px;"></div>
+                <div id="detailCats" style="margin-bottom: 15px;"></div>
                 <div id="fileButtonsContainer"></div>
             </div>
         </div>
@@ -1187,10 +1262,10 @@ async def web_ui():
         </div>
 
         <div id="successModal" class="modal">
-            <div class="modal-content" style="text-align:center;padding-top:40px;">
-                <i class="fa-solid fa-circle-check" style="font-size:70px;color:#4ade80;margin-bottom:20px;"></i>
+            <div class="modal-content" style="text-align: center; padding-top: 40px;">
+                <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2>ফাইল পাঠানো হয়েছে!</h2>
-                <p style="color:#94a3b8;margin-top:10px;">বট চেক করুন। নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!</p>
+                <p style="color:#94a3b8; margin-top:10px;">বট চেক করুন। নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!</p>
                 <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn">🚀 Join Channel</a>
                 <button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button>
             </div>
@@ -1198,277 +1273,217 @@ async def web_ui():
 
         <script>
             let tg = window.Telegram.WebApp; tg.expand();
-            const DIRECT_LINKS = __DL_JSON__; 
-            const ADULT_DIRECT_LINKS = __ADL_JSON__; 
-            const INIT_DATA = tg.initData || "";
+            const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             const TOKEN = "__BOT_TOKEN__";
-            let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0;
-            let isUserVip = false; let activeCat = "Home"; let userFavs = [];
-            let active18Btn = null; let activeFileId = null; let activeIsAdult = false;
-            let adStartTime = 0; let currentViewMovies = [];
-            let homeCurrentPage = 1; let searchCurrentPage = 1;
-            let trendingMovies = []; let recentMovies = [];
+            let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
+            let homeCurrentPage = 1;
+            let searchCurrentPage = 1;
+            let trendingMovies = []; 
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
-            if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
-
             async function fetchUserInfo() { try { const res = await fetch('/api/user/' + uid); const data = await res.json(); isUserVip = data.vip; } catch(e) {} }
-
-            function switchTab(tabName, btnEl) {
-                document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
-                document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
-                if(tabName === 'home') {
-                    activeCat = 'Home'; homeCurrentPage = 1;
-                    document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); });
-                    var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active');
-                }
-                document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active');
-                if(btnEl) btnEl.classList.add('active');
-                if(tabName === 'home') { loadTrending(); loadRecentMovies(1); }
-                if(tabName === 'fav') loadFavorites();
-                window.scrollTo({top:0, behavior:'smooth'});
-            }
-
-            function filterCat(cat, btnEl) {
-                activeCat = cat; homeCurrentPage = 1;
-                document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); });
-                btnEl.classList.add('active');
-                // Category filter এ শুধু recently grid এ ফিল্টার দেখাবে
-                loadRecentMovies(1);
-            }
-
+            function switchTab(tabName, btnEl) { document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); if(tabName === 'home') { activeCat = 'Home'; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); } document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); if(btnEl) btnEl.classList.add('active'); if(tabName === 'home') loadHomeMovies(1); if(tabName === 'fav') loadFavorites(); window.scrollTo({top:0, behavior:'smooth'}); }
+            function filterCat(cat, btnEl) { activeCat = cat; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(1); }
+            
             function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { if(btnEl) filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
-            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadRecentMovies(1); } }
+            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadHomeMovies(1); } }
+            
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
-
-            // ===== TRENDING =====
+            if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
+            
+            // ✅ TRENDING SLIDER LOAD FUNCTION
             async function loadTrending() {
                 try {
                     const res = await fetch('/api/movies/trending');
                     const movies = await res.json();
                     trendingMovies = movies;
                     const container = document.getElementById('trendingSlider');
-                    if(movies.length === 0) { document.getElementById('trendingWrapper').style.display = 'none'; return; }
+                    
+                    if (movies.length === 0) {
+                        // মুভি না থাকলে পুরো সেকশন লুকিয়ে দিন
+                        document.querySelector('.trending-section-wrapper').style.display = 'none';
+                        return;
+                    }
+
                     container.innerHTML = movies.map((m, index) => {
+                        const badgeHtml = m.categories && m.categories.includes('Adult Content') 
+                            ? '<div class="badge-18-slider">18+</div>' 
+                            : '';
+                        
                         const imgUrl = `/api/image/${m.photo_id}`;
-                        const views = m.clicks || 0;
-                        const viewText = views >= 1000 ? (views/1000).toFixed(1)+'K' : views;
-                        const epText = m.quality ? m.quality : '';
+                        const rank = index + 1;
+
                         return `
-                        <div class="trending-card-new" onclick="openTrendingDetail(${index})">
-                            <div style="position:relative;">
-                                <img src="${imgUrl}" class="trending-poster" loading="lazy" alt="${m.title}">
-                                <div class="top-badge">TOP</div>
-                                ${epText ? `<div class="ep-badge">≡${epText}</div>` : ''}
-                                <div class="view-count-badge"><i class="fa-solid fa-eye" style="font-size:8px;"></i> ${viewText}</div>
+                        <div class="trending-card" onclick="openTrendingDetail(${index})">
+                            <div class="poster-slider">
+                                <img src="${imgUrl}" loading="lazy" alt="${m.title}">
+                                ${badgeHtml}
+                                <div class="rank-badge">${rank}</div>
                             </div>
-                            <div class="trending-card-title">${m.title}</div>
-                            <div class="trending-card-meta">${m.year || 'N/A'} • ${(m.categories||[])[0]||''}</div>
-                        </div>`;
+                            <div class="info-slider">
+                                <div class="movie-title-slider">${m.title}</div>
+                                <div class="movie-meta-slider">
+                                    <span>${m.quality || 'HD'}</span>
+                                    <span>${m.year || 'N/A'}</span>
+                                </div>
+                            </div>
+                        </div>
+                        `;
                     }).join('');
+
+                    // ✅ Auto Slider Logic Start
                     startAutoSlider();
-                } catch(e) { document.getElementById('trendingWrapper').style.display = 'none'; }
+                    
+                } catch (error) {
+                    console.error("Trending Error:", error);
+                    document.querySelector('.trending-section-wrapper').style.display = 'none';
+                }
             }
 
+            // Auto Scroll Function
             let autoScrollInterval;
             function startAutoSlider() {
                 const slider = document.getElementById('trendingSlider');
                 if(!slider) return;
+
+                // আগের ইন্টারভাল ক্লিয়ার করা
                 if(autoScrollInterval) clearInterval(autoScrollInterval);
+
                 autoScrollInterval = setInterval(() => {
-                    const cardWidth = 215;
+                    // ইউজার যদি ম্যানুয়ালি স্ক্রল করে তাহলে অটো স্ক্রল বন্ধ করার লজিক জটিল, 
+                    // তাই আমরা সিম্পল ভাবে প্রতি ৩ সেকেন্ডে একটু এগিয়ে যাবো
+                    const cardWidth = 155; // card width + gap
                     const maxScroll = slider.scrollWidth - slider.clientWidth;
-                    if(slider.scrollLeft >= maxScroll) { slider.scrollTo({left:0, behavior:'smooth'}); }
-                    else { slider.scrollBy({left:cardWidth, behavior:'smooth'}); }
-                }, 3000);
+                    
+                    if (slider.scrollLeft >= maxScroll) {
+                        slider.scrollTo({ left: 0, behavior: 'smooth' });
+                    } else {
+                        slider.scrollBy({ left: cardWidth, behavior: 'smooth' });
+                    }
+                }, 3000); // ৩ সেকেন্ড পর পর স্লাইড হবে
             }
 
             function openTrendingDetail(index) {
-                const saved = currentViewMovies;
+                const originalView = currentViewMovies;
                 currentViewMovies = trendingMovies;
                 openDetail(index);
-                currentViewMovies = saved;
+                currentViewMovies = originalView;
             }
 
-            // ===== RECENTLY ADDED (grid, paginated) =====
-            async function loadRecentMovies(page = 1) {
+            // ✅ Pagination Functions
+            async function loadHomeMovies(page = 1) { 
                 homeCurrentPage = page;
-                const grid = document.getElementById('recentGrid');
-                grid.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
-                try {
-                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page);
-                    const data = await res.json();
-                    recentMovies = data.movies || [];
-                    if(recentMovies.length === 0) {
-                        grid.innerHTML = '<p style="text-align:center;color:#64748b;padding:20px;grid-column:span 2;">কোনো মুভি পাওয়া যায়নি!</p>';
-                        document.getElementById('paginationHome').innerHTML = '';
-                        return;
-                    }
-                    grid.innerHTML = recentMovies.map((m, index) => {
-                        const isAdult = (m.categories||[]).includes('Adult Content');
-                        const isVerified = localStorage.getItem('isAdult') === 'true';
-                        const imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B' : `/api/image/${m.photo_id}`;
-                        const clickFn = (isAdult && !isVerified) ? `verify18(null)` : `openRecentDetail(${index})`;
-                        const isFav = userFavs.includes(m._id);
-                        return `
-                        <div class="recent-card" onclick="${clickFn}">
-                            <div style="position:relative;">
-                                <img src="${imgSrc}" loading="lazy" alt="${m.title}">
-                                ${(isAdult && !isVerified) ? '<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>' : ''}
-                            </div>
-                            <div class="recent-card-info">
-                                <div class="recent-card-title">${m.title}</div>
-                                <div class="recent-card-meta">
-                                    <span class="year-badge">${m.year||'N/A'}</span>
-                                    <span style="font-size:10px;color:#94a3b8;">${(m.categories||[])[0]||''}</span>
-                                </div>
-                            </div>
-                            <button class="recent-fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-                        </div>`;
-                    }).join('');
-                    renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadRecentMovies');
-                } catch(e) {}
+                const list = document.getElementById('movieListHome'); 
+                list.innerHTML = '<div class="skeleton"></div>'; 
+                try { 
+                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
+                    renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies'); 
+                } catch(e) {} 
             }
 
-            function openRecentDetail(index) {
-                currentViewMovies = recentMovies;
-                openDetail(index);
-            }
-
-            // ===== SEARCH (grid) =====
-            async function searchMovies(page = 1) {
-                const q = document.getElementById('searchInputMain').value.trim();
-                const list = document.getElementById('movieListSearch');
-                if(!q) { list.innerHTML = ''; document.getElementById('paginationSearch').innerHTML = ''; return; }
+            async function searchMovies(page = 1) { 
+                const q = document.getElementById('searchInputMain').value.trim(); 
+                const list = document.getElementById('movieListSearch'); 
+                if(!q) { list.innerHTML = ''; document.getElementById('paginationSearch').innerHTML = ''; return; } 
                 searchCurrentPage = page;
-                try {
-                    const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid+'&page='+page);
-                    const data = await res.json();
-                    const movies = data.movies || [];
-                    if(movies.length === 0) { list.innerHTML = '<p style="text-align:center;color:#64748b;grid-column:span 2;padding:20px;">খুঁজে পাওয়া যায়নি!</p>'; return; }
-                    currentViewMovies = movies;
-                    list.innerHTML = movies.map((m, index) => {
-                        const isAdult = (m.categories||[]).includes('Adult Content');
-                        const isVerified = localStorage.getItem('isAdult') === 'true';
-                        const imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B' : `/api/image/${m.photo_id}`;
-                        const clickFn = (isAdult && !isVerified) ? `verify18(null)` : `openDetail(${index})`;
-                        const isFav = userFavs.includes(m._id);
-                        return `
-                        <div class="recent-card" onclick="${clickFn}">
-                            <img src="${imgSrc}" loading="lazy" alt="${m.title}">
-                            <div class="recent-card-info">
-                                <div class="recent-card-title">${m.title}</div>
-                                <div class="recent-card-meta">
-                                    <span class="year-badge">${m.year||'N/A'}</span>
-                                    <span style="font-size:10px;color:#94a3b8;">${(m.categories||[])[0]||''}</span>
-                                </div>
-                            </div>
-                            <button class="recent-fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-                        </div>`;
-                    }).join('');
-                    renderPagination(data.total_pages, searchCurrentPage, 'paginationSearch', 'searchMovies');
-                } catch(e) {}
+                try { 
+                    const res = await fetch('/api/list?q='+encodeURIComponent(q)+'&uid='+uid+'&page='+page); 
+                    const data = await res.json(); 
+                    currentViewMovies = data.movies || []; 
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b;">খুঁজে পাওয়া যায়নি!</p>'; 
+                    renderPagination(data.total_pages, searchCurrentPage, 'paginationSearch', 'searchMovies'); 
+                } catch(e) {} 
             }
 
             function renderPagination(totalPages, currentPage, containerId, functionName) {
                 const container = document.getElementById(containerId);
                 if(totalPages <= 1) { container.innerHTML = ''; return; }
                 let html = '';
-                html += `<button class="page-btn" onclick="${functionName}(${currentPage-1})" ${currentPage===1?'disabled':''}><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
-                let startPage = Math.max(1, currentPage-1); let endPage = Math.min(totalPages, currentPage+1);
+                html += `<button class="page-btn" onclick="${functionName}(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+                let startPage = Math.max(1, currentPage - 1);
+                let endPage = Math.min(totalPages, currentPage + 1);
                 if(startPage > 1) { html += `<button class="page-btn" onclick="${functionName}(1)">1</button>`; if(startPage > 2) html += `<span style="color:#64748b;">...</span>`; }
-                for(let i = startPage; i <= endPage; i++) { html += `<button class="page-btn ${i===currentPage?'active':''}" onclick="${functionName}(${i})">${i}</button>`; }
-                if(endPage < totalPages) { if(endPage < totalPages-1) html += `<span style="color:#64748b;">...</span>`; html += `<button class="page-btn" onclick="${functionName}(${totalPages})">${totalPages}</button>`; }
-                html += `<button class="page-btn" onclick="${functionName}(${currentPage+1})" ${currentPage===totalPages?'disabled':''}>Next <i class="fa-solid fa-chevron-right"></i></button>`;
+                for(let i = startPage; i <= endPage; i++) { html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="${functionName}(${i})">${i}</button>`; }
+                if(endPage < totalPages) { if(endPage < totalPages - 1) html += `<span style="color:#64748b;">...</span>`; html += `<button class="page-btn" onclick="${functionName}(${totalPages})">${totalPages}</button>`; }
+                html += `<button class="page-btn" onclick="${functionName}(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>Next <i class="fa-solid fa-chevron-right"></i></button>`;
                 container.innerHTML = html;
                 window.scrollTo({top:0, behavior:'smooth'});
             }
 
-            function openDetail(index) {
-                let m = currentViewMovies[index]; if(!m) return;
-                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`;
-                document.getElementById('detailTitle').innerText = m.title;
-                document.getElementById('detailMeta').innerHTML = `<span>${m.year||'N/A'}</span>`;
-                document.getElementById('detailCats').innerHTML = (m.categories||[]).map(function(c) { return `<span style="background:rgba(239,68,68,0.8);padding:3px 8px;border-radius:6px;font-size:10px;font-weight:600;color:#fff;margin-right:4px;">${c}</span>`; }).join('');
-                let isAdult = m.is_adult || false;
-                let btnsHtml = (m.files||[]).map(function(f) {
-                    let isFree = f.is_unlocked || isUserVip;
-                    return `<button class="dl-file-btn ${isFree?'unlocked':''}" onclick="handleFileClick('${f.id}',${isFree?'true':'false'},${isAdult?'true':'false'})"><span><i class="fa-solid fa-${isFree?'lock-open':'lock'}"></i> Download ${f.quality}</span></button>`;
-                }).join('');
-                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml;
-                document.getElementById('detailModal').style.display = 'flex';
+            function createMovieCard(m, index) { 
+                let isFav = userFavs.includes(m._id); 
+                let isAdult = m.categories && m.categories.includes("Adult Content");
+                let isVerified = localStorage.getItem('isAdult') === 'true';
+                let catsHtml = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(''); 
+                let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
+                let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
+                let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index})"`;
+                
+    return `<div class="movie-card" ${clickAction}>
+                <div style="position: relative; flex-shrink: 0;">
+                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
+                    ${lockOverlay}
+                </div>
+                <div class="movie-info">
+                    <div class="movie-title">${m.title}</div>
+                    <div class="movie-meta-row">
+                        <div class="left-meta">
+                            <span class="year-badge">${m.year || 'N/A'}</span>
+                        </div>
+                        <div class="right-meta">
+                            ${(m.categories || []).map(function(c) { return `<span class="cat-small-tag">${c}</span>`; }).join('')}
+                        </div>
+                    </div>
+                </div>
+                <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
+            </div>`; 
             }
 
+            function openDetail(index) { let m = currentViewMovies[index]; if(!m) return; document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; document.getElementById('detailTitle').innerText = m.title; document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); let isAdult = m.is_adult || false; let btnsHtml = m.files.map(function(f) { let isFree = f.is_unlocked || isUserVip; return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; }).join(''); document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; document.getElementById('detailModal').style.display = 'flex'; }
+            
             function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
             function resetAdModal() { adStartTime = 0; document.getElementById('adClickBtn').style.display = 'block'; document.getElementById('adVerifyBtn').style.display = 'none'; document.getElementById('adTryAgainBtn').style.display = 'none'; }
-
-            function openAdLink() {
-                let linkToOpen = null;
-                if(activeIsAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) { linkToOpen = ADULT_DIRECT_LINKS[Math.floor(Math.random()*ADULT_DIRECT_LINKS.length)]; }
-                else if(DIRECT_LINKS && DIRECT_LINKS.length > 0) { linkToOpen = DIRECT_LINKS[Math.floor(Math.random()*DIRECT_LINKS.length)]; }
+            
+            function openAdLink() { 
+                let linkToOpen = null; 
+                if(activeIsAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) { linkToOpen = ADULT_DIRECT_LINKS[Math.floor(Math.random() * ADULT_DIRECT_LINKS.length)]; } 
+                else if(DIRECT_LINKS && DIRECT_LINKS.length > 0) { linkToOpen = DIRECT_LINKS[Math.floor(Math.random() * DIRECT_LINKS.length)]; } 
                 if(linkToOpen) { tg.openLink(linkToOpen); }
-                adStartTime = Date.now();
+                adStartTime = Date.now(); 
                 document.getElementById('adClickBtn').style.display = 'none';
                 document.getElementById('adVerifyBtn').style.display = 'block';
+                document.getElementById('adTryAgainBtn').style.display = 'none';
             }
-
+            
             function checkAdWatched() {
-                if(adStartTime === 0) return;
+                if (adStartTime === 0) return;
                 let elapsed = Date.now() - adStartTime;
-                if(elapsed >= 15000) { closeModal('adModal'); sendFileRequest(activeFileId); }
-                else {
-                    let remaining = Math.ceil((15000-elapsed)/1000);
+                if (elapsed >= 15000) { 
+                    closeModal('adModal');
+                    sendFileRequest(activeFileId);
+                } else {
+                    let remaining = Math.ceil((10000 - elapsed) / 1000);
                     tg.showAlert(`⚠️ আপনাকে আর ${remaining} সেকেন্ড অপেক্ষা করতে হবে!`);
                     document.getElementById('adVerifyBtn').style.display = 'none';
                     document.getElementById('adTryAgainBtn').style.display = 'block';
+                    document.getElementById('adTryAgainBtn').innerText = 'TRY AGAIN';
                 }
             }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:uid,movieId:fileId,initData:INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
-
-            async function loadFavorites() {
-                const list = document.getElementById('movieListFav');
-                list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div>';
-                try {
-                    const res = await fetch('/api/favs/'+uid);
-                    const data = await res.json();
-                    userFavs = data.map(function(m) { return m._id; });
-                    currentViewMovies = data;
-                    if(data.length === 0) { list.innerHTML = '<p style="text-align:center;color:#64748b;padding:30px;grid-column:span 2;">কোনো ফেভারিট নেই!</p>'; return; }
-                    list.innerHTML = data.map((m, index) => {
-                        const isAdult = (m.categories||[]).includes('Adult Content');
-                        const isVerified = localStorage.getItem('isAdult') === 'true';
-                        const imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B' : `/api/image/${m.photo_id}`;
-                        return `
-                        <div class="recent-card" onclick="openDetail(${index})">
-                            <img src="${imgSrc}" loading="lazy" alt="${m.title}">
-                            <div class="recent-card-info">
-                                <div class="recent-card-title">${m.title}</div>
-                                <div class="recent-card-meta">
-                                    <span class="year-badge">${m.year||'N/A'}</span>
-                                    <span style="font-size:10px;color:#94a3b8;">${(m.categories||[])[0]||''}</span>
-                                </div>
-                            </div>
-                            <button class="recent-fav-btn active" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-                        </div>`;
-                    }).join('');
-                } catch(e) {}
-            }
-
-            async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:uid,title:title,initData:INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t){return t!==title;}); } } catch(e) {} }
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
+            async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
-
-            document.getElementById('searchInput').addEventListener('focus', function() {
-                document.querySelector('.nav-item:nth-child(2)').click();
-                setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100);
-            });
-
-            fetchUserInfo(); loadTrending(); loadRecentMovies(1); loadFavorites();
+            document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
+            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending();
         </script>
     </body></html>'''
-
+    
     html_code = html_code.replace("__DL_JSON__", dl_json)
     html_code = html_code.replace("__ADL_JSON__", adl_json)
     html_code = html_code.replace("__BOT_TOKEN__", TOKEN)
