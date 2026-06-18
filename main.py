@@ -795,7 +795,7 @@ async def web_ui():
             body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
             .movie-card:active { transform: scale(0.98); }
             .movie-thumb { width: 100%; padding-bottom: 56.25%; position: relative; background: #000; }
-            .movie-card img { width: 160px; height: 90px; object-fit: cover; flex-shrink: 0; }
+            .movie-card img { width: 430px; height: 240px; object-fit: cover; flex-shrink: 0; }
             .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
             .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
