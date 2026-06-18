@@ -879,6 +879,24 @@ async def update_movie(movie_id: str, movie_data: dict = Body(...), auth: bool =
     raise HTTPException(status_code=400, detail="Failed to update movie")
 
 # ==========================================
+# Get Photo ID for Admin Panel
+# ==========================================
+@dp.message(F.photo)
+async def get_file_id_for_admin(message: types.Message):
+    # শুধুমাত্র অ্যাডমিনরা এই ফিচার ব্যবহার করতে পারবেন
+    if message.from_user.id not in admin_cache: 
+        return
+
+    # ছবির File ID বের করা (সবচেয়ে বড় সাইজের ছবির আইডি নেওয়া হয়েছে)
+    file_id = message.photo[-1].file_id
+    
+    # অ্যাডমিনকে আইডি রিপ্লাই করে দেওয়া
+    await message.answer(
+        f"🖼️ <b>New Photo File ID:</b>\n\n<code>{file_id}</code>\n\n✅ এই আইডিটি কপি করে Admin Panel এর 'Poster Photo ID' বক্সে পেস্ট করুন।", 
+        parse_mode="HTML"
+    )
+
+# ==========================================
 # 9. Main Web App UI
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
