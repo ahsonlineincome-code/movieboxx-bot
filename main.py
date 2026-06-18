@@ -417,7 +417,7 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
 # ==========================================
-# 7.5 Single Movie Upload
+# 7.5 Single Movie Upload & Series Logic
 # ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
@@ -445,9 +445,8 @@ async def fallback_photo(m: types.Message):
 async def receive_movie_title(m: types.Message, state: FSMContext):
     title_input = m.text.strip()
     
-    # চেক করা হচ্ছে এটি কোনো সিরিজের এপিসোড কিনা (যেমন: Study Group EP 06)
     import re
-    # EP বা S0E আছে কিনা চেক করছি এবং বেস নাম বের করছি
+    # চেক করা হচ্ছে এটি সিরিজের এপিসোড কিনা (যেমন: Study Group EP 06)
     match = re.search(r'(.*?)\s+(?:EP|S\d+E)\d+', title_input, re.IGNORECASE)
     
     if match:
@@ -456,25 +455,26 @@ async def receive_movie_title(m: types.Message, state: FSMContext):
         existing_series = await db.movies.find_one({"title": {"$regex": f"^{re.escape(base_title)}", "$options": "i"}})
         
         if existing_series:
+            # ✅ সিরিজ পাওয়া গেছে, পুরাতন ডাটা ব্যবহার করা হবে
             await state.update_data(
-                existing_id=str(existing_series['_id']), # ID সেভ করা হলো
-                title=existing_series['title'], # বা নতুন টাইটেল লজিক নিচে
+                title=existing_series['title'], # আগের টাইটেল রাখা হলো, পরে আপডেট হবে
                 base_name=base_title,
                 photo_id=existing_series['photo_id'],
                 year=existing_series['year'],
                 categories=existing_series.get('categories', []),
                 is_series_update=True,
+                existing_id=str(existing_series['_id']), # ID সেভ করা হলো
                 files_list=existing_series.get('files', []) # বিদ্যমান ফাইল লিস্ট নেওয়া হচ্ছে
             )
             
-            await m.answer(f"✅ <b>{base_title}</b> সিরিজ পাওয়া গেছে!\nপুরাতন পোস্টার এবং ক্যাটাগরি ব্যবহার করা হচ্ছে। এখন <b>Quality</b> লিখুন:", parse_mode="HTML")
+            await m.answer(f"✅ <b>{base_title}</b> সিরিজ পাওয়া গেছে!\nপুরাতন পোস্টার এবং ক্যাটাগরি ব্যবহার করা হচ্ছে। এখন <b>Quality/Episode Name</b> লিখুন:", parse_mode="HTML")
             await state.set_state(AdminStates.waiting_for_quality)
             return
 
     # যদি সিরিজ না পাওয়া যায় অথবা নতুন মুভি হয়
     await state.update_data(title=title_input)
     await state.set_state(AdminStates.waiting_for_quality)
-    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন। (যেমন: EP 06)", parse_mode="HTML")
+    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title)
 async def fallback_title(m: types.Message):
@@ -489,14 +489,21 @@ async def receive_movie_quality(m: types.Message, state: FSMContext):
     if data.get("is_series_update"):
         base_name = data['base_name']
         files = data.get('files_list', [])
+        existing_id = data.get('existing_id')
         
+        if not existing_id:
+            await m.answer("❌ Error: Series ID not found. Please try again.")
+            await state.clear()
+            return
+            
         # নতুন ফাইল অবজেক্ট তৈরি
         new_file_entry = {
-            "id": str(ObjectId()), # ইউনিক আইডি
+            "id": str(ObjectId()),
             "file_id": data['file_id'],
             "file_type": data['file_type'],
             "title": quality, # যেমন: EP 06
-            "quality": "HD" # ডিফল্ট, চাইলে ইউজারকে জিজ্ঞেস করতে পারেন
+            "quality": "HD",
+            "is_unlocked": False # ডিফল্ট লক
         }
         
         files.append(new_file_entry)
@@ -506,20 +513,22 @@ async def receive_movie_quality(m: types.Message, state: FSMContext):
         new_title = f"{base_name} S01 EP 01 - {total_eps} Complete"
         
         # ডাটাবেস আপডেট
-        await db.movies.update_one(
-            {"_id": ObjectId(existing_series['_id'])}, # আগের ডকুমেন্ট আইডি দরকার হবে, তাই উপরে existing_series সেভ করতে হবে
-            {"$set": {
-                "files": files,
-                "title": new_title,
-                "clicks": existing_series.get("clicks", 0) # ক্লিক কাউন্ট রিটেইন করতে
-            }}
-        )
-        
-        await m.answer(f"✅ <b>{new_title}</b> আপডেট হয়েছে! মোট এপিসোড: {total_eps}", parse_mode="HTML")
+        try:
+            await db.movies.update_one(
+                {"_id": ObjectId(existing_id)}, 
+                {"$set": {
+                    "files": files,
+                    "title": new_title
+                }}
+            )
+            await m.answer(f"✅ <b>{new_title}</b> আপডেট হয়েছে! মোট এপিসোড: {total_eps}", parse_mode="HTML")
+        except Exception as e:
+            await m.answer(f"❌ Update Failed: {e}")
+            
         await state.clear()
         return
 
-    # নরমাল নতুন মুভি আপলোড লজিক (আগের মতো)...
+    # নরমাল নতুন মুভি আপলোড লজিক
     await state.update_data(quality=quality)
     await state.set_state(AdminStates.waiting_for_year)
     await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
