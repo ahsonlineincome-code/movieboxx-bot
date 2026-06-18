@@ -1050,7 +1050,7 @@ async def web_ui():
          }
 
          /* ========================= */
-         /* ✅ TRENDING SLIDER STYLES */
+         /* ✅ TRENDING SLIDER STYLES (UPDATED) */
          /* ========================= */
          .trending-section-wrapper {
             background: rgba(30, 41, 59, 0.4);
@@ -1086,15 +1086,12 @@ async def web_ui():
 
          .trending-card { 
             flex: 0 0 auto;
-            width: 140px;
+            width: 240px; /* ✅ Wide Thumbnail Size (YouTube Style) */
             background: #0f172a;
             border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-            
-            /* ✅ ব্রডার যোগ করা হয়েছে (User Request) */
             border: 2px solid #334155;
-            
             cursor: pointer;
             position: relative;
             transition: transform 0.2s;
@@ -1104,7 +1101,7 @@ async def web_ui():
 
          .poster-slider { 
             width: 100%; 
-            aspect-ratio: 2/3; 
+            aspect-ratio: 16/9; /* ✅ Changed from 2/3 to 16/9 for wide look */
             position: relative; 
          }
          .poster-slider img { 
@@ -1194,13 +1191,7 @@ async def web_ui():
                 </div>
             </div>
 
-            <!-- ✅ RECENTLY ADDED SLIDER (NEW) -->
-            <div class="trending-section-wrapper">
-                <div class="section-header"><i class="fa-solid fa-clock"></i> Recently Added</div>
-                <div class="trending-slider-container" id="recentSlider">
-                    <div style="width: 100%; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
-                </div>
-            </div>
+            <!-- ✅ Recently Added Slider DELETED as per request -->
 
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="paginationHome" class="pagination-container"></div>
@@ -1283,7 +1274,6 @@ async def web_ui():
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
             let trendingMovies = []; 
-            let recentMovies = []; // ✅ নতুন ভেরিয়েবল
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
@@ -1345,58 +1335,13 @@ async def web_ui():
                 }
             }
 
-            // ✅ RECENTLY ADDED SLIDER LOAD FUNCTION (NEW)
-            async function loadRecent() {
-                try {
-                    const res = await fetch('/api/movies/recent');
-                    const movies = await res.json();
-                    recentMovies = movies;
-                    const container = document.getElementById('recentSlider');
-                    
-                    if (movies.length === 0) {
-                        document.querySelector('#recentSlider').closest('.trending-section-wrapper').style.display = 'none';
-                        return;
-                    }
-
-                    container.innerHTML = movies.map((m, index) => {
-                        const badgeHtml = m.categories && m.categories.includes('Adult Content') 
-                            ? '<div class="badge-18-slider">18+</div>' 
-                            : '';
-                        
-                        const imgUrl = `/api/image/${m.photo_id}`;
-
-                        return `
-                        <div class="trending-card" onclick="openRecentDetail(${index})">
-                            <div class="poster-slider">
-                                <img src="${imgUrl}" loading="lazy" alt="${m.title}">
-                                ${badgeHtml}
-                            </div>
-                            <div class="info-slider">
-                                <div class="movie-title-slider">${m.title}</div>
-                                <div class="movie-meta-slider">
-                                    <span>${m.quality || 'HD'}</span>
-                                    <span>${m.year || 'N/A'}</span>
-                                </div>
-                            </div>
-                        </div>
-                        `;
-                    }).join('');
-
-                    startAutoSlider('recentSlider');
-                    
-                } catch (error) {
-                    console.error("Recent Error:", error);
-                    document.querySelector('#recentSlider').closest('.trending-section-wrapper').style.display = 'none';
-                }
-            }
-
             // Auto Scroll Function (Updated)
             function startAutoSlider(sliderId) {
                 const slider = document.getElementById(sliderId);
                 if(!slider) return;
 
                 const intervalId = setInterval(() => {
-                    const cardWidth = 155; 
+                    const cardWidth = 260; // 240px card + 20px gap
                     const maxScroll = slider.scrollWidth - slider.clientWidth;
                     
                     if (slider.scrollLeft >= maxScroll) {
@@ -1410,13 +1355,6 @@ async def web_ui():
             function openTrendingDetail(index) {
                 const originalView = currentViewMovies;
                 currentViewMovies = trendingMovies;
-                openDetail(index);
-                currentViewMovies = originalView;
-            }
-
-            function openRecentDetail(index) {
-                const originalView = currentViewMovies;
-                currentViewMovies = recentMovies;
                 openDetail(index);
                 currentViewMovies = originalView;
             }
@@ -1493,7 +1431,34 @@ async def web_ui():
             </div>`; 
             }
 
-            function openDetail(index) { let m = currentViewMovies[index]; if(!m) return; document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; document.getElementById('detailTitle').innerText = m.title; document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); let isAdult = m.is_adult || false; let btnsHtml = m.files.map(function(f) { let isFree = f.is_unlocked || isUserVip; return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; }).join(''); document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; document.getElementById('detailModal').style.display = 'flex'; }
+            // ✅ FIXED openDetail to handle Single File and Multi File
+            function openDetail(index) { 
+                let m = currentViewMovies[index]; 
+                if(!m) return; 
+                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; 
+                document.getElementById('detailTitle').innerText = m.title; 
+                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
+                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
+                
+                let isAdult = m.categories && m.categories.includes("Adult Content");
+                let btnsHtml = "";
+
+                // Check if it is a multi-file structure (files array exists)
+                if (m.files && Array.isArray(m.files) && m.files.length > 0) {
+                    btnsHtml = m.files.map(function(f) { 
+                        let isFree = f.is_unlocked || isUserVip; 
+                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
+                    }).join('');
+                } else {
+                    // Handle Single File (The current bot structure)
+                    // We pass the movie ID (_id) as the file reference since there is only one file_id
+                    let isFree = isUserVip; 
+                    btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${m.quality || 'Full Movie'}</span></button>`;
+                }
+                
+                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
+                document.getElementById('detailModal').style.display = 'flex'; 
+            }
             
             function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
             function resetAdModal() { adStartTime = 0; document.getElementById('adClickBtn').style.display = 'block'; document.getElementById('adVerifyBtn').style.display = 'none'; document.getElementById('adTryAgainBtn').style.display = 'none'; }
@@ -1529,7 +1494,7 @@ async def web_ui():
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
-            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); loadRecent();
+            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending();
         </script>
     </body></html>'''
     
