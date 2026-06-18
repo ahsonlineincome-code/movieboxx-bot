@@ -955,10 +955,43 @@ async def web_ui():
             .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
             .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
-            .movie-card { display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
-            body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
+            
+            /* ✅ RAINBOW NEON BORDER STYLE */
+            .movie-card { 
+                display: flex; 
+                flex-direction: column; 
+                background: #0f172a; /* Dark background for the card content */
+                border-radius: 16px; 
+                overflow: hidden; 
+                cursor: pointer; 
+                transition: 0.3s; 
+                position: relative; 
+                z-index: 1;
+                /* Border removed here to use pseudo-element */
+                border: none; 
+            }
+            body.oled-mode .movie-card { background: #000; }
             .movie-card:active { transform: scale(0.98); }
-            .movie-thumb { width: 100%; padding-bottom: 56.25%; position: relative; background: #000; }
+            
+            /* The Rainbow Gradient Border */
+            .movie-card::before {
+                content: "";
+                position: absolute;
+                inset: -3px; /* Border thickness */
+                z-index: -1;
+                /* Rainbow Gradient */
+                background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000);
+                background-size: 400%;
+                border-radius: 18px; /* Slightly larger than card radius */
+                animation: glowing 20s linear infinite;
+            }
+
+            @keyframes glowing {
+                0% { background-position: 0 0; }
+                50% { background-position: 400% 0; }
+                100% { background-position: 0 0; }
+            }
+
             .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
             .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
             .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: normal; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -1050,7 +1083,7 @@ async def web_ui():
          }
 
          /* ========================= */
-         /* ✅ TRENDING SLIDER STYLES (UPDATED) */
+         /* ✅ TRENDING SLIDER STYLES */
          /* ========================= */
          .trending-section-wrapper {
             background: rgba(30, 41, 59, 0.4);
@@ -1086,7 +1119,7 @@ async def web_ui():
 
          .trending-card { 
             flex: 0 0 auto;
-            width: 240px; /* ✅ Wide Thumbnail Size (YouTube Style) */
+            width: 240px; /* Wide Thumbnail Size */
             background: #0f172a;
             border-radius: 12px;
             overflow: hidden;
@@ -1101,7 +1134,7 @@ async def web_ui():
 
          .poster-slider { 
             width: 100%; 
-            aspect-ratio: 16/9; /* ✅ Changed from 2/3 to 16/9 for wide look */
+            aspect-ratio: 16/9; 
             position: relative; 
          }
          .poster-slider img { 
@@ -1191,7 +1224,12 @@ async def web_ui():
                 </div>
             </div>
 
-            <!-- ✅ Recently Added Slider DELETED as per request -->
+            <!-- ✅ RECENTLY ADDED HEADER ADDED BACK -->
+            <div style="padding: 0 15px 10px 15px;">
+                <div class="section-header" style="margin-bottom: 5px; margin-left: 0px;">
+                    <i class="fa-solid fa-clock"></i> Recently Added
+                </div>
+            </div>
 
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="paginationHome" class="pagination-container"></div>
