@@ -416,8 +416,12 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
+# ফাইলের শুরুতে import re আছে কিনা নিশ্চিত হন
+import re 
+from bson import ObjectId
+
 # ==========================================
-# 7.5 Single Movie Upload & Series Logic
+# 7.5 Single Movie Upload & Series Logic (Updated)
 # ==========================================
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
@@ -425,8 +429,73 @@ async def receive_movie_file(m: types.Message, state: FSMContext):
     if current_state is not None:
         await m.answer("⚠️ আপনি অন্য একটি প্রসেসে আটকে আছেন! আগে /cancel করুন।", parse_mode="HTML")
         return
+
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
+    
+    # ফাইলের নাম নেওয়া হচ্ছে
+    file_name = m.video.file_name if m.video else m.document.file_name
+
+    # ==========================================
+    # 🚀 SMART SERIES AUTO-DETECTION LOGIC
+    # ==========================================
+    # যদি ফাইলের নামে EP বা S01E থাকে, তাহলে এটি অটোমেটিক সিরিজ হিসেবে যুক্ত করার চেষ্টা করবে
+    if file_name:
+        # রেগেক্স: ফাইলের নাম থেকে বেস নাম এবং এপিসোড নম্বর খুঁজে বের করা
+        # উদাহরণ: "Study Group (2025) S01E07" -> Base: "Study Group (2025)", EP: "S01E07"
+        match = re.search(r'(.*?)\s+(?:S\d+E\d+|EP\s?\d+)', file_name, re.IGNORECASE)
+
+        if match:
+            base_name = match.group(1).strip()
+            
+            # নির্দিষ্ট এপিসোড নাম বের করা (যেমন: S01E07 বা EP 07)
+            ep_match = re.search(r'(S\d+E\d+|EP\s?\d+)', file_name, re.IGNORECASE)
+            ep_name = ep_match.group(1) if ep_match else "New Episode"
+
+            # ডাটাবেসে চেক করা হচ্ছে এই সিরিজটি আগে আপলোড করা হয়েছে কিনা
+            existing_series = await db.movies.find_one({"title": {"$regex": f"^{re.escape(base_name)}", "$options": "i"}})
+
+            if existing_series:
+                # ✅ সিরিজ পাওয়া গেছে! এখন অটোমেটিক্যালি আপডেট হবে
+                files = existing_series.get('files', [])
+                existing_id = existing_series['_id']
+
+                # নতুন ফাইল তৈরি করা হচ্ছে
+                new_file_entry = {
+                    "id": str(ObjectId()),
+                    "file_id": fid,
+                    "file_type": ftype,
+                    "title": ep_name, # ফাইলের নাম থেকে এপিসোড নম্বার সেট হয়ে গেছে
+                    "quality": "HD", # ডিফল্ট কোয়ালিটি HD
+                    "is_unlocked": False
+                }
+
+                files.append(new_file_entry)
+                total_eps = len(files)
+                
+                # নতুন টাইটেল সেট করা (যেমন: Study Group (2025) S01 EP 01 - 07 Complete)
+                new_title = f"{base_name} S01 EP 01 - {total_eps} Complete"
+
+                try:
+                    await db.movies.update_one(
+                        {"_id": existing_id}, 
+                        {"$set": {
+                            "files": files,
+                            "title": new_title,
+                            "updated_at": datetime.datetime.utcnow() # আপডেট টাইম সেভ
+                        }}
+                    )
+                    # ইউজারকে কনফার্মেশন দেওয়া এবং প্রসেস শেষ
+                    await m.answer(f"✅ <b>{new_title}</b>\n\n🚀 নতুন এপিসোড (<b>{ep_name}</b>) সফলভাবে যুক্ত হয়েছে!\n(অটোমেটিক সেভ হয়েছে)", parse_mode="HTML")
+                    return  # এখানেই ফাংশন শেষ, নিচে আর যাবে না
+                except Exception as e:
+                    await m.answer(f"❌ সিরিজ আপডেটে সমস্যা হয়েছে: {e}")
+                    return
+
+    # ==========================================
+    # NORMAL UPLOAD (যদি সিরিজ না পাওয়া যায়)
+    # ==========================================
+    # যদি উপরের লজিকে সিরিজ না পাওয়া যায়, তাহলে স্বাভাবিক নিয়মে আগাবে
     await state.set_state(AdminStates.waiting_for_photo)
     await state.update_data(file_id=fid, file_type=ftype, categories=[])
     await m.answer("✅ ফাইল পেয়েছি! এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
