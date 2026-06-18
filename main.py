@@ -1198,7 +1198,7 @@ async def web_ui():
                 
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${imgSrc}" style="width: 110px; height: 160px; object-fit: cover;">
+                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
                     ${lockOverlay}
                 </div>
                 <div class="movie-info">
