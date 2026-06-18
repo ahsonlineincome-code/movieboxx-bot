@@ -443,9 +443,41 @@ async def fallback_photo(m: types.Message):
 
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
-    await state.update_data(title=m.text.strip())
+    title_input = m.text.strip()
+    
+    # চেক করা হচ্ছে এটি কোনো সিরিজের এপিসোড কিনা (যেমন: Study Group EP 06)
+    import re
+    # EP বা S0E আছে কিনা চেক করছি এবং বেস নাম বের করছি
+    match = re.search(r'(.*?)\s+(?:EP|S\d+E)\d+', title_input, re.IGNORECASE)
+    
+    if match:
+        base_title = match.group(1).strip()
+        # ডাটাবেসে খোঁজা হচ্ছে এই বেস নামের সিরিজ আছে কিনা
+        existing_series = await db.movies.find_one({"title": {"$regex": f"^{re.escape(base_title)}", "$options": "i"}})
+        
+        if existing_series:
+            await state.update_data(
+                ...
+                existing_id=str(existing_series['_id']), # ID সেভ করা হলো
+                ...
+            )
+                title=existing_series['title'], # বা নতুন টাইটেল লজিক নিচে
+                base_name=base_title,
+                photo_id=existing_series['photo_id'],
+                year=existing_series['year'],
+                categories=existing_series.get('categories', []),
+                is_series_update=True,
+                files_list=existing_series.get('files', []) # বিদ্যমান ফাইল লিস্ট নেওয়া হচ্ছে
+            )
+            
+            await m.answer(f"✅ <b>{base_title}</b> সিরিজ পাওয়া গেছে!\nপুরাতন পোস্টার এবং ক্যাটাগরি ব্যবহার করা হচ্ছে। এখন <b>Quality</b> লিখুন:", parse_mode="HTML")
+            await state.set_state(AdminStates.waiting_for_quality)
+            return
+
+    # যদি সিরিজ না পাওয়া যায় অথবা নতুন মুভি হয়
+    await state.update_data(title=title_input)
     await state.set_state(AdminStates.waiting_for_quality)
-    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
+    await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন। (যেমন: EP 06)", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title)
 async def fallback_title(m: types.Message):
@@ -453,7 +485,45 @@ async def fallback_title(m: types.Message):
 
 @dp.message(AdminStates.waiting_for_quality, F.text)
 async def receive_movie_quality(m: types.Message, state: FSMContext):
-    await state.update_data(quality=m.text.strip())
+    data = await state.get_data()
+    quality = m.text.strip()
+    
+    # যদি এটি সিরিজ আপডেট হয়
+    if data.get("is_series_update"):
+        base_name = data['base_name']
+        files = data.get('files_list', [])
+        
+        # নতুন ফাইল অবজেক্ট তৈরি
+        new_file_entry = {
+            "id": str(ObjectId()), # ইউনিক আইডি
+            "file_id": data['file_id'],
+            "file_type": data['file_type'],
+            "title": quality, # যেমন: EP 06
+            "quality": "HD" # ডিফল্ট, চাইলে ইউজারকে জিজ্ঞেস করতে পারেন
+        }
+        
+        files.append(new_file_entry)
+        
+        # টাইটেল আপডেট (যেমন: Study Group S01 EP 01 - 06 Complete)
+        total_eps = len(files)
+        new_title = f"{base_name} S01 EP 01 - {total_eps} Complete"
+        
+        # ডাটাবেস আপডেট
+        await db.movies.update_one(
+            {"_id": ObjectId(existing_series['_id'])}, # আগের ডকুমেন্ট আইডি দরকার হবে, তাই উপরে existing_series সেভ করতে হবে
+            {"$set": {
+                "files": files,
+                "title": new_title,
+                "clicks": existing_series.get("clicks", 0) # ক্লিক কাউন্ট রিটেইন করতে
+            }}
+        )
+        
+        await m.answer(f"✅ <b>{new_title}</b> আপডেট হয়েছে! মোট এপিসোড: {total_eps}", parse_mode="HTML")
+        await state.clear()
+        return
+
+    # নরমাল নতুন মুভি আপলোড লজিক (আগের মতো)...
+    await state.update_data(quality=quality)
     await state.set_state(AdminStates.waiting_for_year)
     await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
 
@@ -962,7 +1032,7 @@ async def web_ui():
                 flex-direction: column; 
                 background: #0f172a; 
                 border-radius: 16px; 
-                overflow: hidden; 
+                overflow: visible; /* ✅ hidden থেকে visible করুন */
                 cursor: pointer; 
                 transition: 0.3s; 
                 position: relative; 
@@ -972,15 +1042,24 @@ async def web_ui():
             body.oled-mode .movie-card { background: #000; }
             .movie-card:active { transform: scale(0.98); }
             
-            /* Static Beautiful Gradient Border */
+            /* Static Gradient Border */
             .movie-card::before {
                 content: "";
                 position: absolute;
-                inset: -3px; /* Border thickness */
+                inset: -3px; 
                 z-index: -1;
-                /* Theme matching Gradient (Red to Orange to Purple) */
                 background: linear-gradient(45deg, #ff416c, #ff4b2b, #ff8c00, #b91c1c);
-                border-radius: 18px; /* Slightly larger than card radius */
+                border-radius: 18px; 
+            }
+
+            /* ✅ নতুন ইমেজ র‍্যাপার ক্লাস যোগ করুন */
+            .movie-img-wrapper {
+                width: 100%;
+                aspect-ratio: 16/9;
+                position: relative;
+                overflow: hidden; /* ইমেজ গোলাকার হওয়ার জন্য */
+                border-radius: 14px; /* কার্ডের রাউন্ডেড কর্নারের সামান্য কম */
+                background: #000;
             }
 
             .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
@@ -1476,8 +1555,11 @@ async def web_ui():
                 
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
-                    ${lockOverlay}
+                    <!-- ✅ এখানে ইমেজটিকে wrapper দিয়ে ঢেকে দেওয়া হলো -->
+                    <div class="movie-img-wrapper">
+                        <img src="${imgSrc}" loading="lazy" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+                        ${lockOverlay}
+                    </div>
                     ${adminViewBadge}
                 </div>
                 <div class="movie-info">
