@@ -859,6 +859,36 @@ async def web_ui():
             .page-btn:hover { background: #334155; color: white; }
             .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
             .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
+
+            /* নতুন মেটা রো (Year এবং Category এর জন্য) */
+           .movie-meta-row {
+            display: flex;
+            justify-content: space-between; /* Year বামে, Category ডানে */
+            align-items: center;
+            margin-top: 5px;
+           }
+
+          /* বাম পাশের Year বাটনের স্টাইল */
+         .year-badge {
+          background-color: #22B8FF; /* Bright Sky Blue */
+          color: #fff;
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 700;
+         }
+
+         /* ডান পাশের ছোট Category ট্যাগের স্টাইল */
+         .cat-small-tag {
+         background: rgba(255, 255, 255, 0.1);
+         color: #cbd5e1;
+         padding: 2px 6px;
+         border-radius: 4px;
+         font-size: 10px;
+         margin-left: 4px;
+         display: inline-block;
+         }
+         
         </style>
     </head>
     <body>
@@ -1024,17 +1054,24 @@ async def web_ui():
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index})"`;
                 
-                return `<div class="movie-card" ${clickAction}>
-                            <div class="movie-thumb">
-                                <img src="${imgSrc}">
-                                ${lockOverlay}
-                                <div class="movie-overlay">
-                                    <div class="movie-title">${m._id}</div>
-                                    <div class="movie-cats">${catsHtml}</div>
-                                </div>
-                            </div>
-                            <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-                        </div>`; 
+    return `<div class="movie-card" ${clickAction}>
+                <div style="position: relative; flex-shrink: 0;">
+                    <img src="${imgSrc}" style="width: 110px; height: 160px; object-fit: cover;">
+                    ${lockOverlay}
+                </div>
+                <div class="movie-info">
+                    <div class="movie-title">${m.title}</div>
+                    <div class="movie-meta-row">
+                        <div class="left-meta">
+                            <span class="year-badge">${m.year || 'N/A'}</span>
+                        </div>
+                        <div class="right-meta">
+                            ${(m.categories || []).map(function(c) { return `<span class="cat-small-tag">${c}</span>`; }).join('')}
+                        </div>
+                    </div>
+                </div>
+                <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
+            </div>`; 
             }
 
             function openDetail(index) { let m = currentViewMovies[index]; if(!m) return; document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; document.getElementById('detailTitle').innerText = m._id; document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); let isAdult = m.is_adult || false; let btnsHtml = m.files.map(function(f) { let isFree = f.is_unlocked || isUserVip; return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; }).join(''); document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; document.getElementById('detailModal').style.display = 'flex'; }
