@@ -683,6 +683,17 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
             .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; } .delete-btn:hover { background: #ef4444; color: white; }
             .empty-state { text-align: center; padding: 40px; color: #64748b; }
+            
+            /* Edit Modal Styles */
+            .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
+            .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
+            .modal-content h3 { margin-top: 0; color: #ef4444; }
+            .form-group { margin-bottom: 15px; }
+            .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
+            .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
+            .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+            .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
+            .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
         </style>
     </head>
     <body>
@@ -698,147 +709,139 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
     <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
     <input type="text" id="movieSearchInput" placeholder="🔍 Search movie..." style="padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px;">
 </div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+
+        <!-- Edit Modal HTML -->
+        <div id="editModal" class="modal">
+            <div class="modal-content">
+                <h3>✏️ Edit Movie</h3>
+                <input type="hidden" id="editId">
+                
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="editTitle">
+                </div>
+                
+                <div class="form-group">
+                    <label>Poster Photo ID (File ID)</label>
+                    <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
+                </div>
+
+                <div class="form-group">
+                    <label>Quality</label>
+                    <input type="text" id="editQuality">
+                </div>
+
+                <div class="form-group">
+                    <label>Year</label>
+                    <input type="text" id="editYear">
+                </div>
+
+                <div class="form-group">
+                    <label>Categories (Comma separated)</label>
+                    <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
+                </div>
+
+                <div class="modal-buttons">
+                    <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
+                    <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <script>
             async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
             let allMovies = [];
-async function fetchMovies() { 
-    try { 
-        const res = await fetch('/api/admin/movies'); 
-        allMovies = await res.json(); 
-        renderMovies(allMovies); 
-    } catch(e) {} 
-}
+            async function fetchMovies() { 
+                try { 
+                    const res = await fetch('/api/admin/movies'); 
+                    allMovies = await res.json(); 
+                    renderMovies(allMovies); 
+                } catch(e) {} 
+            }
 
-function renderMovies(moviesToRender) {
-    const tbody = document.getElementById('movieTableBody'); 
-    if(moviesToRender.length === 0) { 
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
-        return; 
-    } 
-    tbody.innerHTML = moviesToRender.map(m => `
-        <tr id="row-${m._id}">
-            <td><strong>${m.title}</strong><br><small>ID: ${m._id}</small></td>
-            <td>${m.quality || 'N/A'}</td>
-            <td>${(m.categories || []).join(', ')}</td>
-            <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
-            <td>
-                <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Delete</button>
-                <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding: 6px 12px; font-size: 12px; background: #22B8FF; border:none; color:white; border-radius:4px; cursor:pointer;">✏️ Edit</button>
-            </td>
-        </tr>`).join(''); 
-}
+            function renderMovies(moviesToRender) {
+                const tbody = document.getElementById('movieTableBody'); 
+                if(moviesToRender.length === 0) { 
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
+                    return; 
+                } 
+                tbody.innerHTML = moviesToRender.map(m => `
+                    <tr id="row-${m._id}">
+                        <td><strong>${m.title}</strong><br><small>ID: ${m._id}</small></td>
+                        <td>${m.quality || 'N/A'}</td>
+                        <td>${(m.categories || []).join(', ')}</td>
+                        <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
+                        <td>
+                            <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Delete</button>
+                            <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding: 6px 12px; font-size: 12px; background: #22B8FF; border:none; color:white; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+                        </td>
+                    </tr>`).join(''); 
+            }
 
-document.getElementById('movieSearchInput').addEventListener('input', function(e) {
-    const searchTerm = e.target.value.toLowerCase();
-    const filteredMovies = allMovies.filter(m => 
-        (m.title || '').toLowerCase().includes(searchTerm) || 
-        (m.quality || '').toLowerCase().includes(searchTerm) ||
-        (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
-    );
-    renderMovies(filteredMovies);
-});
+            document.getElementById('movieSearchInput').addEventListener('input', function(e) {
+                const searchTerm = e.target.value.toLowerCase();
+                const filteredMovies = allMovies.filter(m => 
+                    (m.title || '').toLowerCase().includes(searchTerm) || 
+                    (m.quality || '').toLowerCase().includes(searchTerm) ||
+                    (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
+                );
+                renderMovies(filteredMovies);
+            });
+            
             async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
+            
+            // Edit Modal Functions
+            function openEditModal(id) {
+                const movie = allMovies.find(m => m._id === id);
+                if (!movie) return;
+
+                document.getElementById('editId').value = movie._id;
+                document.getElementById('editTitle').value = movie.title || '';
+                document.getElementById('editPhoto').value = movie.photo_id || '';
+                document.getElementById('editQuality').value = movie.quality || '';
+                document.getElementById('editYear').value = movie.year || '';
+                document.getElementById('editCategories').value = (movie.categories || []).join(', ');
+
+                document.getElementById('editModal').style.display = 'flex';
+            }
+
+            function closeEditModal() {
+                document.getElementById('editModal').style.display = 'none';
+            }
+
+            async function saveMovieEdit() {
+                const id = document.getElementById('editId').value;
+                const data = {
+                    title: document.getElementById('editTitle').value,
+                    photo_id: document.getElementById('editPhoto').value,
+                    quality: document.getElementById('editQuality').value,
+                    year: document.getElementById('editYear').value,
+                    categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s !== '')
+                };
+
+                try {
+                    const res = await fetch(`/api/admin/movie/${id}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                    
+                    const result = await res.json();
+                    if (result.ok) {
+                        alert('✅ Movie Updated Successfully!');
+                        closeEditModal();
+                        fetchMovies(); // টেবিল রিফ্রেশ করার জন্য
+                    } else {
+                        alert('❌ Error updating movie: ' + (result.detail || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert('❌ An error occurred');
+                }
+            }
+
             fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
         </script>
-        function openEditModal(id) {
-    const movie = allMovies.find(m => m._id === id);
-    if (!movie) return;
-
-    document.getElementById('editId').value = movie._id;
-    document.getElementById('editTitle').value = movie.title || '';
-    document.getElementById('editPhoto').value = movie.photo_id || '';
-    document.getElementById('editQuality').value = movie.quality || '';
-    document.getElementById('editYear').value = movie.year || '';
-    document.getElementById('editCategories').value = (movie.categories || []).join(', ');
-
-    document.getElementById('editModal').style.display = 'flex';
-}
-
-function closeEditModal() {
-    document.getElementById('editModal').style.display = 'none';
-}
-
-async function saveMovieEdit() {
-    const id = document.getElementById('editId').value;
-    const data = {
-        title: document.getElementById('editTitle').value,
-        photo_id: document.getElementById('editPhoto').value,
-        quality: document.getElementById('editQuality').value,
-        year: document.getElementById('editYear').value,
-        categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s !== '')
-    };
-
-    try {
-        const res = await fetch(`/api/admin/movie/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        
-        const result = await res.json();
-        if (result.ok) {
-            alert('✅ Movie Updated Successfully!');
-            closeEditModal();
-            fetchMovies(); // টেবিল রিফ্রেশ করার জন্য
-        } else {
-            alert('❌ Error updating movie: ' + (result.detail || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error(error);
-        alert('❌ An error occurred');
-    }
-}
-   <!-- Edit Modal Styles -->
-<style>
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
-    .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
-    .modal-content h3 { margin-top: 0; color: #ef4444; }
-    .form-group { margin-bottom: 15px; }
-    .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
-    .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
-    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
-    .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
-    .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
-</style>
-
-<!-- Edit Modal HTML -->
-<div id="editModal" class="modal">
-    <div class="modal-content">
-        <h3>✏️ Edit Movie</h3>
-        <input type="hidden" id="editId">
-        
-        <div class="form-group">
-            <label>Title</label>
-            <input type="text" id="editTitle">
-        </div>
-        
-        <div class="form-group">
-            <label>Poster Photo ID (File ID)</label>
-            <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
-        </div>
-
-        <div class="form-group">
-            <label>Quality</label>
-            <input type="text" id="editQuality">
-        </div>
-
-        <div class="form-group">
-            <label>Year</label>
-            <input type="text" id="editYear">
-        </div>
-
-        <div class="form-group">
-            <label>Categories (Comma separated)</label>
-            <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
-        </div>
-
-        <div class="modal-buttons">
-            <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
-            <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
-        </div>
-    </div>
-</div>
-
     </body></html>'''
     return HTMLResponse(html_code)
 
