@@ -416,91 +416,20 @@ async def receive_upc_date(m: types.Message, state: FSMContext):
     await db.upcoming.insert_one({"title": data["title"], "photo_id": data["photo_id"], "release_date": m.text.strip()})
     await m.answer(f"🌟 <b>{data['title']}</b> আপকামিং লিস্টে যুক্ত হয়েছে!", parse_mode="HTML")
 
-import re
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-
 # ==========================================
-# 7.5 Single Movie Upload & Series Logic (Updated with Buttons)
+# 7.5 Single Movie Upload
 # ==========================================
-
 @dp.message(F.content_type.in_({'video', 'document'}), lambda m: m.from_user.id in admin_cache)
 async def receive_movie_file(m: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is not None:
         await m.answer("⚠️ আপনি অন্য একটি প্রসেসে আটকে আছেন! আগে /cancel করুন।", parse_mode="HTML")
         return
-
     fid = m.video.file_id if m.video else m.document.file_id
     ftype = "video" if m.video else "document"
-    file_name = m.video.file_name if m.video else m.document.file_name
-
-    # ==========================================
-    # SMART SERIES CHECK (Button Version)
-    # ==========================================
-    if file_name:
-        # ফাইলের নাম থেকে সিরিজের নাম চেক করা হচ্ছে
-        match = re.search(r'(.*?)\s+(?:S\d+E\d+|EP\s?\d+)', file_name, re.IGNORECASE)
-
-        if match:
-            base_name = match.group(1).strip()
-            # ডাটাবেসে সার্চ করা হচ্ছে
-            existing_series = await db.movies.find_one({"title": {"$regex": f"^{re.escape(base_name)}", "$options": "i"}})
-
-            if existing_series:
-                # ✅ সিরিজ পাওয়া গেছে! এখন বাটন দেখানো হবে
-                # আমরা ডাটা সেভ করে রাখছি যাতে বাটনে ক্লিক করলে কাজ করতে পারে
-                await state.update_data(
-                    file_id=fid, 
-                    file_type=ftype,
-                    base_name=base_name,
-                    is_series_update=True,
-                    existing_id=str(existing_series['_id']),
-                    files_list=existing_series.get('files', [])
-                )
-
-                # বাটন তৈরি করা হচ্ছে
-                builder = InlineKeyboardBuilder()
-                builder.button(text="✅ হ্যাঁ, এপিসোড যুক্ত করুন", callback_data="confirm_series_add")
-                builder.button(text="❌ না, নতুন মুভি", callback_data="cancel_series_add")
-                builder.adjust(1)
-
-                await m.answer(
-                    f"🔍 <b>পুরাতন সিরিজ পাওয়া গেছে!</b>\n\n"
-                    f"সিরিজের নাম: <code>{existing_series['title']}</code>\n\n"
-                    f"আপনি কি এই ফাইলটি এই সিরিজে নতুন এপিসোড হিসেবে যুক্ত করতে চান?",
-                    reply_markup=builder.as_markup(),
-                    parse_mode="HTML"
-                )
-                return # এখানেই থেমে যাবে, ব্যবহারকারী বাটনে ক্লিক করলে আগাবে
-
-    # ==========================================
-    # NORMAL UPLOAD (যদি সিরিজ না পাওয়া যায় বা ইচ্ছা না করে)
-    # ==========================================
     await state.set_state(AdminStates.waiting_for_photo)
     await state.update_data(file_id=fid, file_type=ftype, categories=[])
     await m.answer("✅ ফাইল পেয়েছি! এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
-
-
-# ==========================================
-# BUTTON HANDLERS (বাটনে ক্লিক করলে যা হবে)
-# ==========================================
-
-# হ্যাঁ, এপিসোড যুক্ত করবেন
-@dp.callback_query(F.data == "confirm_series_add")
-async def confirm_series_add(c: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AdminStates.waiting_for_quality)
-    # ব্যবহারকারীকে এপিসোডের নাম চাইবে
-    await c.message.edit_text("✅ ঠিক আছে! এবার <b>এপিসোডের নাম বা কোয়ালিটি</b> লিখুন (যেমন: EP 08 বা 1080p):", parse_mode="HTML")
-    await c.answer()
-
-# না, নতুন মুভি হিসেবে আপলোড করবেন
-@dp.callback_query(F.data == "cancel_series_add")
-async def cancel_series_add(c: types.CallbackQuery, state: FSMContext):
-    # সিরিজ মোড বন্ধ করে নরমাল মুভি আপলোডে নিয়ে যাওয়া হচ্ছে
-    await state.update_data(is_series_update=False)
-    await state.set_state(AdminStates.waiting_for_photo)
-    await c.message.edit_text("❠ ঠিক আছে, নতুন মুভি হিসেবে নেওয়া হচ্ছে।\n\n✅ এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
-    await c.answer()
 
 @dp.message(AdminStates.waiting_for_photo, F.photo)
 async def receive_movie_photo(m: types.Message, state: FSMContext):
@@ -514,36 +443,7 @@ async def fallback_photo(m: types.Message):
 
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
-    title_input = m.text.strip()
-    
-    import re
-    # চেক করা হচ্ছে এটি সিরিজের এপিসোড কিনা (যেমন: Study Group EP 06)
-    match = re.search(r'(.*?)\s+(?:EP|S\d+E)\d+', title_input, re.IGNORECASE)
-    
-    if match:
-        base_title = match.group(1).strip()
-        # ডাটাবেসে খোঁজা হচ্ছে এই বেস নামের সিরিজ আছে কিনা
-        existing_series = await db.movies.find_one({"title": {"$regex": f"^{re.escape(base_title)}", "$options": "i"}})
-        
-        if existing_series:
-            # ✅ সিরিজ পাওয়া গেছে, পুরাতন ডাটা ব্যবহার করা হবে
-            await state.update_data(
-                title=existing_series['title'], # আগের টাইটেল রাখা হলো, পরে আপডেট হবে
-                base_name=base_title,
-                photo_id=existing_series['photo_id'],
-                year=existing_series['year'],
-                categories=existing_series.get('categories', []),
-                is_series_update=True,
-                existing_id=str(existing_series['_id']), # ID সেভ করা হলো
-                files_list=existing_series.get('files', []) # বিদ্যমান ফাইল লিস্ট নেওয়া হচ্ছে
-            )
-            
-            await m.answer(f"✅ <b>{base_title}</b> সিরিজ পাওয়া গেছে!\nপুরাতন পোস্টার এবং ক্যাটাগরি ব্যবহার করা হচ্ছে। এখন <b>Quality/Episode Name</b> লিখুন:", parse_mode="HTML")
-            await state.set_state(AdminStates.waiting_for_quality)
-            return
-
-    # যদি সিরিজ না পাওয়া যায় অথবা নতুন মুভি হয়
-    await state.update_data(title=title_input)
+    await state.update_data(title=m.text.strip())
     await state.set_state(AdminStates.waiting_for_quality)
     await m.answer("✅ এবার <b>এপিসোড বা কোয়ালিটি</b> লিখুন।", parse_mode="HTML")
 
@@ -553,54 +453,7 @@ async def fallback_title(m: types.Message):
 
 @dp.message(AdminStates.waiting_for_quality, F.text)
 async def receive_movie_quality(m: types.Message, state: FSMContext):
-    data = await state.get_data()
-    quality = m.text.strip()
-    
-    # যদি এটি সিরিজ আপডেট হয়
-    if data.get("is_series_update"):
-        base_name = data['base_name']
-        files = data.get('files_list', [])
-        existing_id = data.get('existing_id')
-        
-        if not existing_id:
-            await m.answer("❌ Error: Series ID not found. Please try again.")
-            await state.clear()
-            return
-            
-        # নতুন ফাইল অবজেক্ট তৈরি
-        new_file_entry = {
-            "id": str(ObjectId()),
-            "file_id": data['file_id'],
-            "file_type": data['file_type'],
-            "title": quality, # যেমন: EP 06
-            "quality": "HD",
-            "is_unlocked": False # ডিফল্ট লক
-        }
-        
-        files.append(new_file_entry)
-        
-        # টাইটেল আপডেট (যেমন: Study Group S01 EP 01 - 06 Complete)
-        total_eps = len(files)
-        new_title = f"{base_name} S01 EP 01 - {total_eps} Complete"
-        
-        # ডাটাবেস আপডেট
-        try:
-            await db.movies.update_one(
-                {"_id": ObjectId(existing_id)}, 
-                {"$set": {
-                    "files": files,
-                    "title": new_title
-                }}
-            )
-            await m.answer(f"✅ <b>{new_title}</b> আপডেট হয়েছে! মোট এপিসোড: {total_eps}", parse_mode="HTML")
-        except Exception as e:
-            await m.answer(f"❌ Update Failed: {e}")
-            
-        await state.clear()
-        return
-
-    # নরমাল নতুন মুভি আপলোড লজিক
-    await state.update_data(quality=quality)
+    await state.update_data(quality=m.text.strip())
     await state.set_state(AdminStates.waiting_for_year)
     await m.answer("✅ এবার <b>রিলিজ সাল</b> লিখুন।", parse_mode="HTML")
 
@@ -1109,7 +962,7 @@ async def web_ui():
                 flex-direction: column; 
                 background: #0f172a; 
                 border-radius: 16px; 
-                overflow: visible; /* ✅ hidden থেকে visible করুন */
+                overflow: hidden; 
                 cursor: pointer; 
                 transition: 0.3s; 
                 position: relative; 
@@ -1119,24 +972,15 @@ async def web_ui():
             body.oled-mode .movie-card { background: #000; }
             .movie-card:active { transform: scale(0.98); }
             
-            /* Static Gradient Border */
+            /* Static Beautiful Gradient Border */
             .movie-card::before {
                 content: "";
                 position: absolute;
-                inset: -3px; 
+                inset: -3px; /* Border thickness */
                 z-index: -1;
+                /* Theme matching Gradient (Red to Orange to Purple) */
                 background: linear-gradient(45deg, #ff416c, #ff4b2b, #ff8c00, #b91c1c);
-                border-radius: 18px; 
-            }
-
-            /* ✅ নতুন ইমেজ র‍্যাপার ক্লাস যোগ করুন */
-            .movie-img-wrapper {
-                width: 100%;
-                aspect-ratio: 16/9;
-                position: relative;
-                overflow: hidden; /* ইমেজ গোলাকার হওয়ার জন্য */
-                border-radius: 14px; /* কার্ডের রাউন্ডেড কর্নারের সামান্য কম */
-                background: #000;
+                border-radius: 18px; /* Slightly larger than card radius */
             }
 
             .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
@@ -1632,11 +1476,8 @@ async def web_ui():
                 
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
-                    <!-- ✅ এখানে ইমেজটিকে wrapper দিয়ে ঢেকে দেওয়া হলো -->
-                    <div class="movie-img-wrapper">
-                        <img src="${imgSrc}" loading="lazy" style="width: 100%; height: 100%; object-fit: cover; display: block;">
-                        ${lockOverlay}
-                    </div>
+                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
+                    ${lockOverlay}
                     ${adminViewBadge}
                 </div>
                 <div class="movie-info">
@@ -1756,56 +1597,26 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     if uid != 0:
         time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
         async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}): unlocked_ids.append(u["movie_id"])
-    
     match_stage = {}
     if q: match_stage["title"] = {"$regex": q, "$options": "i"}
     if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
     
-    # টোটাল পেজ কাউন্ট একই রাখা হলো
     total_unique_titles = len(await db.movies.distinct("title", match_stage))
     total_pages = math.ceil(total_unique_titles / limit)
     
-    # ✅ FIX: এখানে পাইপলাইন আপডেট করা হয়েছে
     pipeline = [
         {"$match": match_stage}, 
-        {"$sort": {"created_at": -1}}, # সর্ট করা হচ্ছে গ্রুপিং এর আগে
-        {"$group": {
-            "_id": "$title", 
-            "photo_id": {"$first": "$photo_id"}, 
-            "clicks": {"$sum": "$clicks"}, 
-            "created_at": {"$max": "$created_at"}, 
-            "year": {"$first": "$year"}, 
-            "categories": {"$first": "$categories"},
-            # ✅ FIX: যদি ডকুমেন্টে আগে থেকেই files অ্যারে থাকে (সিরিজ), তবে সেটা নেবে। না থাকলে নতুন করে বানাবে।
-            "files": {
-                "$first": {
-                    "$cond": {
-                        "if": {"$isArray": "$files"},
-                        "then": "$files",
-                        "else": [{
-                            "id": {"$toString": "$_id"}, 
-                            "file_id": "$file_id", # ✅ ফাইল আইডি যোগ করা হয়েছে
-                            "title": "$title", # ✅ টাইটেল যোগ করা হয়েছে
-                            "quality": {"$ifNull": ["$quality", "Main"]},
-                            "is_unlocked": False
-                        }]
-                    }
-                }
-            }
-        }}, 
-        {"$skip": (page - 1) * limit}, 
-        {"$limit": limit},
-        {"$addFields": {"title": "$_id"}}
+        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
+        {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit},
+        {"$addFields": {"title": "$_id"}}  # <--- এই লাইনটি যোগ করা হয়েছে
     ]
-    
     movies = await db.movies.aggregate(pipeline).to_list(limit)
-    
     for m in movies:
         m["is_adult"] = "Adult Content" in m.get("categories", [])
-        # আনলক স্ট্যাটাস আপডেট
-        if m.get("files") and isinstance(m["files"], list):
-            for f in m["files"]:
-                f["is_unlocked"] = f["id"] in unlocked_ids
+        # নিচের লাইনে movie_id কনভার্সন করা হয়েছে, এটি ঠিক আছে কিন্তু চেক করে দেখুন
+        for f in m["files"]: 
+            # ফাইল আনলক চেক
+            f["is_unlocked"] = f["id"] in unlocked_ids
             
     return {"movies": movies, "total_pages": total_pages}
 
@@ -1847,107 +1658,51 @@ async def send_file(d: SendRequestModel):
     
     async with send_semaphore:
         try:
-            # প্রথমে চেক করা হবে মুভি আইডি দিয়ে সরাসরি পাওয়া যায় কিনা (পুরাতন সিস্টেমের জন্য)
             m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
-            
-            file_to_send = None # আমরা যে ফাইলটি আসলে পাঠাবো
-            final_title = ""
-            final_quality = ""
-            final_file_type = "video"
-            
-            # ==========================================
-            # ✅ LOGIC 1: সিরিজের এপিসোড হ্যান্ডেল করা
-            # ==========================================
-            # যদি ডকুমেন্ট পাওয়া যায় এবং সেখানে files অ্যারে থাকে, তবে বুঝবো এটি সিরিজ
-            if m and m.get("files") and isinstance(m["files"], list):
-                for f in m["files"]:
-                    # বাটন থেকে আসা ID (Episode ID) এর সাথে ম্যাচ করা হচ্ছে
-                    if str(f.get("id")) == str(d.movieId):
-                        file_to_send = f
-                        final_title = f.get("title", "Episode")
-                        final_quality = f.get("quality", "HD")
-                        final_file_type = f.get("file_type", "video")
-                        break
-            
-            # ==========================================
-            # LOGIC 2: সিঙ্গেল মুভি হ্যান্ডেল করা
-            # ==========================================
-            # যদি উপরে পাওয়া না যায়, তবে হয়তো এটি সিঙ্গেল মুভি (পুরাতন সিস্টেম)
-            elif m:
-                file_to_send = {
-                    "file_id": m.get("file_id"),
-                    "title": m.get("title"),
-                    "quality": m.get("quality"),
-                    "file_type": m.get("file_type", "video")
-                }
-                final_title = m.get("title")
-                final_quality = m.get("quality", "HD")
-                final_file_type = m.get("file_type", "video")
-
-            # ==========================================
-            # LOGIC 3: যদি সিরিজের মূল ডকুমেন্টে না পাওয়া যায় কিন্তু এপিসোড আইডি ম্যাচ করে
-            # (কখনো কখনো ডাটাবেস সার্চ একটু আলাদা হতে পারে)
-            # ==========================================
-            if not file_to_send:
-                # সরাসরি files অ্যারের ভেতর খোঁজা হচ্ছে
-                series_doc = await db.movies.find_one({"files.id": d.movieId})
-                if series_doc:
-                    for f in series_doc.get("files", []):
-                        if str(f.get("id")) == str(d.movieId):
-                            file_to_send = f
-                            final_title = f.get("title", "Episode")
-                            final_quality = f.get("quality", "HD")
-                            final_file_type = f.get("file_type", "video")
-                            break
-
-            # ফাইল পাওয়া না গেলে এরর
-            if not file_to_send:
-                return {"ok": False, "msg": "File not found"}
-
-            # এখন সেটিংস এবং ক্যাপশন তৈরি (আগের লজিক)
+            if not m:
+                return {"ok": False, "msg": "Movie not found"}
+                
             now = datetime.datetime.utcnow()
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
-            
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
             is_protected = protect_cfg.get("status", False) if protect_cfg else False
-            
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
-            
             tg_cfg = await db.settings.find_one({"id": "tg_link"})
             tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
             
-            base_caption = f"🎥 <b>{m['title']} [{final_quality}]</b>\n\n📥 Join: {tg_link}" if m else f"🎥 <b>{final_title} [{final_quality}]</b>\n\n📥 Join: {tg_link}"
-            
+            base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
             if is_vip:
                 caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
             else:
-                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হবে!"
+                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
             
             sent_msg = None
             try:
-                if final_file_type == "video": 
-                    sent_msg = await bot.send_video(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                if m.get("file_type") == "video": 
+                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
                 else: 
-                    sent_msg = await bot.send_document(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             except TelegramRetryAfter as e:
                 await asyncio.sleep(e.retry_after + 1)
-                if final_file_type == "video": 
-                    sent_msg = await bot.send_video(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                if m.get("file_type") == "video": 
+                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
                 else: 
-                    sent_msg = await bot.send_document(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             
-            # অটো ডিলিট লজিক (শুধুমাত্র VIP না হলে)
-            if sent_msg and not is_vip:
-                delete_at = now + datetime.timedelta(minutes=del_minutes)
-                await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
+            if sent_msg:
+                await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
+                await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
+                if not is_vip:
+                    delete_at = now + datetime.timedelta(minutes=del_minutes)
+                    await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
+                return {"ok": True}
+            return {"ok": False, "msg": "Failed to send"}
             
-            return {"ok": True}
-
         except Exception as e:
-            print(f"Send Error: {e}")
-            return {"ok": False, "msg": str(e)}
+            print(f"Send File Error: {e}")
+            return {"ok": False, "msg": "Server error"}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
