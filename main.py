@@ -788,6 +788,57 @@ async function saveMovieEdit() {
         alert('❌ An error occurred');
     }
 }
+   <!-- Edit Modal Styles -->
+<style>
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
+    .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
+    .modal-content h3 { margin-top: 0; color: #ef4444; }
+    .form-group { margin-bottom: 15px; }
+    .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
+    .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
+    .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
+    .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
+    .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
+</style>
+
+<!-- Edit Modal HTML -->
+<div id="editModal" class="modal">
+    <div class="modal-content">
+        <h3>✏️ Edit Movie</h3>
+        <input type="hidden" id="editId">
+        
+        <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="editTitle">
+        </div>
+        
+        <div class="form-group">
+            <label>Poster Photo ID (File ID)</label>
+            <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
+        </div>
+
+        <div class="form-group">
+            <label>Quality</label>
+            <input type="text" id="editQuality">
+        </div>
+
+        <div class="form-group">
+            <label>Year</label>
+            <input type="text" id="editYear">
+        </div>
+
+        <div class="form-group">
+            <label>Categories (Comma separated)</label>
+            <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
+        </div>
+
+        <div class="modal-buttons">
+            <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
+            <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
+        </div>
+    </div>
+</div>
+
     </body></html>'''
     return HTMLResponse(html_code)
 
