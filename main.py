@@ -1756,26 +1756,56 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     if uid != 0:
         time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
         async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}): unlocked_ids.append(u["movie_id"])
+    
     match_stage = {}
     if q: match_stage["title"] = {"$regex": q, "$options": "i"}
     if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
     
+    # টোটাল পেজ কাউন্ট একই রাখা হলো
     total_unique_titles = len(await db.movies.distinct("title", match_stage))
     total_pages = math.ceil(total_unique_titles / limit)
     
+    # ✅ FIX: এখানে পাইপলাইন আপডেট করা হয়েছে
     pipeline = [
         {"$match": match_stage}, 
-        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
-        {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit},
-        {"$addFields": {"title": "$_id"}}  # <--- এই লাইনটি যোগ করা হয়েছে
+        {"$sort": {"created_at": -1}}, # সর্ট করা হচ্ছে গ্রুপিং এর আগে
+        {"$group": {
+            "_id": "$title", 
+            "photo_id": {"$first": "$photo_id"}, 
+            "clicks": {"$sum": "$clicks"}, 
+            "created_at": {"$max": "$created_at"}, 
+            "year": {"$first": "$year"}, 
+            "categories": {"$first": "$categories"},
+            # ✅ FIX: যদি ডকুমেন্টে আগে থেকেই files অ্যারে থাকে (সিরিজ), তবে সেটা নেবে। না থাকলে নতুন করে বানাবে।
+            "files": {
+                "$first": {
+                    "$cond": {
+                        "if": {"$isArray": "$files"},
+                        "then": "$files",
+                        "else": [{
+                            "id": {"$toString": "$_id"}, 
+                            "file_id": "$file_id", # ✅ ফাইল আইডি যোগ করা হয়েছে
+                            "title": "$title", # ✅ টাইটেল যোগ করা হয়েছে
+                            "quality": {"$ifNull": ["$quality", "Main"]},
+                            "is_unlocked": False
+                        }]
+                    }
+                }
+            }
+        }}, 
+        {"$skip": (page - 1) * limit}, 
+        {"$limit": limit},
+        {"$addFields": {"title": "$_id"}}
     ]
+    
     movies = await db.movies.aggregate(pipeline).to_list(limit)
+    
     for m in movies:
         m["is_adult"] = "Adult Content" in m.get("categories", [])
-        # নিচের লাইনে movie_id কনভার্সন করা হয়েছে, এটি ঠিক আছে কিন্তু চেক করে দেখুন
-        for f in m["files"]: 
-            # ফাইল আনলক চেক
-            f["is_unlocked"] = f["id"] in unlocked_ids
+        # আনলক স্ট্যাটাস আপডেট
+        if m.get("files") and isinstance(m["files"], list):
+            for f in m["files"]:
+                f["is_unlocked"] = f["id"] in unlocked_ids
             
     return {"movies": movies, "total_pages": total_pages}
 
@@ -1817,51 +1847,107 @@ async def send_file(d: SendRequestModel):
     
     async with send_semaphore:
         try:
+            # প্রথমে চেক করা হবে মুভি আইডি দিয়ে সরাসরি পাওয়া যায় কিনা (পুরাতন সিস্টেমের জন্য)
             m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
-            if not m:
-                return {"ok": False, "msg": "Movie not found"}
-                
+            
+            file_to_send = None # আমরা যে ফাইলটি আসলে পাঠাবো
+            final_title = ""
+            final_quality = ""
+            final_file_type = "video"
+            
+            # ==========================================
+            # ✅ LOGIC 1: সিরিজের এপিসোড হ্যান্ডেল করা
+            # ==========================================
+            # যদি ডকুমেন্ট পাওয়া যায় এবং সেখানে files অ্যারে থাকে, তবে বুঝবো এটি সিরিজ
+            if m and m.get("files") and isinstance(m["files"], list):
+                for f in m["files"]:
+                    # বাটন থেকে আসা ID (Episode ID) এর সাথে ম্যাচ করা হচ্ছে
+                    if str(f.get("id")) == str(d.movieId):
+                        file_to_send = f
+                        final_title = f.get("title", "Episode")
+                        final_quality = f.get("quality", "HD")
+                        final_file_type = f.get("file_type", "video")
+                        break
+            
+            # ==========================================
+            # LOGIC 2: সিঙ্গেল মুভি হ্যান্ডেল করা
+            # ==========================================
+            # যদি উপরে পাওয়া না যায়, তবে হয়তো এটি সিঙ্গেল মুভি (পুরাতন সিস্টেম)
+            elif m:
+                file_to_send = {
+                    "file_id": m.get("file_id"),
+                    "title": m.get("title"),
+                    "quality": m.get("quality"),
+                    "file_type": m.get("file_type", "video")
+                }
+                final_title = m.get("title")
+                final_quality = m.get("quality", "HD")
+                final_file_type = m.get("file_type", "video")
+
+            # ==========================================
+            # LOGIC 3: যদি সিরিজের মূল ডকুমেন্টে না পাওয়া যায় কিন্তু এপিসোড আইডি ম্যাচ করে
+            # (কখনো কখনো ডাটাবেস সার্চ একটু আলাদা হতে পারে)
+            # ==========================================
+            if not file_to_send:
+                # সরাসরি files অ্যারের ভেতর খোঁজা হচ্ছে
+                series_doc = await db.movies.find_one({"files.id": d.movieId})
+                if series_doc:
+                    for f in series_doc.get("files", []):
+                        if str(f.get("id")) == str(d.movieId):
+                            file_to_send = f
+                            final_title = f.get("title", "Episode")
+                            final_quality = f.get("quality", "HD")
+                            final_file_type = f.get("file_type", "video")
+                            break
+
+            # ফাইল পাওয়া না গেলে এরর
+            if not file_to_send:
+                return {"ok": False, "msg": "File not found"}
+
+            # এখন সেটিংস এবং ক্যাপশন তৈরি (আগের লজিক)
             now = datetime.datetime.utcnow()
             user_data = await db.users.find_one({"user_id": d.userId})
             is_vip = user_data and user_data.get("vip_until", now) > now
+            
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
             is_protected = protect_cfg.get("status", False) if protect_cfg else False
+            
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
+            
             tg_cfg = await db.settings.find_one({"id": "tg_link"})
             tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
             
-            base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
+            base_caption = f"🎥 <b>{m['title']} [{final_quality}]</b>\n\n📥 Join: {tg_link}" if m else f"🎥 <b>{final_title} [{final_quality}]</b>\n\n📥 Join: {tg_link}"
+            
             if is_vip:
                 caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
             else:
-                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
+                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হবে!"
             
             sent_msg = None
             try:
-                if m.get("file_type") == "video": 
-                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                if final_file_type == "video": 
+                    sent_msg = await bot.send_video(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
                 else: 
-                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                    sent_msg = await bot.send_document(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             except TelegramRetryAfter as e:
                 await asyncio.sleep(e.retry_after + 1)
-                if m.get("file_type") == "video": 
-                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                if final_file_type == "video": 
+                    sent_msg = await bot.send_video(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
                 else: 
-                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                    sent_msg = await bot.send_document(d.userId, file_to_send['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             
-            if sent_msg:
-                await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
-                await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
-                if not is_vip:
-                    delete_at = now + datetime.timedelta(minutes=del_minutes)
-                    await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
-                return {"ok": True}
-            return {"ok": False, "msg": "Failed to send"}
+            # অটো ডিলিট লজিক (শুধুমাত্র VIP না হলে)
+            if sent_msg and not is_vip:
+                delete_at = now + datetime.timedelta(minutes=del_minutes)
+                await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
             
+            return {"ok": True}
+
         except Exception as e:
-            print(f"Send File Error: {e}")
-            return {"ok": False, "msg": "Server error"}
+            print(f"Send Error: {e}")
+            return {"ok": False, "msg": str(e)}
 
 @app.get("/api/favs/{uid}")
 async def get_favs(uid: int):
