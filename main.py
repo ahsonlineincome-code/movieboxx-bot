@@ -858,13 +858,11 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
 async def get_trending_movies():
     try:
         now = datetime.datetime.utcnow()
-        # গত ৭ দিন আগের তারিখ বের করা হচ্ছে
         seven_days_ago = now - datetime.timedelta(days=7)
         
-        # গত ৭ দিনের মুভি ডাটাবেস থেকে আনা হচ্ছে
-        movies = await db.movies.find({"created_at": {"$gte": seven_days_ago}}).sort("created_at", -1).to_list(50)
+        # গত ৭ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (clicks অনুযায়ী সর্ট করা), মাত্র ৫টি
+        movies = await db.movies.find({"created_at": {"$gte": seven_days_ago}}).sort("clicks", -1).limit(5).to_list(5)
         
-        # ObjectId কে String এ কনভার্ট করা (জাভাস্ক্রিপ্টের জন্য)
         for m in movies:
             m["_id"] = str(m["_id"])
         return movies
@@ -1046,84 +1044,118 @@ async def web_ui():
          }
 
          /* ========================= */
-         /* ✅ TRENDING SECTION STYLES */
+         /* ✅ TRENDING SLIDER STYLES */
          /* ========================= */
+         .trending-section-wrapper {
+            background: rgba(30, 41, 59, 0.4); /* Side Grid Color - Light Dark Background */
+            margin: 10px 15px 20px 15px; /* Spacing/Margin */
+            padding: 15px;
+            border-radius: 16px;
+            border: 1px solid #334155;
+         }
+         body.oled-mode .trending-section-wrapper { background: #0a0a0a; border-color: #1a1a1a; }
+
          .section-header { 
-            padding: 20px 15px 5px; 
-            font-size: 20px; 
+            padding-bottom: 10px; 
+            font-size: 18px; 
             font-weight: 800; 
             color: #fff; 
             display: flex; 
             align-items: center; 
             gap: 8px; 
+            margin-bottom: 10px;
          }
          .section-header i { color: #ff4b2b; }
 
-         .trending-grid { 
-            display: grid; 
-            grid-template-columns: repeat(2, 1fr); /* ২টি কলামে ভাগ হবে, তাই দেখতে চওড়া লাগবে */ 
-            gap: 12px; 
-            padding: 0 15px 20px; 
+         .trending-slider-container {
+            overflow-x: auto;
+            display: flex;
+            gap: 15px;
+            scroll-behavior: smooth;
+            padding-bottom: 5px;
+            /* Hide Scrollbar */
+            -ms-overflow-style: none;  
+            scrollbar-width: none;  
          }
+         .trending-slider-container::-webkit-scrollbar { display: none; }
 
-         .movie-card-wide { 
-            background: #1e293b; 
-            border-radius: 16px; 
-            overflow: hidden; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
-            cursor: pointer; 
-            transition: transform 0.2s; 
-            position: relative; 
+         .trending-card { 
+            flex: 0 0 auto; /* কার্ড সংকুচিত হবে না */
+            width: 140px; /* কার্ডের প্রস্থ */
+            background: #0f172a;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            cursor: pointer;
+            position: relative;
+            transition: transform 0.2s;
          }
-         .movie-card-wide:active { transform: scale(0.98); }
+         body.oled-mode .trending-card { background: #000; border: 1px solid #1a1a1a; }
+         .trending-card:active { transform: scale(0.95); }
 
-         .poster-container-wide { 
+         .poster-slider { 
             width: 100%; 
-            aspect-ratio: 16/9; /* পোস্টার অনুপাত চওড়া */ 
+            aspect-ratio: 2/3; /* পোস্টার স্টাইল একটু লম্বা */
             position: relative; 
          }
-         .poster-container-wide img { 
+         .poster-slider img { 
             width: 100%; 
             height: 100%; 
             object-fit: cover; 
             display: block; 
          }
 
-         /* 18+ Badge Style */
-         .badge-18 { 
+         /* 18+ Badge */
+         .badge-18-slider { 
             position: absolute; 
-            top: 8px; 
-            left: 8px; 
+            top: 5px; 
+            left: 5px; 
             background: #ef4444; 
             color: white; 
-            font-size: 10px; 
+            font-size: 9px; 
             font-weight: 800; 
-            padding: 3px 8px; 
-            border-radius: 6px; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.5); 
+            padding: 2px 6px; 
+            border-radius: 4px; 
             z-index: 2; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
          }
 
-         .info-container-wide { 
-            padding: 10px; 
-            background: #0f172a; 
+         /* র‍্যাংকিং ব্যাজ (Top 1, 2, 3...) */
+         .rank-badge {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fbbf24; /* Gold color */
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 800;
+            z-index: 2;
+            border: 1px solid #fbbf24;
          }
-         body.oled-mode .info-container-wide { background: #000; }
 
-         .movie-title-wide { 
-            font-size: 13px; 
+         .info-slider { 
+            padding: 8px; 
+         }
+         .movie-title-slider { 
+            font-size: 12px; 
             color: #fff; 
             font-weight: 600; 
             white-space: nowrap; 
             overflow: hidden; 
-            text-overflow: ellipsis; /* লম্বা টাইটেল হলে ... দেখাবে */ 
+            text-overflow: ellipsis; 
+            margin-bottom: 2px;
          }
-         .movie-meta-wide { 
-            font-size: 11px; 
+         .movie-meta-slider { 
+            font-size: 10px; 
             color: #94a3b8; 
-            margin-top: 4px; 
             display: flex; 
-            justify-content: space-between; 
+            justify-content: space-between;
          }
 
         </style>
@@ -1147,11 +1179,13 @@ async def web_ui():
                 <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
             
-            <!-- ✅ NEW: TRENDING NOW SECTION -->
-            <div class="section-header"><i class="fa-solid fa-fire"></i> Trending Now</div>
-            <div class="trending-grid" id="trendingContainer">
-                <!-- JS দিয়ে মুভি এখানে লোড হবে -->
-                <div style="grid-column: span 2; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
+            <!-- ✅ NEW: TRENDING AUTO SLIDER SECTION -->
+            <div class="trending-section-wrapper">
+                <div class="section-header"><i class="fa-solid fa-fire"></i> Top 5 Trending</div>
+                <div class="trending-slider-container" id="trendingSlider">
+                    <!-- JS দিয়ে মুভি এখানে লোড হবে -->
+                    <div style="width: 100%; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
+                </div>
             </div>
 
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
@@ -1230,12 +1264,11 @@ async def web_ui():
         <script>
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
-            // BOT TOKEN ইনজেক্ট করা হচ্ছে (ছবি লোড করার জন্য প্রয়োজন হতে পারে)
             const TOKEN = "__BOT_TOKEN__";
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; let isUserVip = false; let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
-            let trendingMovies = []; // ট্রেন্ডিং মুভি স্টোর করার জন্য
+            let trendingMovies = []; 
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
@@ -1250,37 +1283,38 @@ async def web_ui():
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
             
-            // ✅ TRENDING MOVIES LOAD FUNCTION
+            // ✅ TRENDING SLIDER LOAD FUNCTION
             async function loadTrending() {
                 try {
                     const res = await fetch('/api/movies/trending');
                     const movies = await res.json();
-                    trendingMovies = movies; // গ্লোবাল ভেরিয়েবলে সেভ করা হলো
-                    const container = document.getElementById('trendingContainer');
+                    trendingMovies = movies;
+                    const container = document.getElementById('trendingSlider');
                     
                     if (movies.length === 0) {
-                        container.style.display = 'none'; // মুভি না থাকলে লুকিয়ে রাখুন
+                        // মুভি না থাকলে পুরো সেকশন লুকিয়ে দিন
+                        document.querySelector('.trending-section-wrapper').style.display = 'none';
                         return;
                     }
 
                     container.innerHTML = movies.map((m, index) => {
-                        // 18+ ব্যাজ যোগ করার লজিক
                         const badgeHtml = m.categories && m.categories.includes('Adult Content') 
-                            ? '<div class="badge-18">18+</div>' 
+                            ? '<div class="badge-18-slider">18+</div>' 
                             : '';
                         
-                        // ছবির লিংক (Proxy রুট ব্যবহার করা হয়েছে)
                         const imgUrl = `/api/image/${m.photo_id}`;
+                        const rank = index + 1;
 
                         return `
-                        <div class="movie-card-wide" onclick="openTrendingDetail(${index})">
-                            <div class="poster-container-wide">
+                        <div class="trending-card" onclick="openTrendingDetail(${index})">
+                            <div class="poster-slider">
                                 <img src="${imgUrl}" loading="lazy" alt="${m.title}">
                                 ${badgeHtml}
+                                <div class="rank-badge">${rank}</div>
                             </div>
-                            <div class="info-container-wide">
-                                <div class="movie-title-wide">${m.title}</div>
-                                <div class="movie-meta-wide">
+                            <div class="info-slider">
+                                <div class="movie-title-slider">${m.title}</div>
+                                <div class="movie-meta-slider">
                                     <span>${m.quality || 'HD'}</span>
                                     <span>${m.year || 'N/A'}</span>
                                 </div>
@@ -1288,21 +1322,43 @@ async def web_ui():
                         </div>
                         `;
                     }).join('');
+
+                    // ✅ Auto Slider Logic Start
+                    startAutoSlider();
+                    
                 } catch (error) {
                     console.error("Trending Error:", error);
-                    const container = document.getElementById('trendingContainer');
-                    container.style.display = 'none';
+                    document.querySelector('.trending-section-wrapper').style.display = 'none';
                 }
             }
 
-            // ট্রেন্ডিং মুভি তে ক্লিক করলে ডিটেইল ওপেন করার ফাংশন
+            // Auto Scroll Function
+            let autoScrollInterval;
+            function startAutoSlider() {
+                const slider = document.getElementById('trendingSlider');
+                if(!slider) return;
+
+                // আগের ইন্টারভাল ক্লিয়ার করা
+                if(autoScrollInterval) clearInterval(autoScrollInterval);
+
+                autoScrollInterval = setInterval(() => {
+                    // ইউজার যদি ম্যানুয়ালি স্ক্রল করে তাহলে অটো স্ক্রল বন্ধ করার লজিক জটিল, 
+                    // তাই আমরা সিম্পল ভাবে প্রতি ৩ সেকেন্ডে একটু এগিয়ে যাবো
+                    const cardWidth = 155; // card width + gap
+                    const maxScroll = slider.scrollWidth - slider.clientWidth;
+                    
+                    if (slider.scrollLeft >= maxScroll) {
+                        slider.scrollTo({ left: 0, behavior: 'smooth' });
+                    } else {
+                        slider.scrollBy({ left: cardWidth, behavior: 'smooth' });
+                    }
+                }, 3000); // ৩ সেকেন্ড পর পর স্লাইড হবে
+            }
+
             function openTrendingDetail(index) {
-                // বর্তমান ভিউ লিস্ট টেম্পোরারিলি ট্রেন্ডিং মুভিতে সেট করা হচ্ছে
-                // যাতে বিদ্যমান openDetail ফাংশন কাজ করে
                 const originalView = currentViewMovies;
                 currentViewMovies = trendingMovies;
                 openDetail(index);
-                // ডিটেইল মডাল বন্ধ হলে আবার আগের লিস্টে ফেরত আনা যেতে পারে, কিন্তু এখানে সিম্পল রাখা হয়েছে
                 currentViewMovies = originalView;
             }
 
@@ -1414,14 +1470,13 @@ async def web_ui():
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
-            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); // ট্রেন্ডিং লোড করা হচ্ছে
+            fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending();
         </script>
     </body></html>'''
     
-    # পাইথন ভেরিয়েবল রিপ্লেস করা হচ্ছে
     html_code = html_code.replace("__DL_JSON__", dl_json)
     html_code = html_code.replace("__ADL_JSON__", adl_json)
-    html_code = html_code.replace("__BOT_TOKEN__", TOKEN) # TOKEN রিপ্লেস করা হয়েছে
+    html_code = html_code.replace("__BOT_TOKEN__", TOKEN)
     return HTMLResponse(html_code)
 
 # ==========================================
