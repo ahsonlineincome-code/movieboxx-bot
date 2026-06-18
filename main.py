@@ -457,10 +457,7 @@ async def receive_movie_title(m: types.Message, state: FSMContext):
         
         if existing_series:
             await state.update_data(
-                ...
                 existing_id=str(existing_series['_id']), # ID সেভ করা হলো
-                ...
-            )
                 title=existing_series['title'], # বা নতুন টাইটেল লজিক নিচে
                 base_name=base_title,
                 photo_id=existing_series['photo_id'],
