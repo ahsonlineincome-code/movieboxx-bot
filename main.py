@@ -790,12 +790,12 @@ async def web_ui():
             .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
             .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
-            .movie-list { padding: 0 15px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }
-            .movie-card { background: rgba(30, 41, 59, 0.6); border-radius: 12px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
+            .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
+            .movie-card { display: flex; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
             body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
             .movie-card:active { transform: scale(0.98); }
             .movie-thumb { width: 100%; padding-bottom: 56.25%; position: relative; background: #000; }
-            .movie-card img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+            .movie-card img { width: 160px; height: 90px; object-fit: cover; flex-shrink: 0; }
             .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
             .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
