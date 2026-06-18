@@ -858,10 +858,9 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
 async def get_trending_movies():
     try:
         now = datetime.datetime.utcnow()
-        seven_days_ago = now - datetime.timedelta(days=7)
-        
-        # গত ৭ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (clicks অনুযায়ী সর্ট করা), মাত্র ৫টি
-        movies = await db.movies.find({}).sort("clicks", -1).limit(10).to_list(10)
+        # গত ৩০ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (Top 10)
+        thirty_days_ago = now - datetime.timedelta(days=30)
+        movies = await db.movies.find({"created_at": {"$gte": thirty_days_ago}}).sort("clicks", -1).limit(10).to_list(10)
         
         for m in movies:
             m["_id"] = str(m["_id"])
@@ -951,22 +950,82 @@ async def web_ui():
             .logo { display: flex; align-items: center; font-size: 24px; font-weight: 900; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
             .page-section { display: none; padding-bottom: 80px; }
             .page-section.active { display: block; }
+            
+            /* Category Buttons (Unchanged as requested) */
             .cat-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px; }
             .cat-chip { background: #1e293b; padding: 8px 16px; border-radius: 20px; white-space: nowrap; cursor: pointer; border: 1px solid #ef4444; font-weight: 600; font-size: 12px; transition: 0.3s; color: #cbd5e1; }
             .cat-chip.active { background: linear-gradient(45deg, #ef4444, #dc2626); border-color: #ef4444; color: white; box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+            
+            /* Common Movie List Container */
             .movie-list { padding: 0 15px; display: flex; flex-direction: column; gap: 15px; }
-            .movie-card { display: flex; flex-direction: column; background: rgba(30, 41, 59, 0.6); border-radius: 16px; overflow: hidden; border: 1px solid #334155; cursor: pointer; transition: 0.3s; position: relative; }
+            
+            /* ✅ Shared Card Style (Broder Grid Color) */
+            .movie-card { 
+                display: flex; 
+                background: #1e293b; /* Broader Background Color */
+                border-radius: 16px; 
+                overflow: hidden; 
+                border: 1px solid #334155; /* Side Grid Color */
+                box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+                cursor: pointer; 
+                transition: transform 0.2s; 
+                position: relative; 
+                margin-bottom: 0; /* Spacing handled by gap in parent */
+            }
             body.oled-mode .movie-card { background: #0a0a0a; border-color: #1a1a1a; }
             .movie-card:active { transform: scale(0.98); }
-            .movie-thumb { width: 100%; padding-bottom: 56.25%; position: relative; background: #000; }
-            .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
-            .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
-            .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: normal; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-            .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
-            .movie-cat-tag { background: rgba(239, 68, 68, 0.8); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #fff; }
-            .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+            
+            /* Image Section */
+            .movie-thumb { width: 120px; flex-shrink: 0; position: relative; background: #000; }
+            .movie-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; aspect-ratio: 2/3; }
+            
+            /* Content Section */
+            .movie-info { padding: 12px; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+            .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            
+            /* Meta Row (Quality, Year, Views) */
+            .movie-meta-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 6px;
+            }
+            .quality-badge {
+                background: rgba(34, 184, 255, 0.2);
+                color: #22B8FF;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }
+            .year-text {
+                color: #94a3b8;
+                font-size: 11px;
+            }
+            .views-text {
+                color: #fbbf24; /* Yellow for views */
+                font-size: 11px;
+                font-weight: 600;
+                margin-left: auto; /* Push to right */
+            }
+            
+            /* Categories */
+            .movie-cats { display: flex; flex-wrap: wrap; gap: 4px; }
+            .cat-small-tag {
+                background: rgba(255, 255, 255, 0.1);
+                color: #cbd5e1;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 9px;
+            }
+
+            /* Overlays & Buttons */
+            .fav-btn { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); border: none; width: 28px; height: 28px; border-radius: 50%; color: white; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
-            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
+            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 30px; z-index: 5; }
+            
+            /* Floating & Nav */
             .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
@@ -975,6 +1034,8 @@ async def web_ui():
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
             .nav-item i { font-size: 20px; margin-bottom: 3px; }
             .nav-item.active { color: #ef4444; }
+            
+            /* Modals */
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             body.oled-mode .modal-content { background: #000000; }
@@ -1011,12 +1072,12 @@ async def web_ui():
             .btn-main-ch { background: #24A1DE; }
             .btn-18-ch { background: #ef4444; }
             .btn-sax-grp { background: #8B5CF6; }
-            .skeleton { background: #1e293b; border-radius: 12px; height: 160px; position: relative; overflow: hidden; }
+            .skeleton { background: #1e293b; border-radius: 16px; height: 140px; position: relative; overflow: hidden; }
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             .join-channel-btn { display: block; width: 100%; padding: 15px; border-radius: 12px; background: #24A1DE; color: white; font-weight: 700; text-decoration: none; font-size: 16px; text-align: center; margin-top: 15px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(36, 161, 222, 0.3); }
             
-            /* ✅ Pagination Styles */
+            /* Pagination */
             .pagination-container { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 20px 15px 80px 15px; }
             .page-btn { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; padding: 10px 15px; border-radius: 10px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 14px; }
             body.oled-mode .page-btn { background: #0a0a0a; border-color: #1a1a1a; }
@@ -1024,149 +1085,98 @@ async def web_ui():
             .page-btn.active { background: linear-gradient(45deg, #ef4444, #dc2626); color: white; border-color: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.3); }
             .page-btn:disabled { background: #1e293b; color: #475569; cursor: not-allowed; border-color: #1e293b; }
 
-            /* নতুন মেটা রো (Year এবং Category এর জন্য) */
-           .movie-meta-row {
-            display: flex;
-            justify-content: space-between; /* Year বামে, Category ডানে */
-            align-items: center;
-            margin-top: 5px;
-           }
+            /* ========================= */
+            /* ✅ TRENDING SLIDER STYLES */
+            /* ========================= */
+            .trending-section-wrapper {
+                background: rgba(30, 41, 59, 0.4); 
+                margin: 10px 15px 20px 15px; 
+                padding: 15px;
+                border-radius: 16px;
+                border: 1px solid #334155;
+            }
+            body.oled-mode .trending-section-wrapper { background: #0a0a0a; border-color: #1a1a1a; }
 
-          /* বাম পাশের Year বাটনের স্টাইল */
-         .year-badge {
-          background-color: #22B8FF; /* Bright Sky Blue */
-          color: #fff;
-          padding: 3px 8px;
-          border-radius: 4px;
-          font-size: 11px;
-          font-weight: 700;
-         }
+            .section-header { 
+                padding-bottom: 10px; 
+                font-size: 18px; 
+                font-weight: 800; 
+                color: #fff; 
+                display: flex; 
+                align-items: center; 
+                gap: 8px; 
+                margin-bottom: 10px;
+            }
+            .section-header i { color: #ff4b2b; }
 
-         /* ডান পাশের ছোট Category ট্যাগের স্টাইল */
-         .cat-small-tag {
-         background: rgba(255, 255, 255, 0.1);
-         color: #cbd5e1;
-         padding: 2px 6px;
-         border-radius: 4px;
-         font-size: 10px;
-         margin-left: 4px;
-         display: inline-block;
-         }
+            .trending-slider-container {
+                overflow-x: auto;
+                display: flex;
+                gap: 15px;
+                scroll-behavior: smooth;
+                padding-bottom: 5px;
+                -ms-overflow-style: none;  
+                scrollbar-width: none;  
+            }
+            .trending-slider-container::-webkit-scrollbar { display: none; }
 
-         /* ========================= */
-         /* ✅ TRENDING SLIDER STYLES */
-         /* ========================= */
-         .trending-section-wrapper {
-            background: rgba(30, 41, 59, 0.4); /* Side Grid Color - Light Dark Background */
-            margin: 10px 15px 20px 15px; /* Spacing/Margin */
-            padding: 15px;
-            border-radius: 16px;
-            border: 1px solid #334155;
-         }
-         body.oled-mode .trending-section-wrapper { background: #0a0a0a; border-color: #1a1a1a; }
+            .trending-card { 
+                flex: 0 0 auto; 
+                width: 140px; 
+                background: #1e293b; /* Consistent Background */
+                border-radius: 12px;
+                overflow: hidden;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+                cursor: pointer;
+                position: relative;
+                transition: transform 0.2s;
+                border: 1px solid #334155;
+            }
+            body.oled-mode .trending-card { background: #0a0a0a; border-color: #1a1a1a; }
+            .trending-card:active { transform: scale(0.95); }
 
-         .section-header { 
-            padding-bottom: 10px; 
-            font-size: 18px; 
-            font-weight: 800; 
-            color: #fff; 
-            display: flex; 
-            align-items: center; 
-            gap: 8px; 
-            margin-bottom: 10px;
-         }
-         .section-header i { color: #ff4b2b; }
+            .poster-slider { 
+                width: 100%; 
+                aspect-ratio: 2/3; 
+                position: relative; 
+            }
+            .poster-slider img { 
+                width: 100%; 
+                height: 100%; 
+                object-fit: cover; 
+                display: block; 
+            }
 
-         .trending-slider-container {
-            overflow-x: auto;
-            display: flex;
-            gap: 15px;
-            scroll-behavior: smooth;
-            padding-bottom: 5px;
-            /* Hide Scrollbar */
-            -ms-overflow-style: none;  
-            scrollbar-width: none;  
-         }
-         .trending-slider-container::-webkit-scrollbar { display: none; }
+            .badge-18-slider { 
+                position: absolute; 
+                top: 5px; 
+                left: 5px; 
+                background: #ef4444; 
+                color: white; 
+                font-size: 9px; 
+                font-weight: 800; 
+                padding: 2px 6px; 
+                border-radius: 4px; 
+                z-index: 2; 
+            }
 
-         .trending-card { 
-            flex: 0 0 auto; /* কার্ড সংকুচিত হবে না */
-            width: 140px; /* কার্ডের প্রস্থ */
-            background: #0f172a;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-            cursor: pointer;
-            position: relative;
-            transition: transform 0.2s;
-         }
-         body.oled-mode .trending-card { background: #000; border: 1px solid #1a1a1a; }
-         .trending-card:active { transform: scale(0.95); }
-
-         .poster-slider { 
-            width: 100%; 
-            aspect-ratio: 2/3; /* পোস্টার স্টাইল একটু লম্বা */
-            position: relative; 
-         }
-         .poster-slider img { 
-            width: 100%; 
-            height: 100%; 
-            object-fit: cover; 
-            display: block; 
-         }
-
-         /* 18+ Badge */
-         .badge-18-slider { 
-            position: absolute; 
-            top: 5px; 
-            left: 5px; 
-            background: #ef4444; 
-            color: white; 
-            font-size: 9px; 
-            font-weight: 800; 
-            padding: 2px 6px; 
-            border-radius: 4px; 
-            z-index: 2; 
-            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
-         }
-
-         /* র‍্যাংকিং ব্যাজ (Top 1, 2, 3...) */
-         .rank-badge {
-            position: absolute;
-            top: 5px;
-            right: 5px;
-            background: rgba(0, 0, 0, 0.7);
-            color: #fbbf24; /* Gold color */
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            font-weight: 800;
-            z-index: 2;
-            border: 1px solid #fbbf24;
-         }
-
-         .info-slider { 
-            padding: 8px; 
-         }
-         .movie-title-slider { 
-            font-size: 12px; 
-            color: #fff; 
-            font-weight: 600; 
-            white-space: nowrap; 
-            overflow: hidden; 
-            text-overflow: ellipsis; 
-            margin-bottom: 2px;
-         }
-         .movie-meta-slider { 
-            font-size: 10px; 
-            color: #94a3b8; 
-            display: flex; 
-            justify-content: space-between;
-         }
+            .info-slider { 
+                padding: 8px; 
+            }
+            .movie-title-slider { 
+                font-size: 12px; 
+                color: #fff; 
+                font-weight: 600; 
+                white-space: nowrap; 
+                overflow: hidden; 
+                text-overflow: ellipsis; 
+                margin-bottom: 4px;
+            }
+            .views-slider {
+                color: #fbbf24;
+                font-size: 10px;
+                font-weight: 700;
+            }
 
         </style>
     </head>
@@ -1189,15 +1199,15 @@ async def web_ui():
                 <div class="cat-chip" onclick="verify18(this)">ADULT CONTENT</div>
             </div>
             
-            <!-- ✅ NEW: TRENDING AUTO SLIDER SECTION -->
+            <!-- ✅ TRENDING AUTO SLIDER SECTION -->
             <div class="trending-section-wrapper">
-                <div class="section-header"><i class="fa-solid fa-fire"></i> Top 5 Trending</div>
+                <div class="section-header"><i class="fa-solid fa-fire"></i> Trending Now</div>
                 <div class="trending-slider-container" id="trendingSlider">
-                    <!-- JS দিয়ে মুভি এখানে লোড হবে -->
                     <div style="width: 100%; text-align: center; color: #64748b; padding: 20px;">Loading...</div>
                 </div>
             </div>
 
+            <h3 style="padding: 0 20px 10px; color: #fff; font-size: 18px; font-weight: 700;">Recently Added</h3>
             <div class="movie-list" id="movieListHome"><div class="skeleton"></div><div class="skeleton"></div></div>
             <div id="paginationHome" class="pagination-container"></div>
         </div>
@@ -1292,6 +1302,13 @@ async def web_ui():
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
             if(localStorage.getItem('oledMode') === 'true') { document.body.classList.add('oled-mode'); document.getElementById('darkModeStatus').innerText = 'ON'; }
+
+            // Helper to format views (1400 -> 1.4K)
+            function formatViews(num) {
+                if(!num) return '0';
+                if(num >= 1000) return (num / 1000).toFixed(1) + 'K';
+                return num;
+            }
             
             // ✅ TRENDING SLIDER LOAD FUNCTION
             async function loadTrending() {
@@ -1302,7 +1319,6 @@ async def web_ui():
                     const container = document.getElementById('trendingSlider');
                     
                     if (movies.length === 0) {
-                        // মুভি না থাকলে পুরো সেকশন লুকিয়ে দিন
                         document.querySelector('.trending-section-wrapper').style.display = 'none';
                         return;
                     }
@@ -1313,27 +1329,21 @@ async def web_ui():
                             : '';
                         
                         const imgUrl = `/api/image/${m.photo_id}`;
-                        const rank = index + 1;
 
                         return `
                         <div class="trending-card" onclick="openTrendingDetail(${index})">
                             <div class="poster-slider">
                                 <img src="${imgUrl}" loading="lazy" alt="${m.title}">
                                 ${badgeHtml}
-                                <div class="rank-badge">${rank}</div>
                             </div>
                             <div class="info-slider">
                                 <div class="movie-title-slider">${m.title}</div>
-                                <div class="movie-meta-slider">
-                                    <span>${m.quality || 'HD'}</span>
-                                    <span>${m.year || 'N/A'}</span>
-                                </div>
+                                <div class="views-slider"><i class="fa-solid fa-eye"></i> ${formatViews(m.clicks)}</div>
                             </div>
                         </div>
                         `;
                     }).join('');
 
-                    // ✅ Auto Slider Logic Start
                     startAutoSlider();
                     
                 } catch (error) {
@@ -1347,22 +1357,16 @@ async def web_ui():
             function startAutoSlider() {
                 const slider = document.getElementById('trendingSlider');
                 if(!slider) return;
-
-                // আগের ইন্টারভাল ক্লিয়ার করা
                 if(autoScrollInterval) clearInterval(autoScrollInterval);
-
                 autoScrollInterval = setInterval(() => {
-                    // ইউজার যদি ম্যানুয়ালি স্ক্রল করে তাহলে অটো স্ক্রল বন্ধ করার লজিক জটিল, 
-                    // তাই আমরা সিম্পল ভাবে প্রতি ৩ সেকেন্ডে একটু এগিয়ে যাবো
-                    const cardWidth = 155; // card width + gap
+                    const cardWidth = 155; 
                     const maxScroll = slider.scrollWidth - slider.clientWidth;
-                    
                     if (slider.scrollLeft >= maxScroll) {
                         slider.scrollTo({ left: 0, behavior: 'smooth' });
                     } else {
                         slider.scrollBy({ left: cardWidth, behavior: 'smooth' });
                     }
-                }, 3000); // ৩ সেকেন্ড পর পর স্লাইড হবে
+                }, 3000);
             }
 
             function openTrendingDetail(index) {
@@ -1419,29 +1423,29 @@ async def web_ui():
                 let isFav = userFavs.includes(m._id); 
                 let isAdult = m.categories && m.categories.includes("Adult Content");
                 let isVerified = localStorage.getItem('isAdult') === 'true';
-                let catsHtml = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(''); 
                 let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index})"`;
                 
-    return `<div class="movie-card" ${clickAction}>
-                <div style="position: relative; flex-shrink: 0;">
-                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
-                    ${lockOverlay}
-                </div>
-                <div class="movie-info">
-                    <div class="movie-title">${m.title}</div>
-                    <div class="movie-meta-row">
-                        <div class="left-meta">
-                            <span class="year-badge">${m.year || 'N/A'}</span>
+                // ✅ Updated Card Structure (Broader Grid Color)
+                return `<div class="movie-card" ${clickAction}>
+                    <div class="movie-thumb">
+                        <img src="${imgSrc}" loading="lazy">
+                        ${lockOverlay}
+                    </div>
+                    <div class="movie-info">
+                        <div class="movie-title">${m.title}</div>
+                        <div class="movie-meta-row">
+                            <span class="quality-badge">${m.quality || 'HD'}</span>
+                            <span class="year-text">${m.year || 'N/A'}</span>
+                            <span class="views-text"><i class="fa-solid fa-eye"></i> ${formatViews(m.clicks || 0)}</span>
                         </div>
-                        <div class="right-meta">
+                        <div class="movie-cats">
                             ${(m.categories || []).map(function(c) { return `<span class="cat-small-tag">${c}</span>`; }).join('')}
                         </div>
                     </div>
-                </div>
-                <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-            </div>`; 
+                    <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
+                </div>`; 
             }
 
             function openDetail(index) { let m = currentViewMovies[index]; if(!m) return; document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; document.getElementById('detailTitle').innerText = m.title; document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); let isAdult = m.is_adult || false; let btnsHtml = m.files.map(function(f) { let isFree = f.is_unlocked || isUserVip; return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; }).join(''); document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; document.getElementById('detailModal').style.display = 'flex'; }
