@@ -193,6 +193,7 @@ async def on_startup():
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
+    asyncio.create_task(log_active_users_periodically())
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -202,6 +203,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if uid in banned_cache:
         return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
+    await update_user_active(uid)
         
     await state.clear()
     now = datetime.datetime.utcnow()
@@ -271,6 +273,7 @@ async def unban_user(m: types.Message):
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
+        await update_user_active(m.from_user.id)
     if m.content_type not in ['text']:
         await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
@@ -282,6 +285,7 @@ async def handle_user_messages(m: types.Message):
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
+    await update_user_active(c.from_user.id)
     if c.from_user.id not in admin_cache: return
     user_id = int(c.data.split("_")[1])
     await state.set_state(AdminStates.waiting_for_reply)
@@ -479,6 +483,7 @@ async def fallback_year(m: types.Message):
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
+    await update_user_active(c.from_user.id)
     index = int(c.data.split("_")[1])
     cat = CATEGORIES[index]
     data = await state.get_data()
@@ -498,6 +503,7 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
 async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
@@ -518,6 +524,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 # নতুন মুভি হিসেবে ব্রডকাস্ট করার ফাংশন
 @dp.callback_query(F.data == "action_new_bcast")
 async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     await state.clear()
@@ -545,6 +552,7 @@ async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
 # শুধু ফাইল অ্যাড করার ফাংশন (কোনো ব্রডকাস্ট বা লগ হবে না)
 @dp.callback_query(F.data == "action_add_file")
 async def action_add_file_only(c: types.CallbackQuery, state: FSMContext):
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     await state.clear()
@@ -637,6 +645,7 @@ async def run_manual_broadcast(m, prog_msg, admin_id):
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
+    await update_user_active(c.from_user.id)
     if c.from_user.id not in admin_cache: return
     action = c.data.split("_")[1]; pay_id = c.data.split("_")[2]
     payment = await db.payments.find_one({"_id": ObjectId(pay_id)})
@@ -656,12 +665,19 @@ async def handle_trx_approval(c: types.CallbackQuery):
 # ==========================================
 # Background Task: Every 1 min log active users
 # ==========================================
+async def update_user_active(user_id: int):
+    await db.users.update_one(
+        {"user_id": user_id},
+        {"$set": {"last_active": datetime.datetime.utcnow()}},
+        upsert=True
+    )
+
 async def log_active_users_periodically():
     while True:
         try:
             now = datetime.datetime.utcnow()
-            five_mins_ago = now - datetime.timedelta(minutes=5)
-            active_count = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+            one_min_ago = now - datetime.timedelta(minutes=1)
+            active_count = await db.users.count_documents({"last_active": {"$gte": one_min_ago}})
             
             await db.activity_logs.insert_one({
                 "timestamp": now,
@@ -763,7 +779,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <div class="stat-card today-users"><h3>Today New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
             <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
             <div class="stat-card today-clicks"><h3>Today Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
-            <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
+            <div class="stat-card live-users"><h3>Live Active (1m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
             <div class="stat-card peak-users"><h3>Peak (60m)</h3><div class="value"><i class="fa-solid fa-arrow-trend-up"></i> <span id="peakUsers">0</span></div></div>
         </div>
 
@@ -1096,8 +1112,8 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total_users = await db.users.count_documents({})
     today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    five_mins_ago = now - datetime.timedelta(minutes=5)
-    active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+    one_min_ago = now - datetime.timedelta(minutes=1)
+    active_users = await db.users.count_documents({"last_active": {"$gte": one_min_ago}})
     total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1)
     total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
