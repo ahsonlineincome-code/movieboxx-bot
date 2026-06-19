@@ -654,6 +654,31 @@ async def handle_trx_approval(c: types.CallbackQuery):
         await c.message.edit_text(c.message.text + "\n\n❌ <b>রিজেক্ট!</b>", parse_mode="HTML")
 
 # ==========================================
+# Background Task: Every 1 min log active users
+# ==========================================
+async def log_active_users_periodically():
+    while True:
+        try:
+            now = datetime.datetime.utcnow()
+            five_mins_ago = now - datetime.timedelta(minutes=5)
+            active_count = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+            
+            await db.activity_logs.insert_one({
+                "timestamp": now,
+                "active_count": active_count
+            })
+            
+            # শুধু গত ২৪ ঘণ্টার ডাটা রাখবো
+            cutoff = now - datetime.timedelta(hours=24)
+            await db.activity_logs.delete_many({"timestamp": {"$lt": cutoff}})
+            
+        except Exception as e:
+            print(f"Activity log error: {e}")
+        
+        await asyncio.sleep(60)
+
+
+# ==========================================
 # 8. Web Admin Panel API & UI
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
@@ -667,24 +692,53 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <title>Admin Panel - Movie Box</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
+            * { box-sizing: border-box; }
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }
             .header { text-align: center; margin-bottom: 30px; color: #fff; }
             .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
             .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
             .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
             .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
-            .stat-card.users .value i { color: #3b82f6; } .stat-card.today-users .value i { color: #10b981; } .stat-card.clicks .value i { color: #f59e0b; } .stat-card.today-clicks .value i { color: #ef4444; }
-            .stat-card.live-users { border-color: #10b981; } .stat-card.live-users .value { color: #10b981; }
+            .stat-card.users .value i { color: #3b82f6; }
+            .stat-card.today-users .value i { color: #10b981; }
+            .stat-card.clicks .value i { color: #f59e0b; }
+            .stat-card.today-clicks .value i { color: #ef4444; }
+            .stat-card.live-users { border-color: #10b981; }
+            .stat-card.live-users .value { color: #10b981; }
+            .stat-card.peak-users { border-color: #8b5cf6; }
+            .stat-card.peak-users .value { color: #8b5cf6; }
+
+            /* === Activity Chart Section === */
+            .chart-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; padding: 20px; margin-bottom: 30px; }
+            .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+            .chart-header h2 { margin: 0; color: #fff; font-size: 20px; }
+            .chart-controls { display: flex; gap: 8px; }
+            .chart-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #94a3b8; cursor: pointer; font-size: 13px; font-weight: 600; transition: 0.2s; }
+            .chart-btn.active { background: #22B8FF; color: #fff; border-color: #22B8FF; }
+            .chart-btn:hover { border-color: #22B8FF; color: #22B8FF; }
+            .chart-btn.active:hover { color: #fff; }
+            .chart-stats-row { display: flex; gap: 20px; margin-bottom: 15px; flex-wrap: wrap; }
+            .chart-mini-stat { font-size: 13px; color: #94a3b8; }
+            .chart-mini-stat span { color: #fff; font-weight: 700; }
+            canvas#activityChart { width: 100% !important; height: 250px !important; border-radius: 8px; }
+            .no-data-msg { text-align: center; padding: 50px 20px; color: #475569; font-size: 15px; }
+
+            /* === Table === */
             .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
             .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
             .table-header h2 { margin: 0; color: #fff; font-size: 20px; }
-            table { width: 100%; border-collapse: collapse; min-width: 600px; } th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; } td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; } tr:last-child td { border-bottom: none; } tr:hover { background: rgba(255,255,255,0.03); }
+            table { width: 100%; border-collapse: collapse; min-width: 600px; }
+            th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; }
+            td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; }
+            tr:last-child td { border-bottom: none; }
+            tr:hover { background: rgba(255,255,255,0.03); }
             .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
-            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; } .delete-btn:hover { background: #ef4444; color: white; }
+            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; }
+            .delete-btn:hover { background: #ef4444; color: white; }
             .empty-state { text-align: center; padding: 40px; color: #64748b; }
-            
-            /* Edit Modal Styles */
+
+            /* === Modal === */
             .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
             .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
             .modal-content h3 { margin-top: 0; color: #ef4444; }
@@ -694,77 +748,270 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
             .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
             .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
+            .search-input { padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px; }
         </style>
     </head>
     <body>
-        <div class="header"><h1><i class="fa-solid fa-shield-halved"></i> Admin Panel</h1><p>Movie Box Control Center</p></div>
+        <div class="header">
+            <h1><i class="fa-solid fa-shield-halved"></i> Admin Panel</h1>
+            <p>Movie Box Control Center</p>
+        </div>
+
+        <!-- Stats Cards -->
         <div class="stats-grid">
             <div class="stat-card users"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users"></i> <span id="totalUsers">0</span></div></div>
-            <div class="stat-card today-users"><h3>Today's New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
+            <div class="stat-card today-users"><h3>Today New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
             <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
-            <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
+            <div class="stat-card today-clicks"><h3>Today Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
             <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
+            <div class="stat-card peak-users"><h3>Peak (60m)</h3><div class="value"><i class="fa-solid fa-arrow-trend-up"></i> <span id="peakUsers">0</span></div></div>
         </div>
-        <div class="table-container"><div class="table-header">
-    <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
-    <input type="text" id="movieSearchInput" placeholder="🔍 Search movie..." style="padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px;">
-</div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
 
-        <!-- Edit Modal HTML -->
+        <!-- Activity Chart -->
+        <div class="chart-container">
+            <div class="chart-header">
+                <h2><i class="fa-solid fa-chart-area"></i> Live Activity Monitor</h2>
+                <div class="chart-controls">
+                    <button class="chart-btn active" onclick="loadChart('60')">Last 60 Min</button>
+                    <button class="chart-btn" onclick="loadChart('120')">Last 2 Hours</button>
+                    <button class="chart-btn" onclick="loadChart('360')">Last 6 Hours</button>
+                    <button class="chart-btn" onclick="loadChart('1440')">Last 24 Hours</button>
+                </div>
+            </div>
+            <div class="chart-stats-row">
+                <div class="chart-mini-stat">📊 Average: <span id="avgActive">0</span></div>
+                <div class="chart-mini-stat">📈 Peak: <span id="chartPeak">0</span> at <span id="chartPeakTime">--</span></div>
+                <div class="chart-mini-stat">📉 Lowest: <span id="chartLow">0</span> at <span id="chartLowTime">--</span></div>
+                <div class="chart-mini-stat">🔍 Data Points: <span id="dataPoints">0</span></div>
+            </div>
+            <canvas id="activityChart"></canvas>
+            <div id="noDataMsg" class="no-data-msg" style="display:none;">
+                <i class="fa-solid fa-database" style="font-size:30px; margin-bottom:10px; display:block;"></i>
+                Bot এখনো অ্যাক্টিভিটি লগ করছে। কিছুক্ষণ পর রিফ্রেশ করুন।
+            </div>
+        </div>
+
+        <!-- Movies Table -->
+        <div class="table-container">
+            <div class="table-header">
+                <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
+                <input type="text" id="movieSearchInput" class="search-input" placeholder="🔍 Search movie...">
+            </div>
+            <table>
+                <thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead>
+                <tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody>
+            </table>
+        </div>
+
+        <!-- Edit Modal -->
         <div id="editModal" class="modal">
             <div class="modal-content">
                 <h3>✏️ Edit Movie</h3>
                 <input type="hidden" id="editId">
-                
-                <div class="form-group">
-                    <label>Title</label>
-                    <input type="text" id="editTitle">
-                </div>
-                
-                <div class="form-group">
-                    <label>Poster Photo ID (File ID)</label>
-                    <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
-                </div>
-
-                <div class="form-group">
-                    <label>Quality</label>
-                    <input type="text" id="editQuality">
-                </div>
-
-                <div class="form-group">
-                    <label>Year</label>
-                    <input type="text" id="editYear">
-                </div>
-
-                <div class="form-group">
-                    <label>Categories (Comma separated)</label>
-                    <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
-                </div>
-
+                <div class="form-group"><label>Title</label><input type="text" id="editTitle"></div>
+                <div class="form-group"><label>Poster Photo ID</label><input type="text" id="editPhoto" placeholder="Paste Telegram File ID"></div>
+                <div class="form-group"><label>Quality</label><input type="text" id="editQuality"></div>
+                <div class="form-group"><label>Year</label><input type="text" id="editYear"></div>
+                <div class="form-group"><label>Categories (Comma separated)</label><input type="text" id="editCategories" placeholder="e.g. Action, Thriller"></div>
                 <div class="modal-buttons">
-                    <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
+                    <button class="btn-save" onclick="saveMovieEdit()">💾 Save</button>
                     <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
                 </div>
             </div>
         </div>
 
         <script>
-            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
+            // === STATS ===
+            async function fetchStats() {
+                try {
+                    const res = await fetch('/api/admin/stats');
+                    const data = await res.json();
+                    document.getElementById('totalUsers').innerText = data.total_users;
+                    document.getElementById('todayUsers').innerText = data.today_users;
+                    document.getElementById('totalClicks').innerText = data.total_clicks;
+                    document.getElementById('todayClicks').innerText = data.today_clicks;
+                    document.getElementById('activeUsers').innerText = data.active_users;
+                } catch(e) {}
+            }
+
+            // === CHART ===
+            let currentRange = 60;
+
+            async function loadChart(minutes) {
+                currentRange = minutes;
+                // Active button toggle
+                document.querySelectorAll('.chart-btn').forEach(b => b.classList.remove('active'));
+                event.target.classList.add('active');
+
+                try {
+                    const res = await fetch(`/api/admin/active-history?minutes=${minutes}`);
+                    const data = await res.json();
+
+                    if (data.length === 0) {
+                        document.getElementById('activityChart').style.display = 'none';
+                        document.getElementById('noDataMsg').style.display = 'block';
+                        return;
+                    }
+
+                    document.getElementById('activityChart').style.display = 'block';
+                    document.getElementById('noDataMsg').style.display = 'none';
+                    drawChart(data);
+                    updateChartStats(data);
+                } catch(e) {
+                    console.error(e);
+                }
+            }
+
+            function updateChartStats(data) {
+                const counts = data.map(d => d.count);
+                const max = Math.max(...counts);
+                const min = Math.min(...counts);
+                const avg = (counts.reduce((a,b) => a+b, 0) / counts.length).toFixed(1);
+                const peakIdx = counts.indexOf(max);
+                const lowIdx = counts.indexOf(min);
+
+                document.getElementById('avgActive').innerText = avg;
+                document.getElementById('chartPeak').innerText = max;
+                document.getElementById('chartPeakTime').innerText = data[peakIdx].time;
+                document.getElementById('chartLow').innerText = min;
+                document.getElementById('chartLowTime').innerText = data[lowIdx].time;
+                document.getElementById('dataPoints').innerText = data.length;
+                document.getElementById('peakUsers').innerText = max;
+            }
+
+            function drawChart(data) {
+                const canvas = document.getElementById('activityChart');
+                const ctx = canvas.getContext('2d');
+                const dpr = window.devicePixelRatio || 1;
+
+                canvas.width = canvas.offsetWidth * dpr;
+                canvas.height = 250 * dpr;
+                ctx.scale(dpr, dpr);
+
+                const W = canvas.offsetWidth;
+                const H = 250;
+                const padLeft = 45;
+                const padRight = 15;
+                const padTop = 15;
+                const padBottom = 35;
+                const chartW = W - padLeft - padRight;
+                const chartH = H - padTop - padBottom;
+
+                ctx.clearRect(0, 0, W, H);
+
+                const counts = data.map(d => d.count);
+                const maxVal = Math.max(...counts, 1);
+
+                // Grid lines
+                const gridLines = 5;
+                ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+                ctx.lineWidth = 1;
+                ctx.font = '11px Segoe UI';
+                ctx.fillStyle = '#64748b';
+                ctx.textAlign = 'right';
+
+                for (let i = 0; i <= gridLines; i++) {
+                    const y = padTop + (chartH / gridLines) * i;
+                    const val = Math.round(maxVal - (maxVal / gridLines) * i);
+                    ctx.beginPath();
+                    ctx.moveTo(padLeft, y);
+                    ctx.lineTo(W - padRight, y);
+                    ctx.stroke();
+                    ctx.fillText(val, padLeft - 8, y + 4);
+                }
+
+                // Calculate points
+                const points = data.map((d, i) => ({
+                    x: padLeft + (chartW / Math.max(data.length - 1, 1)) * i,
+                    y: padTop + chartH - (d.count / maxVal) * chartH
+                }));
+
+                // Area fill
+                const gradient = ctx.createLinearGradient(0, padTop, 0, H - padBottom);
+                gradient.addColorStop(0, 'rgba(34, 184, 255, 0.3)');
+                gradient.addColorStop(1, 'rgba(34, 184, 255, 0.01)');
+
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, H - padBottom);
+                points.forEach(p => ctx.lineTo(p.x, p.y));
+                ctx.lineTo(points[points.length - 1].x, H - padBottom);
+                ctx.closePath();
+                ctx.fillStyle = gradient;
+                ctx.fill();
+
+                // Line
+                ctx.beginPath();
+                ctx.moveTo(points[0].x, points[0].y);
+
+                // Smooth curve
+                for (let i = 0; i < points.length - 1; i++) {
+                    const xc = (points[i].x + points[i + 1].x) / 2;
+                    const yc = (points[i].y + points[i + 1].y) / 2;
+                    ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+                }
+                ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+                ctx.strokeStyle = '#22B8FF';
+                ctx.lineWidth = 2.5;
+                ctx.stroke();
+
+                // Dots & labels
+                ctx.textAlign = 'center';
+                const labelInterval = data.length > 60 ? Math.ceil(data.length / 12) : (data.length > 30 ? Math.ceil(data.length / 8) : (data.length > 15 ? 3 : 1));
+
+                points.forEach((p, i) => {
+                    // Dot
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+                    ctx.fillStyle = '#22B8FF';
+                    ctx.fill();
+                    ctx.strokeStyle = '#0f172a';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    // X-axis time labels
+                    if (i % labelInterval === 0 || i === points.length - 1) {
+                        ctx.fillStyle = '#64748b';
+                        ctx.font = '10px Segoe UI';
+                        ctx.fillText(data[i].time, p.x, H - padBottom + 18);
+                    }
+                });
+
+                // Hover tooltip area
+                canvas.onmousemove = function(e) {
+                    const rect = canvas.getBoundingClientRect();
+                    const mx = e.clientX - rect.left;
+                    let closest = null;
+                    let minDist = Infinity;
+
+                    points.forEach((p, i) => {
+                        const dist = Math.abs(mx - p.x);
+                        if (dist < minDist) { minDist = dist; closest = i; }
+                    });
+
+                    if (closest !== null && minDist < 30) {
+                        canvas.title = `${data[closest].time} → ${data[closest].count} users active`;
+                    } else {
+                        canvas.title = '';
+                    }
+                };
+            }
+
+            // === MOVIES ===
             let allMovies = [];
-            async function fetchMovies() { 
-                try { 
-                    const res = await fetch('/api/admin/movies'); 
-                    allMovies = await res.json(); 
-                    renderMovies(allMovies); 
-                } catch(e) {} 
+            async function fetchMovies() {
+                try {
+                    const res = await fetch('/api/admin/movies');
+                    allMovies = await res.json();
+                    renderMovies(allMovies);
+                } catch(e) {}
             }
 
             function renderMovies(moviesToRender) {
-                const tbody = document.getElementById('movieTableBody'); 
-                if(moviesToRender.length === 0) { 
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
-                    return; 
-                } 
+                const tbody = document.getElementById('movieTableBody');
+                if (moviesToRender.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>';
+                    return;
+                }
                 tbody.innerHTML = moviesToRender.map(m => `
                     <tr id="row-${m._id}">
                         <td><strong>${m.title}</strong><br><small>ID: ${m._id}</small></td>
@@ -772,42 +1019,43 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                         <td>${(m.categories || []).join(', ')}</td>
                         <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
                         <td>
-                            <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Delete</button>
-                            <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding: 6px 12px; font-size: 12px; background: #22B8FF; border:none; color:white; border-radius:4px; cursor:pointer;">✏️ Edit</button>
+                            <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Del</button>
+                            <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding:6px 12px; font-size:12px; border-radius:4px; cursor:pointer;">✏️ Edit</button>
                         </td>
-                    </tr>`).join(''); 
+                    </tr>`).join('');
             }
 
             document.getElementById('movieSearchInput').addEventListener('input', function(e) {
-                const searchTerm = e.target.value.toLowerCase();
-                const filteredMovies = allMovies.filter(m => 
-                    (m.title || '').toLowerCase().includes(searchTerm) || 
-                    (m.quality || '').toLowerCase().includes(searchTerm) ||
-                    (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
-                );
-                renderMovies(filteredMovies);
+                const term = e.target.value.toLowerCase();
+                renderMovies(allMovies.filter(m =>
+                    (m.title||'').toLowerCase().includes(term) ||
+                    (m.quality||'').toLowerCase().includes(term) ||
+                    (m.categories||[]).join(' ').toLowerCase().includes(term)
+                ));
             });
-            
-            async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
-            
-            // Edit Modal Functions
+
+            async function deleteMovie(id) {
+                if(!confirm("Delete this movie?")) return;
+                try {
+                    const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); }
+                } catch(e) {}
+            }
+
             function openEditModal(id) {
-                const movie = allMovies.find(m => m._id === id);
-                if (!movie) return;
-
-                document.getElementById('editId').value = movie._id;
-                document.getElementById('editTitle').value = movie.title || '';
-                document.getElementById('editPhoto').value = movie.photo_id || '';
-                document.getElementById('editQuality').value = movie.quality || '';
-                document.getElementById('editYear').value = movie.year || '';
-                document.getElementById('editCategories').value = (movie.categories || []).join(', ');
-
+                const m = allMovies.find(x => x._id === id);
+                if (!m) return;
+                document.getElementById('editId').value = m._id;
+                document.getElementById('editTitle').value = m.title || '';
+                document.getElementById('editPhoto').value = m.photo_id || '';
+                document.getElementById('editQuality').value = m.quality || '';
+                document.getElementById('editYear').value = m.year || '';
+                document.getElementById('editCategories').value = (m.categories || []).join(', ');
                 document.getElementById('editModal').style.display = 'flex';
             }
 
-            function closeEditModal() {
-                document.getElementById('editModal').style.display = 'none';
-            }
+            function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
 
             async function saveMovieEdit() {
                 const id = document.getElementById('editId').value;
@@ -816,105 +1064,135 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                     photo_id: document.getElementById('editPhoto').value,
                     quality: document.getElementById('editQuality').value,
                     year: document.getElementById('editYear').value,
-                    categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s !== '')
+                    categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s)
                 };
-
                 try {
                     const res = await fetch(`/api/admin/movie/${id}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(data)
                     });
-                    
                     const result = await res.json();
-                    if (result.ok) {
-                        alert('✅ Movie Updated Successfully!');
-                        closeEditModal();
-                        fetchMovies(); // টেবিল রিফ্রেশ করার জন্য
-                    } else {
-                        alert('❌ Error updating movie: ' + (result.detail || 'Unknown error'));
-                    }
-                } catch (error) {
-                    console.error(error);
-                    alert('❌ An error occurred');
-                }
+                    if (result.ok) { alert('✅ Updated!'); closeEditModal(); fetchMovies(); }
+                    else { alert('❌ ' + (result.detail || 'Error')); }
+                } catch(e) { alert('❌ Error'); }
             }
 
-            fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
+            // === INIT ===
+            fetchStats();
+            fetchMovies();
+            loadChart('60');
+            setInterval(fetchStats, 30000);
+            setInterval(() => loadChart(currentRange), 60000);
+            window.addEventListener('resize', () => loadChart(currentRange));
         </script>
     </body></html>'''
     return HTMLResponse(html_code)
 
+
 @app.get("/api/admin/stats")
 async def admin_stats(auth: bool = Depends(verify_admin)):
-    now = datetime.datetime.utcnow(); today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    total_users = await db.users.count_documents({}); today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    five_mins_ago = now - datetime.timedelta(minutes=5); active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
-    total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1); total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
+    now = datetime.datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    total_users = await db.users.count_documents({})
+    today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
+    five_mins_ago = now - datetime.timedelta(minutes=5)
+    active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+    total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1)
+    total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
-    return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
+    return {
+        "total_users": total_users,
+        "today_users": today_users,
+        "active_users": active_users,
+        "total_clicks": total_clicks,
+        "today_clicks": today_clicks
+    }
+
+
+@app.get("/api/admin/active-history")
+async def get_active_history(minutes: int = 60, auth: bool = Depends(verify_admin)):
+    """প্রতি ১ মিনিটে কতজন অ্যাক্টিভ ছিল সেই হিস্ট্রি রিটার্ন করে"""
+    try:
+        now = datetime.datetime.utcnow()
+        from_time = now - datetime.timedelta(minutes=minutes)
+
+        logs = await db.activity_logs.find({
+            "timestamp": {"$gte": from_time}
+        }).sort("timestamp", 1).to_list(2000)
+
+        result = []
+        for log in logs:
+            result.append({
+                "time": log["timestamp"].strftime("%H:%M"),
+                "count": log["active_count"]
+            })
+
+        return result
+    except Exception as e:
+        print(f"Active history error: {e}")
+        return []
+
 
 @app.get("/api/movies/trending")
 async def get_trending_movies():
     try:
         now = datetime.datetime.utcnow()
-        # গত ৩০ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (Top 10)
         thirty_days_ago = now - datetime.timedelta(days=30)
         movies = await db.movies.find({"created_at": {"$gte": thirty_days_ago}}).sort("clicks", -1).limit(10).to_list(10)
-        
         for m in movies:
             m["_id"] = str(m["_id"])
         return movies
-    except Exception as e:
+    except Exception:
         return []
+
 
 @app.get("/api/movies/recent")
 async def get_recent_movies():
     try:
-        # সবশেষে আপলোড করা ১০টি মুভি (created_at অনুযায়ী সর্ট করা)
         movies = await db.movies.find({}).sort("created_at", -1).limit(10).to_list(10)
         for m in movies:
             m["_id"] = str(m["_id"])
         return movies
-    except Exception as e:
+    except Exception:
         return []
+
 
 @app.get("/api/admin/movies")
 async def admin_movies(auth: bool = Depends(verify_admin)):
     movies = await db.movies.find({}).sort("created_at", -1).to_list(1000)
-    for m in movies: m["_id"] = str(m["_id"])
+    for m in movies:
+        m["_id"] = str(m["_id"])
     return movies
+
 
 @app.delete("/api/admin/movie/{movie_id}")
 async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
-    if result.deleted_count == 1: return {"ok": True}
+    if result.deleted_count == 1:
+        return {"ok": True}
     raise HTTPException(status_code=404, detail="Movie not found")
+
 
 @app.put("/api/admin/movie/{movie_id}")
 async def update_movie(movie_id: str, movie_data: dict = Body(...), auth: bool = Depends(verify_admin)):
-    # খালি ভ্যালু ফিল্টার করা
     update_data = {k: v for k, v in movie_data.items() if v is not None and v != ""}
-    
-    # ডাটাবেস আপডেট
     result = await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$set": update_data})
-    
     if result.modified_count > 0:
         return {"ok": True, "message": "Movie updated successfully"}
     raise HTTPException(status_code=400, detail="Failed to update movie")
+
 
 # ==========================================
 # Get Photo ID for Admin Panel
 # ==========================================
 @dp.message(F.photo, StateFilter(None))
 async def get_file_id_for_admin(message: types.Message):
-    if message.from_user.id not in admin_cache: 
+    if message.from_user.id not in admin_cache:
         return
-
     file_id = message.photo[-1].file_id
-    
     await message.answer(
-        f"🖼️ <b>New Photo File ID:</b>\n\n<code>{file_id}</code>\n\n✅ এই আইডিটি কপি করে Admin Panel এর 'Poster Photo ID' বক্সে পেস্ট করুন।", 
+        f"🖼️ <b>New Photo File ID:</b>\n\n<code>{file_id}</code>\n\n✅ এই আইডিটি কপি করে Admin Panel এর 'Poster Photo ID' বক্সে পেস্ট করুন।",
         parse_mode="HTML"
     )
 
