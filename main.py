@@ -202,9 +202,8 @@ async def on_startup():
 async def start_cmd(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if uid in banned_cache:
-        return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
-    await update_user_active(uid)
-        
+        return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
+    await update_user_active(uid)  # ★ এই লাইনটা যোগ করো
     await state.clear()
     now = datetime.datetime.utcnow()
     user = await db.users.find_one({"user_id": uid})
@@ -671,7 +670,6 @@ async def update_user_active(user_id: int):
         {"$set": {"last_active": datetime.datetime.utcnow()}},
         upsert=True
     )
-
 async def log_active_users_periodically():
     while True:
         try:
