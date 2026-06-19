@@ -272,7 +272,7 @@ async def unban_user(m: types.Message):
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
-        await update_user_active(m.from_user.id)
+    await update_user_active(m.from_user.id)
     if m.content_type not in ['text']:
         await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
@@ -284,7 +284,7 @@ async def handle_user_messages(m: types.Message):
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     if c.from_user.id not in admin_cache: return
     user_id = int(c.data.split("_")[1])
     await state.set_state(AdminStates.waiting_for_reply)
@@ -482,7 +482,7 @@ async def fallback_year(m: types.Message):
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data.startswith("selcat_"))
 async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     index = int(c.data.split("_")[1])
     cat = CATEGORIES[index]
     data = await state.get_data()
@@ -502,7 +502,7 @@ async def process_category_selection(c: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(AdminStates.waiting_for_cats, F.data == "cats_done")
 async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
@@ -523,7 +523,7 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 # নতুন মুভি হিসেবে ব্রডকাস্ট করার ফাংশন
 @dp.callback_query(F.data == "action_new_bcast")
 async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     await state.clear()
@@ -551,7 +551,7 @@ async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
 # শুধু ফাইল অ্যাড করার ফাংশন (কোনো ব্রডকাস্ট বা লগ হবে না)
 @dp.callback_query(F.data == "action_add_file")
 async def action_add_file_only(c: types.CallbackQuery, state: FSMContext):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     data = await state.get_data()
     selected_cats = data.get("categories", [])
     await state.clear()
@@ -644,7 +644,7 @@ async def run_manual_broadcast(m, prog_msg, admin_id):
 
 @dp.callback_query(F.data.startswith("trx_"))
 async def handle_trx_approval(c: types.CallbackQuery):
-        await update_user_active(c.from_user.id)
+    await update_user_active(c.from_user.id)
     if c.from_user.id not in admin_cache: return
     action = c.data.split("_")[1]; pay_id = c.data.split("_")[2]
     payment = await db.payments.find_one({"_id": ObjectId(pay_id)})
