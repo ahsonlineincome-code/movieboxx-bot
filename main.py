@@ -203,7 +203,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if uid in banned_cache:
         return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
-    await update_user_active(uid)  # ★ এই লাইনটা যোগ করো
+        await update_user_active(uid)
     await state.clear()
     now = datetime.datetime.utcnow()
     user = await db.users.find_one({"user_id": uid})
