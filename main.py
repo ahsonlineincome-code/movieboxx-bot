@@ -110,6 +110,7 @@ async def init_db():
     await db.movies.create_index("categories")
     await db.auto_delete.create_index("delete_at")
     await db.users.create_index("joined_at")
+    await db.users.create_index("last_active")
     await db.payments.create_index("trx_id", unique=True)
 
 # ==========================================
@@ -703,7 +704,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <div class="stat-card today-users"><h3>Today's New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
             <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
             <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
-            <div class="stat-card live-users"><h3>Live Active (5m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
+            <div class="stat-card live-users"><h3>Live Active (1m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
         </div>
         <div class="table-container"><div class="table-header">
     <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
@@ -849,7 +850,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
 async def admin_stats(auth: bool = Depends(verify_admin)):
     now = datetime.datetime.utcnow(); today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     total_users = await db.users.count_documents({}); today_users = await db.users.count_documents({"joined_at": {"$gte": today_start}})
-    five_mins_ago = now - datetime.timedelta(minutes=5); active_users = await db.users.count_documents({"last_active": {"$gte": five_mins_ago}})
+    one_min_ago = now - datetime.timedelta(minutes=1); active_users = await db.users.count_documents({"last_active": {"$gte": one_min_ago}})
     total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1); total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
     return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
@@ -890,6 +891,17 @@ async def delete_movie(movie_id: str, auth: bool = Depends(verify_admin)):
     result = await db.movies.delete_one({"_id": ObjectId(movie_id)})
     if result.deleted_count == 1: return {"ok": True}
     raise HTTPException(status_code=404, detail="Movie not found")
+
+@app.post("/api/user/ping")
+async def user_ping(request: Request):
+    try:
+        body = await request.json()
+        user_id = body.get("user_id")
+        if user_id:
+            await db.users.update_one({"user_id": user_id}, {"$set": {"last_active": datetime.datetime.utcnow()}})
+        return {"ok": True}
+    except:
+        return {"ok": False}
 
 @app.put("/api/admin/movie/{movie_id}")
 async def update_movie(movie_id: str, movie_data: dict = Body(...), auth: bool = Depends(verify_admin)):
@@ -1312,6 +1324,25 @@ async def web_ui():
         </div>
 
         <script>
+            // Live Active Ping
+            try {
+                const tgPingUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+                if (tgPingUser && tgPingUser.id) {
+                    fetch('/api/user/ping', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({user_id: tgPingUser.id})
+                    });
+                    setInterval(() => {
+                        fetch('/api/user/ping', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({user_id: tgPingUser.id})
+                        });
+                    }, 30000);
+                }
+            } catch(e) {}
+
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             const TOKEN = "__BOT_TOKEN__";
