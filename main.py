@@ -1306,7 +1306,7 @@ async def web_ui():
                 <div class="ad-icon">⚠️</div>
                 <h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
-                <div class="ad-box-black">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>১০ সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।</div>
+                <div class="ad-box-black">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>৫ সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।</div>
                 <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
                 <button class="ad-action-btn btn-ad-unlock" id="adVerifyBtn" onclick="checkAdWatched()" style="display:none;">✅ অ্যাড দেখে ফিরে এসেছি</button>
                 <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
@@ -1572,11 +1572,11 @@ async def web_ui():
             function checkAdWatched() {
                 if (adStartTime === 0) return;
                 let elapsed = Date.now() - adStartTime;
-                if (elapsed >= 15000) { 
+                if (elapsed >= 5000) { 
                     closeModal('adModal');
                     sendFileRequest(activeFileId);
                 } else {
-                    let remaining = Math.ceil((10000 - elapsed) / 1000);
+                    let remaining = Math.ceil((5000 - elapsed) / 1000);
                     tg.showAlert(`⚠️ আপনাকে আর ${remaining} সেকেন্ড অপেক্ষা করতে হবে!`);
                     document.getElementById('adVerifyBtn').style.display = 'none';
                     document.getElementById('adTryAgainBtn').style.display = 'block';
