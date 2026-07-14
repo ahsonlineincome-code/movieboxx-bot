@@ -48,7 +48,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439")
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
 BOT_USERNAME = "bdlatestmovie_bot" 
 
-LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1003708048942")
+LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1004462840114")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
