@@ -194,6 +194,7 @@ async def on_startup():
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
+    asyncio.create_task(self_pinger()) # ✅ এই লাইনটা যোগ করো
 
 # ==========================================
 # 6. Telegram Bot Commands
@@ -1601,6 +1602,26 @@ async def web_ui():
 # ==========================================
 # 10. Main Web App APIs
 # ==========================================
+
+# ✅ UptimeRobot এর জন্য Health Check Route
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
+
+# ✅ প্রতি 14 মিনিটে নিজেকে পিং করার সিস্টেম
+async def self_pinger():
+    import asyncio
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = "https://bdviralbot.onrender.com/ping"
+                async with session.get(url) as resp:
+                    print(f"Self-ping successful: {resp.status}")
+        except Exception as e:
+            print(f"Self-ping failed: {e}")
+        # 14 মিনিট পর পর পিং করবে (Render 15 মিনিটে স্লিপ করে)
+        await asyncio.sleep(14 * 60) 
+        
 @app.get("/api/user/{uid}")
 async def get_user_info(uid: int):
     user = await db.users.find_one({"user_id": uid})
