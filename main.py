@@ -1573,11 +1573,11 @@ async def web_ui():
             function checkAdWatched() {
                 if (adStartTime === 0) return;
                 let elapsed = Date.now() - adStartTime;
-                if (elapsed >= 5000) { 
+                if (elapsed >= 10000) { 
                     closeModal('adModal');
                     sendFileRequest(activeFileId);
                 } else {
-                    let remaining = Math.ceil((5000 - elapsed) / 1000);
+                    let remaining = Math.ceil((10000 - elapsed) / 1000);
                     tg.showAlert(`⚠️ আপনাকে আর ${remaining} সেকেন্ড অপেক্ষা করতে হবে!`);
                     document.getElementById('adVerifyBtn').style.display = 'none';
                     document.getElementById('adTryAgainBtn').style.display = 'block';
