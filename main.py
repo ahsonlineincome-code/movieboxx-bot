@@ -31,7 +31,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError
+from aiogram.exceptions import TelegramRetryAfter, TelegramAPIError, TelegramForbiddenError
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -45,8 +45,8 @@ MONGO_URL = os.getenv("MONGO_URI")
 OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
-ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
-BOT_USERNAME = "bdlatestmovie_bot" 
+ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "bdlatestmovie_bot")
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1004462840114")
 
@@ -171,6 +171,8 @@ async def init_db():
     await db.users.create_index("joined_at")
     await db.users.create_index("last_active")
     await db.payments.create_index("trx_id", unique=True)
+    # 🎯 নতুন ইউজারের পেন্ডিং ফাইল ডেলিভারি (START চাপলেই অ্যাড দেখা ফাইল পাঠানো হয়)
+    await db.pending_files.create_index("user_id")
 
 # 💰 অ্যাড সেটিং সিড: DB খালি থাকলে ডিফল্ট Adsterra/Monetag লিংক + সেটিং বসিয়ে দেয়
 # (অ্যাডমিন নিজে লিংক বসালে তার লিংকই থাকবে, ওভাররাইট করবে না)
@@ -191,6 +193,18 @@ async def seed_default_ads():
                 await db.settings.update_one({"id": key}, {"$set": {"value": val}}, upsert=True)
     except Exception as e:
         print(f"Seed ads error: {e}")
+
+# 📝 লগ চ্যানেল লোড: অ্যাডমিন /setlogchannel দিয়ে চ্যানেল বদলালে DB-তে সেভ হয়,
+# বট রিস্টার্ট হলেও সেখান থেকে আবার লোড হয় (env এর LOG_CHANNEL_ID ডিফল্ট হিসেবে থাকে)
+async def load_log_channel():
+    global LOG_CHANNEL_ID
+    try:
+        cfg = await db.settings.find_one({"id": "log_channel"})
+        if cfg and cfg.get("chat_id"):
+            LOG_CHANNEL_ID = cfg["chat_id"]
+            print(f"📝 Log channel loaded from DB: {LOG_CHANNEL_ID} ({cfg.get('title', '')})")
+    except Exception as e:
+        print(f"Log channel load error: {e}")
 
 # ==========================================
 # 4. Security & Authentication Methods
@@ -271,6 +285,7 @@ async def on_startup():
     await load_admins()
     await load_banned_users()
     await seed_default_ads()
+    await load_log_channel()
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
@@ -283,14 +298,34 @@ async def on_startup():
 async def start_cmd(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if uid in banned_cache:
-        return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
-        
+        return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
+
     await state.clear()
     now = datetime.datetime.utcnow()
+    args = message.text.split(" ")
+    payload = args[1].strip() if len(args) > 1 else ""
+
+    # 🎯 নতুন ইউজার অটো-ডেলিভারি: ওয়েব অ্যাপে অ্যাড দেখা শেষ করে "বটে যান" চেপে এসে
+    # START চাপলে পেন্ডিং ফাইলটি সাথে সাথে পাঠিয়ে দেওয়া হয় — ইউজার বটের মেম্বারও হয়ে যায়
+    delivered = False
+    if payload and ObjectId.is_valid(payload):
+        pending = await db.pending_files.find_one({"user_id": uid, "movie_id": payload})
+        if pending:
+            m = await db.movies.find_one({"_id": ObjectId(payload)})
+            if m:
+                ok, _ = await deliver_movie_file(uid, m)
+                if ok:
+                    delivered = True
+                    await db.movies.update_one({"_id": ObjectId(payload)}, {"$inc": {"clicks": 1}})
+                    await db.user_unlocks.update_one({"user_id": uid, "movie_id": payload}, {"$set": {"unlocked_at": now}}, upsert=True)
+                    await db.pending_files.delete_one({"_id": pending["_id"]})
+            else:
+                # মুভিটি আর DB-তে নেই → পেন্ডিং রেকর্ড মুছে ফেলা হলো
+                await db.pending_files.delete_one({"_id": pending["_id"]})
+
     user = await db.users.find_one({"user_id": uid})
-    
+
     if not user:
-        args = message.text.split(" ")
         if len(args) > 1 and args[1].startswith("ref_"):
             try:
                 referrer_id = int(args[1].split("_")[1])
@@ -316,9 +351,17 @@ async def start_cmd(message: types.Message, state: FSMContext):
         [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
         [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
     ]
+
+    # 🔗 ডিপ-লিংক (?start=<movie_id>) দিয়ে এসেছে কিন্তু পেন্ডিং ডেলিভারি হয়নি →
+    # Watch Now বাটন সরাসরি ওই মুভির ডাউনলোড পেজ খুলবে (অ্যাড ফ্লো অপরিবর্তিত থাকবে)
+    if payload and ObjectId.is_valid(payload) and not delivered and APP_URL:
+        kb[0] = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={payload}"))]
+
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-    
+
     text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।"
+    if delivered:
+        text = "✅ <b>আপনার ফাইল সফলভাবে ডেলিভারি হয়েছে — উপরে চেক করুন! 🎉</b>\n\n" + text
     if uid in admin_cache: text += "\n\n⚙️ <b>অ্যাডমিন মোড অন.</b>"
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
@@ -502,8 +545,109 @@ async def set_tg_link(m: types.Message):
     try:
         link = m.text.split(" ", 1)[1].strip()
         await db.settings.update_one({"id": "tg_link"}, {"$set": {"url": link}}, upsert=True)
-        await m.answer("✅ টেলিগ্রাম চ্যানেল লিংক আপডেট হয়েছে।", parse_mode="HTML")
+        await m.answer("✅ টেলিগ্রাম চ্যানেল লিংক আপডেট হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /settg https://t.me/...", parse_mode="HTML")
+
+# ==========================================
+# 📝 লগ চ্যানেল ইজি-সেট সিস্টেম
+# আপনার লগ চ্যানেল থেকে যেকোনো একটা মেসেজ বটে ফরোয়ার্ড করুন →
+# বট চ্যানেলটি ধরে ফেলবে এবং একটা "✅ এই চ্যানেল লগ সেট করুন" বাটন দেখাবে,
+# অথবা সেই ফরোয়ার্ড মেসেজে রিপ্লাই দিয়ে /setlogchannel লিখুন — সেট হয়ে যাবে।
+# ==========================================
+async def apply_log_channel(chat_obj, editor_message):
+    """লগ চ্যানেল DB-তে সেভ + গ্লোবাল ভ্যারিয়েবল আপডেট — সাথে সাথে নতুন চ্যানেলে লগ যেতে শুরু করবে।"""
+    global LOG_CHANNEL_ID
+    LOG_CHANNEL_ID = chat_obj.id
+    title = chat_obj.title or ""
+    try:
+        chat = await bot.get_chat(chat_obj.id)
+        title = chat.title or title
+        username = f"@{chat.username}" if getattr(chat, "username", None) else ""
+    except: username = ""
+    await db.settings.update_one({"id": "log_channel"}, {"$set": {"chat_id": chat_obj.id, "title": title}}, upsert=True)
+    await editor_message.answer(
+        f"✅ <b>লগ চ্যানেল সেট হয়ে গেছে!</b>\n\n"
+        f"📺 চ্যানেল: <b>{title or chat_obj.id}</b>\n"
+        f"🆔 ID: <code>{chat_obj.id}</code>{(' | ' + username) if username else ''}\n\n"
+        f"🧪 টেস্ট করতে লিখুন: /testlog\n"
+        f"❌ টেস্ট ফেল করলে বুঝবেন বটকে ওই চ্যানেলে অ্যাডমিন বানাতে হবে।",
+        parse_mode="HTML", disable_web_page_preview=True)
+
+@dp.message(Command("setlogchannel"))
+async def set_log_channel_cmd(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    fwd = m.reply_to_message.forward_from_chat if m.reply_to_message else None
+    if not fwd or fwd.type != "channel":
+        return await m.answer(
+            "⚠️ <b>ফরম্যাট:</b>\n\n"
+            "১️⃣ আপনার লগ চ্যানেল থেকে <b>যেকোনো একটা মেসেজ ফরোয়ার্ড</b> করে এই বটে পাঠান\n"
+            "২️⃣ সেই ফরোয়ার্ড করা মেসেজে <b>রিপ্লাই</b> দিয়ে <code>/setlogchannel</code> লিখুন\n\n"
+            "✅ বাটন দিয়েও করতে পারবেন — ফরোয়ার্ড করলেই বট চ্যানেল ধরে বাটন দেখায়।",
+            parse_mode="HTML")
+    await apply_log_channel(fwd, m)
+
+# 🤖 অ্যাডমিন টেক্সট মেসেজ ফরোয়ার্ড করলে বট নিজে থেকেই চ্যানেল চিনে বাটন দেখাবে
+@dp.message(lambda m: m.chat.type == "private" and m.from_user.id in admin_cache
+            and m.text and m.forward_from_chat and m.forward_from_chat.type == "channel")
+async def detect_log_channel_forward(m: types.Message):
+    ch = m.forward_from_chat
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ এই চ্যানেল লগ সেট করুন", callback_data=f"setlog_{ch.id}")
+    await m.answer(
+        f"📝 <b>চ্যানেল শনাক্ত হয়েছে!</b>\n\n"
+        f"📺 <b>{ch.title or ch.id}</b>\n"
+        f"🆔 ID: <code>{ch.id}</code>\n\n"
+        f"👇 নিচের বাটনে ক্লিক করে এটিকে লগ চ্যানেল সেট করুন,\n"
+        f"অথবা এই ফরোয়ার্ডে রিপ্লাই দিয়ে <code>/setlogchannel</code> লিখুন।",
+        reply_markup=builder.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("setlog_"))
+async def set_log_channel_callback(c: types.CallbackQuery):
+    if c.from_user.id not in admin_cache: return
+    try:
+        chat_id = int(c.data.split("_")[1])
+    except:
+        return await c.answer("⚠️ চ্যানেল আইডি পড়া যায়নি!", show_alert=True)
+    try:
+        chat_obj = await bot.get_chat(chat_id)
+        await apply_log_channel(chat_obj, c.message)
+    except Exception as e:
+        await db.settings.update_one({"id": "log_channel"}, {"$set": {"chat_id": chat_id, "title": ""}}, upsert=True)
+        global LOG_CHANNEL_ID
+        LOG_CHANNEL_ID = chat_id
+        await c.message.edit_text(f"✅ লগ চ্যানেল সেট হয়েছে (ID: <code>{chat_id}</code>)।\n\n⚠️ চ্যানেল ইনফো আনা যায়নি: <code>{e}</code>\n\n🧪 টেস্ট করতে /testlog লিখুন।", parse_mode="HTML")
+    await c.answer("✅ সেট হয়েছে!")
+
+# 🧪 টেস্ট কমান্ড: বর্তমান লগ চ্যানেলে একটা টেস্ট পোস্ট পাঠায় — চ্যানেলে গিয়ে দেখলেই বোঝা যাবে সব ঠিক আছে কিনা
+@dp.message(Command("testlog"))
+async def test_log_cmd(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    title = ""
+    try:
+        chat = await bot.get_chat(LOG_CHANNEL_ID)
+        title = chat.title or ""
+    except: pass
+    try:
+        await bot.send_message(
+            LOG_CHANNEL_ID,
+            "🧪 <b>Test Post</b>\n\n✅ লগ চ্যানেল ঠিকমতো কাজ করছে!\n🎬 এই পোস্টটি Movie Box বট অটোমেটিক পাঠিয়েছে।",
+            parse_mode="HTML")
+        await m.answer(
+            f"✅ <b>টেস্ট সফল!</b>\n\n"
+            f"📝 বর্তমান লগ চ্যানেল: <b>{title or LOG_CHANNEL_ID}</b> (<code>{LOG_CHANNEL_ID}</code>)\n\n"
+            f"👉 এখন আপনার লগ চ্যানেলে গিয়ে দেখুন — সেখানে একটা 🧪 টেস্ট পোস্ট এসেছে।\n"
+            f"মুভি আপলোডের পর Log / Broadcast & Log চাপলে পোস্ট এই চ্যানেলেই যাবে।",
+            parse_mode="HTML")
+    except Exception as e:
+        await m.answer(
+            f"❌ <b>টেস্ট ফেল হয়েছে!</b>\n\n"
+            f"📝 বর্তমান লগ চ্যানেল: <code>{LOG_CHANNEL_ID}</code>\n"
+            f"কারণ: <code>{e}</code>\n\n"
+            f"🔧 <b>সমাধান:</b>\n"
+            f"১️⃣ বটকে লগ চ্যানেলে <b>অ্যাডমিন</b> বানান (Post Messages পারমিশন দিন)\n"
+            f"২️⃣ চ্যানেল বদলাতে চাইলে: নতুন চ্যানেল থেকে একটা মেসেজ ফরোয়ার্ড করে তাতে রিপ্লাই দিয়ে /setlogchannel দিন\n"
+            f"৩️⃣ আবার /testlog দিয়ে চেক করুন",
+            parse_mode="HTML")
 
 @dp.message(Command("delmovie"))
 async def del_movie_cmd(m: types.Message):
@@ -663,11 +807,13 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 async def send_log_post(data, selected_cats, movie_id):
     if not LOG_CHANNEL_ID: return
     try:
-        # ওয়েব অ্যাপে সরাসরি এই মুভি ওপেন হবে এমন ডিপ-লিংক (APP_URL না থাকলে সাধারণ url বাটন)
-        if APP_URL and movie_id:
-            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={movie_id}"))]
+        # ⚠️ চ্যানেল পোস্টে Telegram-এর WebApp বাটন কাজ করে না (শুধু প্রাইভেট চ্যাটে চলে)।
+        # তাই লগ চ্যানেলের Watch Now বাটন সবার জন্য URL ডিপ-লিংক (?startapp=<movie_id>) —
+        # চ্যানেলের যেকোনো ভিউয়ার (নতুন হোক বা পুরনো) চাপলেই ওয়েব অ্যাপ খুলে সরাসরি ওই মুভি দেখাবে।
+        if movie_id:
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?startapp={movie_id}")]
         else:
-            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start=new")]
         log_kb = [
             watch_btn,
             [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
@@ -733,7 +879,7 @@ async def run_movie_broadcast(data, selected_cats, admin_id, movie_id=None):
     if APP_URL and movie_id:
         watch_row = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={movie_id}"))]
     else:
-        watch_row = [types.InlineKeyboardButton(text="🎬 Watch Now", url="https://t.me/MovieeBoxx_Bot?start=new")]
+        watch_row = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start=new")]
     bcast_kb = [
         watch_row, 
         [types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")],
@@ -1392,27 +1538,30 @@ async def web_ui():
             justify-content: space-between;
          }
 
-         /* 🔥 স্পন্সর অ্যাড কার্ড (হোম ফিড + ডিটেইল পপ-আপ) */
+         /* 🔥 স্পন্সর অ্যাড কার্ড — ডাউনলোড বাটনের মত সাইজ/স্টাইল (হোম ফিড + ডাউনলোড পপ-আপ) */
          .sponsor-card {
             width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 12px;
             background: #0f172a;
-            border: 2px solid #334155;
-            border-radius: 12px;
-            overflow: hidden;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 14px 15px;
             cursor: pointer;
             margin: 4px 0;
-            transition: transform 0.15s;
+            transition: transform 0.15s, border-color 0.2s;
          }
-         .sponsor-card:active { transform: scale(0.98); }
-         body.oled-mode .sponsor-card { background: #000; border-color: #1a1a1a; }
-         .sponsor-inner { padding: 22px 10px 16px 10px; text-align: center; }
-         .sponsor-fire { font-size: 26px; line-height: 1; }
-         .sponsor-title { color: #fbbf24; font-weight: 800; font-size: 15px; margin-top: 8px; }
-         .sponsor-sub { color: #94a3b8; font-size: 12px; margin-top: 5px; }
-         .sponsor-footer {
+         .sponsor-card:active { transform: scale(0.98); border-color: #fbbf24; }
+         body.oled-mode .sponsor-card { background: #050505; border-color: #1a1a1a; }
+         .sponsor-emoji { font-size: 24px; line-height: 1; }
+         .sponsor-txt { flex: 1; text-align: left; min-width: 0; }
+         .sponsor-title { color: #fbbf24; font-weight: 800; font-size: 14px; }
+         .sponsor-sub { color: #94a3b8; font-size: 11px; margin-top: 3px; }
+         .sponsor-tag {
             background: linear-gradient(135deg, #ff9966, #ff4b2b);
-            color: #fff; font-weight: 700; font-size: 13px;
-            padding: 8px; text-align: left; padding-left: 12px;
+            color: #fff; font-weight: 700; font-size: 10px;
+            padding: 4px 8px; border-radius: 6px; white-space: nowrap;
          }
 
         </style>
@@ -1503,27 +1652,31 @@ async def web_ui():
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
                 <div id="detailCats" style="margin-bottom: 15px;"></div>
-                <div id="fileButtonsContainer"></div>
-                <!-- 💰 ডাউনলোড সেকশনের ব্যানার অ্যাড: সাধারণ মুভিতে 320x50, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
-                <div id="detailBannerNormal" style="display:none; text-align:center; margin: 15px auto 0 auto;">
+                <!-- 💰 ব্যানার অ্যাড এখন ডাউনলোড বাটনের উপরে (মোবাইল ইউজাররাও স্ক্রল না করেই দেখতে পাবে):
+                     সাধারণ মুভিতে 320x50, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
+                <div id="detailBannerNormal" style="display:none; text-align:center; margin: 0 auto 12px auto;">
                     __BANNER_320__
                 </div>
-                <div id="detailBannerAdult" style="display:none; text-align:center; margin: 15px auto 0 auto;">
+                <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;">
                     __BANNER_ADULT__
                 </div>
-                <!-- 🔥 স্পন্সর অ্যাড কার্ড (ডাউনলোড সেকশনে) -->
-                <div id="detailSponsor" style="margin-top:12px;"></div>
+                <div id="fileButtonsContainer"></div>
+                <!-- 🔥 স্পন্সর অ্যাড (ডাউনলোড বাটনের নিচে, ডাউনলোড বাটনের মত সাইজ) -->
+                <div id="detailSponsor" style="margin-top:4px;"></div>
             </div>
         </div>
 
-        <!-- 🎯 নতুন ইউজার গেট: প্রথমবার Watch Now চাপলে স্পন্সর লিংক খোলে, ফিরে এসে আবার চাপলে ফাইলে নিয়ে যায় -->
+        <!-- 🎯 "ফাইলটি প্রস্তুত" মেসেজ — Watch Now (ব্রডকাস্ট/লগ পোস্ট) চাপলে নতুন-পুরাতন সব ইউজারই এটা দেখবে.
+             প্রথম Watch Now ক্লিকে অ্যাক্টিভ স্পন্সর লিংক খোলে (ইনকাম), ফিরে এসে আবার চাপলে ফাইলের পেজে যায়. ক্লোজ বাটন দিয়ে বের হওয়া যায়. -->
         <div id="fileGateModal" class="modal">
             <div class="modal-content" style="text-align: center;">
-                <div class="ad-icon">🎬</div>
+                <button class="close-icon" onclick="closeModal('fileGateModal')"><i class="fa-solid fa-xmark"></i></button>
+                <div class="ad-icon">🎉</div>
                 <h2 class="ad-title">ফাইলটি প্রস্তুত!</h2>
-                <div class="ad-box-black">আপনি যে ফাইলটি চাচ্ছেন: <b id="gateMovieTitle"></b><br><br>ফাইলটি দেখার জন্য নিচের <b>Watch Now</b> বাটনে আবার ক্লিক করুন — ক্লিক করলে সাথে সাথেই ওই ফাইলে নিয়ে যাবে।</div>
+                <div class="ad-box-black">✨ সুখবর! আপনি এই ফাইলটি পাচ্ছেন: <b id="gateMovieTitle"></b><br><br>নিচের <b>Watch Now</b> বাটনে ক্লিক করে ফাইলটি দেখুন।</div>
                 <button class="ad-action-btn btn-ad-open" id="gateWatchBtn" onclick="gateNextStep()">🎬 Watch Now</button>
-                <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ স্বাগতম! প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
+                <button class="ad-action-btn" style="background:#334155; color:#fff;" onclick="closeModal('fileGateModal')">❌ বন্ধ করুন</button>
+                <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
             </div>
         </div>
 
@@ -1547,9 +1700,21 @@ async def web_ui():
             <div class="modal-content" style="text-align: center; padding-top: 40px;">
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2>ফাইল পাঠানো হয়েছে!</h2>
-                <p style="color:#94a3b8; margin-top:10px;">বট চেক করুন। নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!</p>
+                <p style="color:#94a3b8; margin-top:10px;">বট চেক করুন। নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!</p>
                 <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn">🚀 Join Channel</a>
                 <button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button>
+            </div>
+        </div>
+
+        <!-- 🎯 নতুন ইউজার মোডাল: বটকে এখনো START করেননি, তাই ফাইল পাঠানো যায়নি —
+             "বটে যান" চেপে START করলেই অ্যাড দেখা ফাইলটি অটোমেটিক ডেলিভারি হয়ে যাবে -->
+        <div id="newUserModal" class="modal">
+            <div class="modal-content" style="text-align: center; padding-top: 40px;">
+                <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
+                <h2>🎉 সাকসেসফুল!</h2>
+                <p style="color:#94a3b8; margin-top:10px;">আপনার ফাইল প্রস্তুত! নিচের <b>বটে যান</b> বাটনে ক্লিক করে বট চ্যাট খুলুন, তারপর <b>START</b> চাপুন — ফাইলটি সাথে সাথেই আপনাকে পাঠিয়ে দেওয়া হবে।</p>
+                <a id="newUserBotLink" href="#" target="_blank" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);">🤖 বটে যান</a>
+                <p style="color:#64748b; font-size:12px; margin-top:8px;">⚠️ অবশ্যই START চাপবেন — START চাপলেই ফাইল অটো চলে আসবে!</p>
             </div>
         </div>
 
@@ -1576,6 +1741,7 @@ async def web_ui():
             let tg = window.Telegram.WebApp; tg.expand();
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             const TOKEN = "__BOT_TOKEN__";
+            const BOT_USERNAME = "__BOT_USERNAME__";
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
@@ -1819,17 +1985,18 @@ async def web_ui():
                 return pool[Math.floor(Date.now() / 1800000) % pool.length];
             }
             
-            // 🔥 স্পন্সর অ্যাড কার্ড — ক্লিক করলে অ্যাক্টিভ ডাইরেক্ট লিংক খোলে (হোম ফিড + ডিটেইল পপ-আপ)
+            // 🔥 স্পন্সর অ্যাড কার্ড — ডাউনলোড বাটনের মত সাইজ, এনগেজমেন্ট ক্যাপশন ("সারপ্রাইজ") যাতে মানুষ ক্লিক করতে চায়;
+            // ক্লিক করলে অ্যাক্টিভ ডাইরেক্ট লিংক খোলে (হোম ফিড + ডাউনলোড পপ-আপ)
             function sponsorCardHTML(isAdult) {
                 let link = getActiveLink(isAdult);
                 if (!link) return '';
                 return `<div class="sponsor-card" onclick="event.stopPropagation(); tg.openLink('${link}')">
-                    <div class="sponsor-inner">
-                        <div class="sponsor-fire">🔥</div>
-                        <div class="sponsor-title">স্পন্সর অ্যাড</div>
-                        <div class="sponsor-sub">নিশ্চিন্তে — এমনিতে ক্লিক করুন</div>
+                    <div class="sponsor-emoji">🎁</div>
+                    <div class="sponsor-txt">
+                        <div class="sponsor-title">আপনার জন্য সারপ্রাইজ অপেক্ষা করছে!</div>
+                        <div class="sponsor-sub">ভিতরে কী আছে দেখতে ক্লিক করুন 👀</div>
                     </div>
-                    <div class="sponsor-footer">🔥 Sponsored</div>
+                    <span class="sponsor-tag">🔥 Sponsored</span>
                 </div>`;
             }
             
@@ -1884,7 +2051,7 @@ async def web_ui():
                 sendFileRequest(activeFileId);
             }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { closeModal('detailModal'); document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
@@ -1893,10 +2060,9 @@ async def web_ui():
             // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait অ্যাডমিন /setadcount ও /setadwait দিয়ে বদলাতে পারে)
             async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); } catch(e) {} }
             
-            // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> থাকে —
-            // পুরনো ইউজার: অ্যাপ খুললেই সরাসরি ওই মুভির ডাউনলোড পপ-আপ।
-            // 🎯 নতুন ইউজার (আগে কখনো আনলক করেনি): আগে স্পন্সর লিংক (Adsterra/Monetag) →
-            // ফিরে এসে Watch Now আবার চাপলে সরাসরি ফাইলের পেজে।
+            // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
+            // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
+            // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
             let gateMovie = null; let gateStep = 0;
             async function openFromDeepLink() {
                 try {
@@ -1906,8 +2072,7 @@ async def web_ui():
                     const data = await res.json();
                     if (data && data.movie) {
                         currentViewMovies = [data.movie];
-                        if (data.is_new) { showFileGate(data.movie); }
-                        else { openDetail(0); }
+                        showFileGate(data.movie);
                     }
                 } catch(e) {}
             }
@@ -1923,13 +2088,12 @@ async def web_ui():
             function gateNextStep() {
                 let btn = document.getElementById('gateWatchBtn');
                 if (gateStep === 0) {
-                    // প্রথম ক্লিকে স্পন্সর (Adsterra/Monetag) লিংক খুলবে
+                    // প্রথম ক্লিকে স্পন্সর (Adsterra/Monetag) লিংক খুলবে — নতুন-পুরাতন সব ইউজারের জন্যই ইনকাম
                     let isAdult = gateMovie && gateMovie.is_adult;
                     let link = getActiveLink(isAdult);
                     if (link) tg.openLink(link);
                     gateStep = 1;
                     btn.innerText = '✅ ফাইলটি দেখুন';
-                    localStorage.setItem('mb_gate_seen', '1');
                 } else {
                     closeModal('fileGateModal');
                     if (gateMovie) openDetail(0);
@@ -1947,6 +2111,7 @@ async def web_ui():
     html_code = html_code.replace("__DL_JSON__", dl_json)
     html_code = html_code.replace("__ADL_JSON__", adl_json)
     html_code = html_code.replace("__BOT_TOKEN__", TOKEN)
+    html_code = html_code.replace("__BOT_USERNAME__", BOT_USERNAME)
     html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS)
     html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320)
     html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT)
@@ -2099,54 +2264,77 @@ send_semaphore = asyncio.Semaphore(20)
 class SendRequestModel(BaseModel):
     userId: int; movieId: str; initData: str
 
+# 📦 কমন ডেলিভারি হেল্পার: ওয়েব অ্যাপের /api/send এবং /start এর পেন্ডিং ডেলিভারি — দুই জায়গায় একই ক্যাপশন/লজিক
+# রিটার্ন: (সফল হলো কিনা, ফেলের কারণ) — 'forbidden' মানে ইউজার বটকে এখনো START করেনি
+async def deliver_movie_file(uid: int, m: dict):
+    now = datetime.datetime.utcnow()
+    user_data = await db.users.find_one({"user_id": uid})
+    is_vip = user_data and user_data.get("vip_until", now) > now
+    protect_cfg = await db.settings.find_one({"id": "protect_content"})
+    is_protected = protect_cfg.get("status", False) if protect_cfg else False
+    time_cfg = await db.settings.find_one({"id": "del_time"})
+    del_minutes = time_cfg['minutes'] if time_cfg else 60
+    tg_cfg = await db.settings.find_one({"id": "tg_link"})
+    tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+
+    base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
+    if is_vip:
+        caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
+    else:
+        caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
+
+    try:
+        sent_msg = None
+        try:
+            if m.get("file_type") == "video":
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            else:
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
+            if m.get("file_type") == "video":
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            else:
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+        if sent_msg:
+            if not is_vip:
+                delete_at = now + datetime.timedelta(minutes=del_minutes)
+                await db.auto_delete.insert_one({"chat_id": uid, "message_id": sent_msg.message_id, "delete_at": delete_at})
+            return True, None
+        return False, "send_failed"
+    except TelegramForbiddenError:
+        # 🎯 বট নতুন ইউজারকে নিজে থেকে মেসেজ পাঠাতে পারে না (START করেননি) → পেন্ডিং হিসেবে সেভ হবে
+        return False, "forbidden"
+    except Exception as e:
+        print(f"Deliver file error: {e}")
+        return False, "error"
+
 @app.post("/api/send")
 async def send_file(d: SendRequestModel):
     if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData): return {"ok": False}
-    
+
     async with send_semaphore:
         try:
             m = await db.movies.find_one({"_id": ObjectId(d.movieId)})
             if not m:
                 return {"ok": False, "msg": "Movie not found"}
-                
+
             now = datetime.datetime.utcnow()
-            user_data = await db.users.find_one({"user_id": d.userId})
-            is_vip = user_data and user_data.get("vip_until", now) > now
-            protect_cfg = await db.settings.find_one({"id": "protect_content"})
-            is_protected = protect_cfg.get("status", False) if protect_cfg else False
-            time_cfg = await db.settings.find_one({"id": "del_time"})
-            del_minutes = time_cfg['minutes'] if time_cfg else 60
-            tg_cfg = await db.settings.find_one({"id": "tg_link"})
-            tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-            
-            base_caption = f"🎥 <b>{m['title']} [{m.get('quality', '')}]</b>\n\n📥 Join: {tg_link}"
-            if is_vip:
-                caption = base_caption + "\n\n💎 VIP সুবিধা: এই ফাইলটি কখনো ডিলিট হবে না!"
-            else:
-                caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
-            
-            sent_msg = None
-            try:
-                if m.get("file_type") == "video": 
-                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-                else: 
-                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-            except TelegramRetryAfter as e:
-                await asyncio.sleep(e.retry_after + 1)
-                if m.get("file_type") == "video": 
-                    sent_msg = await bot.send_video(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-                else: 
-                    sent_msg = await bot.send_document(d.userId, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
-            
-            if sent_msg:
+            ok, reason = await deliver_movie_file(d.userId, m)
+            if ok:
                 await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
                 await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
-                if not is_vip:
-                    delete_at = now + datetime.timedelta(minutes=del_minutes)
-                    await db.auto_delete.insert_one({"chat_id": d.userId, "message_id": sent_msg.message_id, "delete_at": delete_at})
                 return {"ok": True}
-            return {"ok": False, "msg": "Failed to send"}
-            
+            if reason == "forbidden":
+                # 🎯 নতুন ইউজার: অ্যাড দেখা শেষ করেছে কিন্তু বটকে START করেনি →
+                # ফাইলটি পেন্ডিং সেভ হলো। "বটে যান" চেপে START করলেই এই ফাইল অটোমেটিক ডেলিভারি হবে।
+                await db.pending_files.update_one(
+                    {"user_id": d.userId},
+                    {"$set": {"movie_id": d.movieId, "title": m.get("title", ""), "created_at": now}},
+                    upsert=True)
+                return {"ok": False, "new_user": True, "bot_username": BOT_USERNAME, "movie_id": d.movieId}
+            return {"ok": False}
+
         except Exception as e:
             print(f"Send File Error: {e}")
             return {"ok": False, "msg": "Server error"}
@@ -2197,6 +2385,7 @@ async def start():
     await load_admins()
     await load_banned_users()
     await seed_default_ads()
+    await load_log_channel()
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
