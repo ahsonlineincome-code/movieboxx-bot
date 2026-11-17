@@ -2202,20 +2202,13 @@ async def web_ui():
             function gateNextStep() {
                 let btn = document.getElementById('gateWatchBtn');
                 if (gateStep === 0) {
-                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট ডাইরেক্ট লিংক, নাহলে নরমাল লিংক
+                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট ডাইরেক্ট লিংক, নাহলে নরমাল লিংক;
+                    // 🔁 লিংকটা সার্ভারে প্রতি ৩০ মিনিটে নিজে নিজে ঘুরে বদলায় (নরমাল ৩টা / অ্যাডাল্ট ২টার মধ্যে) —
+                    // প্রতিবার Watch Now চাপলেই তখনকার অ্যাক্টিভ স্পন্সর লিংক খুলবে (নতুন-পুরাতন সব ইউজারের জন্যই ইনকাম);
+                    // অ্যাড থেকে ফিরে এসে "ফাইলটি দেখুন" চাপলে মেইন ফাইল পেজে যাবে
                     let isAdult = gateMovie && (gateMovie.is_adult || (gateMovie.title && gateMovie.title.toUpperCase().indexOf('18+') !== -1));
-                    // ⏱️ ৩০ মিনিট গেট: শেষ স্পন্সর লিংক খোলার ৩০ মিনিটের ভেতরে Watch Now চাপলে আর অ্যাড খুলবে না —
-                    // সরাসরি ফাইলের পেজে যাবে; ৩০ মিনিট পর পর ঘুরে ঘুরে পরের অ্যাক্টিভ লিংক খুলবে
-                    let lastAd = parseInt(localStorage.getItem('lastDirectLinkAt') || '0');
-                    let adDue = (Date.now() - lastAd) >= 30 * 60 * 1000;
-                    if (!adDue) {
-                        closeModal('fileGateModal');
-                        if (gateMovie) openDetail(0);
-                        return;
-                    }
-                    // প্রথম ক্লিকে স্পন্সর (Adsterra/Monetag) লিংক খুলবে — নতুন-পুরাতন সব ইউজারের জন্যই ইনকাম
                     let link = getActiveLink(isAdult);
-                    if (link) { tg.openLink(link); localStorage.setItem('lastDirectLinkAt', String(Date.now())); }
+                    if (link) tg.openLink(link);
                     gateStep = 1;
                     btn.innerText = '✅ ফাইলটি দেখুন';
                 } else {
