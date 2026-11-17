@@ -147,6 +147,7 @@ class AdminStates(StatesGroup):
     waiting_for_upc_photo = State()
     waiting_for_upc_title = State()
     waiting_for_upc_date = State()
+    waiting_for_photoid = State()
 
 # ==========================================
 # 3. Database Initialization & Caching
@@ -713,7 +714,7 @@ async def receive_movie_file(m: types.Message, state: FSMContext):
     ftype = "video" if m.video else "document"
     await state.set_state(AdminStates.waiting_for_photo)
     await state.update_data(file_id=fid, file_type=ftype, categories=[])
-    await m.answer("✅ ফাইল পেয়েছি! এবার <b>পোস্টার</b> পাঠান।", parse_mode="HTML")
+    await m.answer("✅ ফাইল পেয়েছি! এবার মুভির <b>পোস্টার/ছবি</b> পাঠান (পোস্টার ছাড়া আপলোড করতে চাইলে <b>/skip</b> লিখুন)।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_photo, F.photo)
 async def receive_movie_photo(m: types.Message, state: FSMContext):
@@ -721,9 +722,17 @@ async def receive_movie_photo(m: types.Message, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_title)
     await m.answer("✅ এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
 
+@dp.message(AdminStates.waiting_for_photo, Command("skip"))
+async def skip_movie_photo(m: types.Message, state: FSMContext):
+    # 🆗 পোস্টার ঐচ্ছিক: /skip দিলে ছবি ছাড়াই পরের ধাপে যাওয়া যায়
+    # (পোস্টার না থাকলে লগ চ্যানেলে/ব্রডকাস্টে ছবির বদলে টেক্সট পোস্ট যাবে)
+    await state.update_data(photo_id=None)
+    await state.set_state(AdminStates.waiting_for_title)
+    await m.answer("✅ পোস্টার ছাড়াই এগোনো হচ্ছে। এবার <b>মুভি/সিরিজের নাম</b> লিখুন।", parse_mode="HTML")
+
 @dp.message(AdminStates.waiting_for_photo)
 async def fallback_photo(m: types.Message):
-    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান। ফাইল হিসেবে পাঠাবেন না। অথবা /cancel লিখুন।", parse_mode="HTML")
+    await m.answer("⚠️ পোস্টার হিসেবে শুধুমাত্র <b>ছবি (Photo)</b> পাঠান, অথবা <b>/skip</b> লিখে পোস্টার ছাড়া এগিয়ে যান। বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
 @dp.message(AdminStates.waiting_for_title, F.text)
 async def receive_movie_title(m: types.Message, state: FSMContext):
@@ -822,7 +831,12 @@ async def send_log_post(data, selected_cats, movie_id):
         ]
         log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
         log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
-        await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
+        # 🆗 পোস্টার ছাড়া আপলোড হলে ছবির বদলে টেক্সট পোস্ট যাবে —
+        # (আগে পোস্টার না থাকলে send_photo ফেল করত আর চুপচাপ পোস্ট যেত না, অথচ বট "পোস্ট হয়েছে" বলত)
+        if data.get("photo_id"):
+            await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
+        else:
+            await bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=log_markup)
     except Exception as e:
         print(f"Log post error: {e}")
 
@@ -898,9 +912,15 @@ async def run_movie_broadcast(data, selected_cats, admin_id, movie_id=None):
     bcast_hours = bd_cfg.get("value", 72) if bd_cfg else 72
     delete_at = now + datetime.timedelta(hours=bcast_hours) if bcast_hours > 0 else None
     
+    # 🆗 পোস্টার ছাড়া আপলোড হলে ব্রডকাস্ট ছবির বদলে টেক্সট মেসেজ হিসেবে যাবে
+    has_poster = bool(data.get("photo_id"))
+
     async for u in db.users.find():
         try:
-            sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+            if has_poster:
+                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+            else:
+                sent_msg = await bot.send_message(u['user_id'], bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
             if delete_at:
                 await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
             bcast_success += 1
@@ -909,7 +929,10 @@ async def run_movie_broadcast(data, selected_cats, admin_id, movie_id=None):
             # টেলিগ্রাম যদি বল কিছুক্ষন অপেক্ষা করতে, তাহলে অপেক্ষা করবে
             await asyncio.sleep(e.retry_after + 1)
             try:
-                sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+                if has_poster:
+                    sent_msg = await bot.send_photo(u['user_id'], photo=data["photo_id"], caption=bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
+                else:
+                    sent_msg = await bot.send_message(u['user_id'], bcast_text, reply_markup=bcast_markup, parse_mode="HTML")
                 if delete_at:
                     await db.auto_delete.insert_one({"chat_id": u['user_id'], "message_id": sent_msg.message_id, "delete_at": delete_at})
                 bcast_success += 1
@@ -1241,19 +1264,28 @@ async def update_movie(movie_id: str, movie_data: dict = Body(...), auth: bool =
     raise HTTPException(status_code=400, detail="Failed to update movie")
 
 # ==========================================
-# Get Photo ID for Admin Panel
+# Get Photo ID for Admin Panel — শুধু /newphoto কমান্ড দিলেই চলবে
 # ==========================================
-@dp.message(F.photo, StateFilter(None))
-async def get_file_id_for_admin(message: types.Message):
-    if message.from_user.id not in admin_cache: 
-        return
+# 🛡️ আগে যেকোনো ছবি পাঠালেই সাথে সাথে File ID দিত — ওইটা আপলোডের পোস্টার-স্টেপ ঢুকে পড়ত।
+# এখন শুধু /newphoto কমান্ড দিলে ছবি চাওয়া হবে, তারপর ছবি পাঠালেই আইডি দিবে — আপলোড ফ্লো আর ঝামেলা করবে না।
+@dp.message(Command("newphoto"))
+async def newphoto_cmd(m: types.Message, state: FSMContext):
+    if m.from_user.id not in admin_cache: return
+    await state.set_state(AdminStates.waiting_for_photoid)
+    await m.answer("📸 এবার আপনার <b>ছবিটা (Photo)</b> পাঠান — আমি এর File ID বানিয়ে দিব (Admin Panel-এর 'Poster Photo ID' বক্সে পেস্ট করার জন্য)।\n\nবাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
-    file_id = message.photo[-1].file_id
-    
-    await message.answer(
-        f"🖼️ <b>New Photo File ID:</b>\n\n<code>{file_id}</code>\n\n✅ এই আইডিটি কপি করে Admin Panel এর 'Poster Photo ID' বক্সে পেস্ট করুন।", 
+@dp.message(AdminStates.waiting_for_photoid, F.photo)
+async def receive_photoid(m: types.Message, state: FSMContext):
+    file_id = m.photo[-1].file_id
+    await state.clear()
+    await m.answer(
+        f"🖼️ <b>New Photo File ID:</b>\n\n<code>{file_id}</code>\n\n✅ এই আইডিটি কপি করে Admin Panel এর 'Poster Photo ID' বক্সে পেস্ট করুন।",
         parse_mode="HTML"
     )
+
+@dp.message(AdminStates.waiting_for_photoid)
+async def fallback_photoid(m: types.Message):
+    await m.answer("⚠️ শুধুমাত্র <b>ছবি (Photo)</b> পাঠান, অথবা বাতিল করতে /cancel লিখুন।", parse_mode="HTML")
 
 # ==========================================
 # 9. Main Web App UI
