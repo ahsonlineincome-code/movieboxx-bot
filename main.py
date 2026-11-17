@@ -807,9 +807,8 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
 async def send_log_post(data, selected_cats, movie_id):
     if not LOG_CHANNEL_ID: return
     try:
-        # ⚠️ চ্যানেল পোস্টে Telegram-এর WebApp বাটন কাজ করে না (শুধু প্রাইভেট চ্যাটে চলে)।
-        # তাই লগ চ্যানেলের Watch Now বাটন সবার জন্য URL ডিপ-লিংক (?startapp=<movie_id>) —
-        # চ্যানেলের যেকোনো ভিউয়ার (নতুন হোক বা পুরনো) চাপলেই ওয়েব অ্যাপ খুলে সরাসরি ওই মুভি দেখাবে।
+        # ✅ লগ চ্যানেলের Watch Now = সরাসরি ওয়েব অ্যাপে (?open=<movie_id>) — আগের সিস্টেমের মতোই:
+        # ক্লিক করলেই ওই মুভির পেজ খুলবে → "ফাইলটি প্রস্তুত" মেসেজ → অ্যাড → ফাইল দেখুন → ডাউনলোড
         if APP_URL and movie_id:
             watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={movie_id}"))]
         elif APP_URL:
