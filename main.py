@@ -60,7 +60,20 @@ DEFAULT_DIRECT_LINKS = [
     "https://asiafilm.org/4/dd496e8de5fdbe10f2ccf3defc93c342",   # Adsterra Direct Link 2
     "https://uplcm.com/4/12080503",                              # Monetag Direct Link
 ]
-# 300x250 ব্যানার অ্যাড (Web App-এ দেখাবে) — atOptions + loader একসাথে থাকতে হবে
+DEFAULT_ADULT_DIRECT_LINKS = [
+    "https://auctionr.org/4/1b6df569ebc094e3e8e592d2fd017b4f",   # Adult Direct Link 1
+    "https://auctionr.org/4/ef5b10414fe8fdd3f602e74bcdd4225c",   # Adult Direct Link 2
+]
+# 🔁 রোটেশন টাইম: প্রতি ৩০ মিনিটে অ্যাক্টিভ ডাইরেক্ট লিংক নিজে নিজে বদলাবে
+ROTATION_SECONDS = 1800
+
+def pick_active_link(links):
+    """⏱️ সময়ভিত্তিক রোটেশন — প্রতি ৩০ মিনিটে লিস্টের পরের লিংকটি 'অ্যাক্টিভ' হয় (সার্ভার-সাইড, সবার জন্য একই)।"""
+    if not links: return None
+    try: return links[math.floor(time.time() / ROTATION_SECONDS) % len(links)]
+    except Exception: return links[0]
+
+# 300x250 ব্যানার অ্যাড (Web App Home + অ্যাড মোডালে দেখাবে)
 BANNER_AD_JS = """<script>
   atOptions = {
     'key' : '091649489016302f51dd722fff20f22b',
@@ -71,6 +84,30 @@ BANNER_AD_JS = """<script>
   };
 </script>
 <script src="https://bicea.org/22/091649489016302f51dd722fff20f22b"></script>"""
+
+# 320x50 ব্যানার অ্যাড (মুভি ডিটেইল/ডাউনলোড পপ-আপে, কোয়ালিটি বাটনের নিচে)
+BANNER_AD_JS_320 = """<script>
+  atOptions = {
+    'key' : 'a19161feecb13d6d32cfa3a7f599f5a2',
+    'format' : 'iframe',
+    'height' : 50,
+    'width' : 320,
+    'params' : {}
+  };
+</script>
+<script src="https://bicea.org/22/a19161feecb13d6d32cfa3a7f599f5a2"></script>"""
+
+# 300x250 অ্যাডাল্ট ব্যানার (১৮+ মুভির ডিটেইল পপ-আপে দেখাবে)
+BANNER_AD_JS_ADULT = """<script>
+  atOptions = {
+    'key' : 'f1ac37c4ab0a5dab60781b14dd5696bb',
+    'format' : 'iframe',
+    'height' : 250,
+    'width' : 300,
+    'params' : {}
+  };
+</script>
+<script src="https://brijmohan.org/22/f1ac37c4ab0a5dab60781b14dd5696bb"></script>"""
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -143,6 +180,10 @@ async def seed_default_ads():
         if not dl_cfg or not dl_cfg.get("links"):
             await db.settings.update_one({"id": "direct_links"}, {"$set": {"links": DEFAULT_DIRECT_LINKS}}, upsert=True)
             print(f"💰 Seeded {len(DEFAULT_DIRECT_LINKS)} default direct ad links.")
+        adl_cfg = await db.settings.find_one({"id": "adult_direct_links"})
+        if not adl_cfg or not adl_cfg.get("links"):
+            await db.settings.update_one({"id": "adult_direct_links"}, {"$set": {"links": DEFAULT_ADULT_DIRECT_LINKS}}, upsert=True)
+            print(f"🔴 Seeded {len(DEFAULT_ADULT_DIRECT_LINKS)} default adult direct links.")
         defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72}
         for key, val in defaults.items():
             cfg = await db.settings.find_one({"id": key})
@@ -416,15 +457,22 @@ async def list_ads_cmd(m: types.Message):
     aw_cfg = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw_cfg.get("value", 10) if aw_cfg else 10
     bd_cfg = await db.settings.find_one({"id": "bcast_del"}); bdel = bd_cfg.get("value", 72) if bd_cfg else 72
     bdel_text = "অফ (কখনো ডিলিট হবে না)" if bdel == 0 else f"{bdel} ঘণ্টা"
+    active_now = pick_active_link(links) or "—"
+    active_adult_now = pick_active_link(alinks) or "—"
     text = (f"💰 <b>বর্তমান অ্যাড সেটিংস</b>\n\n"
             f"🔗 সাধারণ ডাইরেক্ট লিংক: <b>{len(links)}</b>টি\n"
             f"🔴 ১৮+ ডাইরেক্ট লিংক: <b>{len(alinks)}</b>টি\n"
-            f"🔁 প্রতি আনলকে অ্যাড সংখ্যা: <b>{ad_count}</b>টি\n"
+            f"🔁 রোটেশন: প্রতি <b>৩০ মিনিটে</b> অ্যাক্টিভ লিংক অটো-চেঞ্জ\n"
+            f"▶️ এখন অ্যাক্টিভ (সাধারণ): <code>{active_now}</code>\n"
+            f"▶️ এখন অ্যাক্টিভ (১৮+): <code>{active_adult_now}</code>\n"
+            f"🎯 প্রতি আনলকে অ্যাড সংখ্যা: <b>{ad_count}</b>টি\n"
             f"⏱️ প্রতি অ্যাডে অপেক্ষার সময়: <b>{ad_wait} সেকেন্ড</b>\n"
             f"📢 ব্রডকাস্ট অটো-ডিলিট: <b>{bdel_text}</b>\n\n"
             f"<i>কমান্ড: /addlink, /dellink, /addadultlink, /setadcount, /setadwait, /setbcastdel</i>")
     if links:
-        text += "\n\n🔗 <b>লিংক লিস্ট:</b>\n" + "\n".join(f"{i+1}. <code>{l}</code>" for i, l in enumerate(links))
+        text += "\n\n🔗 <b>সাধারণ লিংক লিস্ট:</b>\n" + "\n".join(f"{i+1}. <code>{l}</code>" for i, l in enumerate(links))
+    if alinks:
+        text += "\n\n🔴 <b>১৮+ লিংক লিস্ট:</b>\n" + "\n".join(f"{i+1}. <code>{l}</code>" for i, l in enumerate(alinks))
     await m.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(Command("setadwait"))
@@ -1344,6 +1392,29 @@ async def web_ui():
             justify-content: space-between;
          }
 
+         /* 🔥 স্পন্সর অ্যাড কার্ড (হোম ফিড + ডিটেইল পপ-আপ) */
+         .sponsor-card {
+            width: 100%;
+            background: #0f172a;
+            border: 2px solid #334155;
+            border-radius: 12px;
+            overflow: hidden;
+            cursor: pointer;
+            margin: 4px 0;
+            transition: transform 0.15s;
+         }
+         .sponsor-card:active { transform: scale(0.98); }
+         body.oled-mode .sponsor-card { background: #000; border-color: #1a1a1a; }
+         .sponsor-inner { padding: 22px 10px 16px 10px; text-align: center; }
+         .sponsor-fire { font-size: 26px; line-height: 1; }
+         .sponsor-title { color: #fbbf24; font-weight: 800; font-size: 15px; margin-top: 8px; }
+         .sponsor-sub { color: #94a3b8; font-size: 12px; margin-top: 5px; }
+         .sponsor-footer {
+            background: linear-gradient(135deg, #ff9966, #ff4b2b);
+            color: #fff; font-weight: 700; font-size: 13px;
+            padding: 8px; text-align: left; padding-left: 12px;
+         }
+
         </style>
     </head>
     <body>
@@ -1433,6 +1504,26 @@ async def web_ui():
                 <div id="detailMeta" class="detail-meta"></div>
                 <div id="detailCats" style="margin-bottom: 15px;"></div>
                 <div id="fileButtonsContainer"></div>
+                <!-- 💰 ডাউনলোড সেকশনের ব্যানার অ্যাড: সাধারণ মুভিতে 320x50, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
+                <div id="detailBannerNormal" style="display:none; text-align:center; margin: 15px auto 0 auto;">
+                    __BANNER_320__
+                </div>
+                <div id="detailBannerAdult" style="display:none; text-align:center; margin: 15px auto 0 auto;">
+                    __BANNER_ADULT__
+                </div>
+                <!-- 🔥 স্পন্সর অ্যাড কার্ড (ডাউনলোড সেকশনে) -->
+                <div id="detailSponsor" style="margin-top:12px;"></div>
+            </div>
+        </div>
+
+        <!-- 🎯 নতুন ইউজার গেট: প্রথমবার Watch Now চাপলে স্পন্সর লিংক খোলে, ফিরে এসে আবার চাপলে ফাইলে নিয়ে যায় -->
+        <div id="fileGateModal" class="modal">
+            <div class="modal-content" style="text-align: center;">
+                <div class="ad-icon">🎬</div>
+                <h2 class="ad-title">ফাইলটি প্রস্তুত!</h2>
+                <div class="ad-box-black">আপনি যে ফাইলটি চাচ্ছেন: <b id="gateMovieTitle"></b><br><br>ফাইলটি দেখার জন্য নিচের <b>Watch Now</b> বাটনে আবার ক্লিক করুন — ক্লিক করলে সাথে সাথেই ওই ফাইলে নিয়ে যাবে।</div>
+                <button class="ad-action-btn btn-ad-open" id="gateWatchBtn" onclick="gateNextStep()">🎬 Watch Now</button>
+                <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ স্বাগতম! প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
             </div>
         </div>
 
@@ -1489,7 +1580,7 @@ async def web_ui():
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
             let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
-            let adRound = 0; let adLinkIndex = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10};
+            let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''};
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
             let trendingMovies = []; 
@@ -1596,7 +1687,12 @@ async def web_ui():
                     const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page); 
                     const data = await res.json(); 
                     currentViewMovies = data.movies || []; 
-                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
+                    // 🔥 প্রতি ৬টা মুভি কার্ডের পর পর স্পন্সর অ্যাড কার্ড ঢুকবে
+                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { 
+                        let card = createMovieCard(m, index); 
+                        if ((index + 1) % 6 === 0 && index < currentViewMovies.length - 1) card += sponsorCardHTML(false); 
+                        return card; 
+                    }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
                     renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies'); 
                 } catch(e) {} 
             }
@@ -1692,6 +1788,10 @@ async def web_ui():
                 }
                 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
+                // 💰 ডাউনলোড সেকশন: সাধারণ মুভিতে 320x50 ব্যানার, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার + স্পন্সর কার্ড
+                document.getElementById('detailBannerNormal').style.display = isAdult ? 'none' : 'block';
+                document.getElementById('detailBannerAdult').style.display = isAdult ? 'block' : 'none';
+                document.getElementById('detailSponsor').innerHTML = sponsorCardHTML(isAdult);
                 document.getElementById('detailModal').style.display = 'flex'; 
             }
             
@@ -1710,16 +1810,38 @@ async def web_ui():
                 document.getElementById('adTryAgainBtn').style.display = 'none';
             }
             
+            // 🔁 ৩০ মিনিট রোটেশন: সার্ভারের অ্যাক্টিভ লিংক ব্যবহার হয়; সেটিং না পেলে ক্লায়েন্ট-সাইডে সময় ধরে রোটেট করে
+            function getActiveLink(isAdult) {
+                let pool = (isAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) ? ADULT_DIRECT_LINKS : (DIRECT_LINKS && DIRECT_LINKS.length > 0 ? DIRECT_LINKS : null);
+                if (!pool) return null;
+                let serverLink = isAdult ? adSettings.active_adult_link : adSettings.active_link;
+                if (serverLink && pool.indexOf(serverLink) !== -1) return serverLink;
+                return pool[Math.floor(Date.now() / 1800000) % pool.length];
+            }
+            
+            // 🔥 স্পন্সর অ্যাড কার্ড — ক্লিক করলে অ্যাক্টিভ ডাইরেক্ট লিংক খোলে (হোম ফিড + ডিটেইল পপ-আপ)
+            function sponsorCardHTML(isAdult) {
+                let link = getActiveLink(isAdult);
+                if (!link) return '';
+                return `<div class="sponsor-card" onclick="event.stopPropagation(); tg.openLink('${link}')">
+                    <div class="sponsor-inner">
+                        <div class="sponsor-fire">🔥</div>
+                        <div class="sponsor-title">স্পন্সর অ্যাড</div>
+                        <div class="sponsor-sub">নিশ্চিন্তে — এমনিতে ক্লিক করুন</div>
+                    </div>
+                    <div class="sponsor-footer">🔥 Sponsored</div>
+                </div>`;
+            }
+            
             function openAdLink() {
-                let pool = (activeIsAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) ? ADULT_DIRECT_LINKS : DIRECT_LINKS;
                 document.getElementById('adClickBtn').style.display = 'none';
-                if (!pool || pool.length === 0) {
+                let linkToOpen = getActiveLink(activeIsAdult);
+                if (!linkToOpen) {
                     // কোনো অ্যাড লিংক সেট করা নেই → সরাসরি আনলক (ইউজার যেন আটকে না থাকে)
                     finishAdRounds();
                     return;
                 }
-                // 🔁 রোটেশন: প্রতি ক্লিকে পরের লিংক, সব নেটওয়ার্ক পালা করে ট্রাফিক পায়
-                let linkToOpen = pool[adLinkIndex % pool.length]; adLinkIndex++;
+                // 🔁 রোটেশন: এই মুহূর্তের অ্যাক্টিভ লিংক (৩০ মিনিট পর পর সার্ভার নিজে থেকে বদলায়)
                 tg.openLink(linkToOpen);
                 adStartTime = Date.now();
                 let vBtn = document.getElementById('adVerifyBtn');
@@ -1772,18 +1894,53 @@ async def web_ui():
             async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); } catch(e) {} }
             
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> থাকে —
-            // অ্যাপ খুললেই সরাসরি ওই মুভির ডাউনলোড পপ-আপ দেখাবে (ইউজার আর খুঁজতে হবে না)
+            // পুরনো ইউজার: অ্যাপ খুললেই সরাসরি ওই মুভির ডাউনলোড পপ-আপ।
+            // 🎯 নতুন ইউজার (আগে কখনো আনলক করেনি): আগে স্পন্সর লিংক (Adsterra/Monetag) →
+            // ফিরে এসে Watch Now আবার চাপলে সরাসরি ফাইলের পেজে।
+            let gateMovie = null; let gateStep = 0;
             async function openFromDeepLink() {
                 try {
                     let openId = new URLSearchParams(window.location.search).get('open') || (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
                     if (!openId) return;
                     const res = await fetch('/api/movie/' + openId + '?uid=' + uid);
                     const data = await res.json();
-                    if (data && data.movie) { currentViewMovies = [data.movie]; openDetail(0); }
+                    if (data && data.movie) {
+                        currentViewMovies = [data.movie];
+                        if (data.is_new) { showFileGate(data.movie); }
+                        else { openDetail(0); }
+                    }
                 } catch(e) {}
             }
             
-            loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); openFromDeepLink();
+            function showFileGate(m) {
+                gateMovie = m; gateStep = 0;
+                let q = (m.files && m.files[0] && m.files[0].quality) ? ' [' + m.files[0].quality + ']' : '';
+                document.getElementById('gateMovieTitle').innerText = (m.title || 'Movie') + q;
+                document.getElementById('gateWatchBtn').innerText = '🎬 Watch Now';
+                document.getElementById('fileGateModal').style.display = 'flex';
+            }
+            
+            function gateNextStep() {
+                let btn = document.getElementById('gateWatchBtn');
+                if (gateStep === 0) {
+                    // প্রথম ক্লিকে স্পন্সর (Adsterra/Monetag) লিংক খুলবে
+                    let isAdult = gateMovie && gateMovie.is_adult;
+                    let link = getActiveLink(isAdult);
+                    if (link) tg.openLink(link);
+                    gateStep = 1;
+                    btn.innerText = '✅ ফাইলটি দেখুন';
+                    localStorage.setItem('mb_gate_seen', '1');
+                } else {
+                    closeModal('fileGateModal');
+                    if (gateMovie) openDetail(0);
+                }
+            }
+            
+            // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait / অ্যাক্টিভ লিংক — অ্যাডমিন কমান্ডে বদলালে ৫ মিনিটে ধরা পড়ে)
+            async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); adSettings.active_link = s.active_link || ''; adSettings.active_adult_link = s.active_adult_link || ''; } catch(e) {} }
+            
+            // বুটস্ট্র্যাপ অর্ডার: আগে ডিপ-লিংক চেক (is_new ঠিক করার জন্য), তারপর ইউজার রেজিস্ট্রেশন ও লিস্ট লোড
+            (async function(){ await openFromDeepLink(); loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
         </script>
     </body></html>'''
     
@@ -1791,6 +1948,8 @@ async def web_ui():
     html_code = html_code.replace("__ADL_JSON__", adl_json)
     html_code = html_code.replace("__BOT_TOKEN__", TOKEN)
     html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS)
+    html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320)
+    html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT)
     return HTMLResponse(html_code)
 
 # ==========================================
@@ -1880,16 +2039,19 @@ async def get_random_movie():
         return {"movie": None}
 
 # ✅ ডিপ-লিংক API: একটি নির্দিষ্ট মুভি (একই টাইটেলের সব ফাইলসহ) ওয়েব অ্যাপে সরাসরি খোলার জন্য
+# is_new = ইউজার আগে কোনো ফাইল আনলক/ডাউনলোড করেনি → তাদের জন্য ওয়েব অ্যাপে Watch Now গেট দেখানো হয়
 @app.get("/api/movie/{movie_id}")
 async def get_single_movie(movie_id: str, uid: int = 0):
     try:
         unlocked_ids = []
+        is_new = False
         if uid != 0:
             time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
             async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
                 unlocked_ids.append(u["movie_id"])
+            is_new = (await db.user_unlocks.find_one({"user_id": uid}) is None)
         movie = await db.movies.find_one({"_id": ObjectId(movie_id)})
-        if not movie: return {"movie": None}
+        if not movie: return {"movie": None, "is_new": False}
         # একই টাইটেলের সব ফাইল একত্র করা (লিস্ট API-এর গ্রুপ ফরম্যাটেই)
         pipeline = [
             {"$match": {"title": movie["title"]}},
@@ -1899,9 +2061,9 @@ async def get_single_movie(movie_id: str, uid: int = 0):
         if not movies: return {"movie": None}
         m = movies[0]; m["title"] = m["_id"]; m["is_adult"] = "Adult Content" in m.get("categories", [])
         for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
-        return {"movie": m}
+        return {"movie": m, "is_new": is_new}
     except Exception as e:
-        return {"movie": None}
+        return {"movie": None, "is_new": False}
 
 # ✅ পাবলিক সেটিংস: ওয়েব অ্যাপ কতগুলো অ্যাড (ad_count) ও কত সেকেন্ড (ad_wait) দেখাবে সেটা জানার জন্য
 @app.get("/api/settings/public")
@@ -1909,9 +2071,14 @@ async def get_public_settings():
     try:
         ac = await db.settings.find_one({"id": "ad_count"}); ad_count = ac.get("value", 1) if ac else 1
         aw = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw.get("value", 10) if aw else 10
-        return {"ad_count": max(1, int(ad_count or 1)), "ad_wait": max(5, int(ad_wait or 10))}
+        dl_cfg = await db.settings.find_one({"id": "direct_links"}); links = dl_cfg.get("links", []) if dl_cfg else []
+        adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); alinks = adl_cfg.get("links", []) if adl_cfg else []
+        # 🔁 ৩০ মিনিট রোটেশন: এই মুহূর্তের অ্যাক্টিভ লিংক সার্ভার থেকে ঠিক করে পাঠানো হয়
+        return {"ad_count": max(1, int(ad_count or 1)), "ad_wait": max(5, int(ad_wait or 10)),
+                "active_link": pick_active_link(links) or "", "active_adult_link": pick_active_link(alinks) or "",
+                "rotation_minutes": ROTATION_SECONDS // 60}
     except:
-        return {"ad_count": 1, "ad_wait": 10}
+        return {"ad_count": 1, "ad_wait": 10, "active_link": "", "active_adult_link": "", "rotation_minutes": 30}
 
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
