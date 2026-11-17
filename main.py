@@ -73,6 +73,15 @@ def pick_active_link(links):
     try: return links[math.floor(time.time() / ROTATION_SECONDS) % len(links)]
     except Exception: return links[0]
 
+def is_adult_movie(m):
+    """🎯 অ্যাডাল্ট ডিটেকশন — মুভির টাইটেলে '18+' লেখা থাকলে অ্যাডাল্ট (অ্যাডাল্ট ডাইরেক্ট লিংক যাবে);
+    না থাকলে নরমাল। পুরনো মুভিগুলোর জন্য 'Adult Content' ক্যাটাগরিও ধরা হয়।"""
+    try:
+        if "Adult Content" in (m.get("categories") or []): return True
+        return "18+" in (m.get("title") or "").upper()
+    except Exception:
+        return False
+
 # 300x250 ব্যানার অ্যাড (Web App Home + অ্যাড মোডালে দেখাবে)
 BANNER_AD_JS = """<script>
   atOptions = {
@@ -1963,7 +1972,7 @@ async def web_ui():
 
             function createMovieCard(m, index) { 
                 let isFav = userFavs.includes(m._id); 
-                let isAdult = m.categories && m.categories.includes("Adult Content");
+                let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 let isVerified = localStorage.getItem('isAdult') === 'true';
                 let catsHtml = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(''); 
                 let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
@@ -2007,7 +2016,7 @@ async def web_ui():
                 document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
                 
-                let isAdult = m.categories && m.categories.includes("Adult Content");
+                let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 let btnsHtml = "";
 
                 // Check if it is a multi-file structure (files array exists)
@@ -2193,10 +2202,20 @@ async def web_ui():
             function gateNextStep() {
                 let btn = document.getElementById('gateWatchBtn');
                 if (gateStep === 0) {
+                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট ডাইরেক্ট লিংক, নাহলে নরমাল লিংক
+                    let isAdult = gateMovie && (gateMovie.is_adult || (gateMovie.title && gateMovie.title.toUpperCase().indexOf('18+') !== -1));
+                    // ⏱️ ৩০ মিনিট গেট: শেষ স্পন্সর লিংক খোলার ৩০ মিনিটের ভেতরে Watch Now চাপলে আর অ্যাড খুলবে না —
+                    // সরাসরি ফাইলের পেজে যাবে; ৩০ মিনিট পর পর ঘুরে ঘুরে পরের অ্যাক্টিভ লিংক খুলবে
+                    let lastAd = parseInt(localStorage.getItem('lastDirectLinkAt') || '0');
+                    let adDue = (Date.now() - lastAd) >= 30 * 60 * 1000;
+                    if (!adDue) {
+                        closeModal('fileGateModal');
+                        if (gateMovie) openDetail(0);
+                        return;
+                    }
                     // প্রথম ক্লিকে স্পন্সর (Adsterra/Monetag) লিংক খুলবে — নতুন-পুরাতন সব ইউজারের জন্যই ইনকাম
-                    let isAdult = gateMovie && gateMovie.is_adult;
                     let link = getActiveLink(isAdult);
-                    if (link) tg.openLink(link);
+                    if (link) { tg.openLink(link); localStorage.setItem('lastDirectLinkAt', String(Date.now())); }
                     gateStep = 1;
                     btn.innerText = '✅ ফাইলটি দেখুন';
                 } else {
@@ -2287,7 +2306,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     ]
     movies = await db.movies.aggregate(pipeline).to_list(limit)
     for m in movies:
-        m["is_adult"] = "Adult Content" in m.get("categories", [])
+        m["is_adult"] = is_adult_movie(m)
         # নিচের লাইনে movie_id কনভার্সন করা হয়েছে, এটি ঠিক আছে কিন্তু চেক করে দেখুন
         for f in m["files"]: 
             # ফাইল আনলক চেক
@@ -2329,7 +2348,7 @@ async def get_single_movie(movie_id: str, uid: int = 0):
         ]
         movies = await db.movies.aggregate(pipeline).to_list(1)
         if not movies: return {"movie": None}
-        m = movies[0]; m["title"] = m["_id"]; m["is_adult"] = "Adult Content" in m.get("categories", [])
+        m = movies[0]; m["title"] = m["_id"]; m["is_adult"] = is_adult_movie(m)
         for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
         return {"movie": m, "is_new": is_new}
     except Exception as e:
@@ -2452,7 +2471,7 @@ async def get_favs(uid: int):
     if not fav_titles: return []
     pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
     movies = await db.movies.aggregate(pipeline).to_list(len(fav_titles))
-    for m in movies: m["is_adult"] = "Adult Content" in m.get("categories", [])
+    for m in movies: m["is_adult"] = is_adult_movie(m)
     return movies
 
 class FavModel(BaseModel):
