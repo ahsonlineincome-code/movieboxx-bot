@@ -349,6 +349,48 @@ async def start_cmd(message: types.Message, state: FSMContext):
                 # মুভিটি আর DB-তে নেই → পেন্ডিং রেকর্ড মুছে ফেলা হলো
                 await db.pending_files.delete_one({"_id": pending["_id"]})
 
+    # 🎯 ওল্ড ইউজার ফাস্ট ডেলিভারি (?start=f_<movie_id>): ওয়েব অ্যাপে ডাউনলোড ফ্লো শেষ করে
+    # "🤖 বটে গিয়ে ফাইল নিন" বাটনে ক্লিক করলে ইউজার এই লিংকে চলে আসে — ওল্ড ইউজারকে START
+    # ওয়েলকাম মেসেজ ছাড়াই সুন্দর স্টাইলে সাথে সাথে ফাইল পেয়ে যাওয়ার অভিজ্ঞতা দেওয়া হয়
+    # (নতুন ইউজারের অটো-ডেলিভারির মতোই, কিন্তু স্টাইল আলাদা)
+    if payload.startswith("f_") and ObjectId.is_valid(payload[2:]):
+        movie_id = payload[2:]
+        m = await db.movies.find_one({"_id": ObjectId(movie_id)})
+        if not m:
+            payload = ""  # মুভি আর নেই → সাধারণ স্টার্ট
+        else:
+            user_row = await db.users.find_one({"user_id": uid})
+            if user_row:
+                _cfg = await db.settings.find_one({"id": "tg_link"})
+                _link = _cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if _cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+                _kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🚀 Join Channel", url=_link)]])
+                # এইমাত্র (১০ মিনিটের ভেতরে) ওয়েব অ্যাপ থেকে ডেলিভারি হয়ে থাকলে ডুপ্লিকেট কপি
+                # না পাঠিয়ে সুন্দর পয়েন্টার মেসেজ — "ফাইল ওপরের মেসেজে আছে 👆"
+                recent = await db.user_unlocks.find_one({
+                    "user_id": uid, "movie_id": movie_id,
+                    "unlocked_at": {"$gte": now - datetime.timedelta(minutes=10)}})
+                if recent:
+                    try:
+                        await message.answer(
+                            f"🎉 <b>এই তো আপনার ফাইল!</b>\n\n✅ <b>{m.get('title', 'Movie')}</b> এই চ্যাটেই পাঠানো হয়েছে — ওপরে স্ক্রল করে ফাইলটায় 👆 ট্যাপ করলেই দেখতে/ডাউনলোড করতে পারবেন।\n\n✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!",
+                            parse_mode="HTML", reply_markup=_kb, disable_web_page_preview=True)
+                    except Exception: pass
+                    return
+                ok, _ = await deliver_movie_file(uid, m)
+                if ok:
+                    await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$inc": {"clicks": 1}})
+                    await db.user_unlocks.update_one({"user_id": uid, "movie_id": movie_id}, {"$set": {"unlocked_at": now}}, upsert=True)
+                    try:
+                        await message.answer(
+                            f"🎉 <b>এই তো আপনার ফাইল!</b>\n\n📥 <b>{m.get('title', 'Movie')}</b> ওপরের মেসেজে পাঠানো হয়েছে 👆 — ট্যাপ করে দেখুন।\n\n✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!",
+                            parse_mode="HTML", reply_markup=_kb, disable_web_page_preview=True)
+                    except Exception: pass
+                    return
+                # ডেলিভারি ব্যর্থ → নিচের স্বাভাবিক স্টার্ট ফ্লোতে যাবে (ইউজার আটকে থাকবে না)
+            else:
+                # নতুন ইউজার f_ লিংকে এলে স্বাভাবিক রেজিস্ট্রেশন হবে; Watch Now বাটন ওই মুভির পেজ খুলবে
+                payload = movie_id
+
     user = await db.users.find_one({"user_id": uid})
 
     if not user:
@@ -1777,10 +1819,11 @@ async def web_ui():
         <div id="successModal" class="modal">
             <div class="modal-content" style="text-align: center; padding-top: 40px;">
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
-                <h2>ফাইল পাঠানো হয়েছে!</h2>
-                <p style="color:#94a3b8; margin-top:10px;">বট চেক করুন। নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!</p>
-                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn">🚀 Join Channel</a>
-                <button class="dl-file-btn unlocked" onclick="closeModal('successModal'); tg.close();"><i class="fa-solid fa-check"></i> বটে যান</button>
+                <h2>ফাইল পাঠানো হয়েছে! 🎉</h2>
+                <div class="ad-box-orange" style="margin-top:12px;">✨ সুখবর! আপনার মুভি বটে পাঠানো হয়েছে।</div>
+                <div class="ad-box-black" style="margin-top:10px;">👇 নিচের <b>"🤖 বটে গিয়ে ফাইল নিন"</b> বাটনে ক্লিক করুন — সরাসরি বট খুলে যাবে আর সাথে সাথেই আপনার মুভি পেয়ে যাবেন! বটের ওপরের মেসেজে ফাইলটা ট্যাপ করলেই দেখতে পারবেন।</div>
+                <button class="dl-file-btn unlocked" style="margin-top:14px; width:100%;" onclick="openBotForFile()"><i class="fa-solid fa-robot"></i> 🤖 বটে গিয়ে ফাইল নিন</button>
+                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn" style="margin-top:10px;">🚀 Join Channel</a>
             </div>
         </div>
 
@@ -2165,7 +2208,13 @@ async def web_ui():
                 else { adUserReturned(); }
             });
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { closeModal('detailModal'); document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            // 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" — tg.openTelegramLink দিয়ে সরাসরি বটের চ্যাট খুলবে
+            // (আগের tg.close() চ্যানেল থেকে খোলা অ্যাপে ইউজারকে বটে নিয়ে যেত না — চ্যানেলেই ফিরত)
+            // লিংকে ?start=f_<movie_id> থাকায় বট ওল্ড ইউজারকে স্টার্ট মেসেজ ছাড়াই সাথে সাথে ফাইল দেয়
+            let botFileLink = 'https://t.me/' + BOT_USERNAME;
+            function openBotForFile() { try { tg.openTelegramLink(botFileLink); } catch(e) { window.open(botFileLink, '_blank'); } }
+
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { closeModal('detailModal'); document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
