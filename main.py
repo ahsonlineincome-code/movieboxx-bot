@@ -10,6 +10,7 @@ import urllib.parse
 import secrets
 import json
 import math
+import html as html_mod  # 📝 চ্যানেল পোস্টের এরর টেক্সট/টাইটেল HTML-safe করার জন্য
 
 # ==========================================
 # 🛑 FIX FOR EVENT LOOP ERROR
@@ -279,6 +280,39 @@ async def broadcast_queue_worker():
             print(f"Queue Worker Error: {e}")
             await asyncio.sleep(5)
 
+# 🩺 লগ (লক) চ্যানেল হেলথ-চেক: বট স্টার্ট হলেই চ্যানেলে পোস্ট করার ক্ষমতা আছে কিনা চেক করে —
+# বট অ্যাডমিন না হলে / Post Messages পারমিশন না থাকলে OWNER-কে সাথে সাথে ওয়ার্নিং যাবে
+# (আগে সমস্যাটা বোঝা যেত না — পোস্ট ফেল হলে বট চুপচাপ পার করে দিত)
+async def check_log_channel():
+    if not LOG_CHANNEL_ID: return
+    try:
+        me = await bot.me()
+        admins = await bot.get_chat_administrators(LOG_CHANNEL_ID)
+        mine = next((a for a in admins if a.user and a.user.id == me.id), None)
+        if mine is None:
+            warn = (f"⚠️ <b>লগ (লক) চ্যানেলে বট অ্যাডমিন না!</b>\n\n"
+                    f"🆔 চ্যানেল: <code>{LOG_CHANNEL_ID}</code>\n\n"
+                    f"🔧 বটকে ওই চ্যানেলে <b>অ্যাডমিন</b> বানান (Post Messages পারমিশন দিন) — নাহলে মুভি আপলোড করলেও লক চ্যানেলে পোস্ট যাবে না।\n\n🧪 টেস্ট করতে: /testlog")
+        elif mine.status != "creator" and not getattr(mine, "can_post_messages", False):
+            warn = (f"⚠️ <b>লগ (লক) চ্যানেলে বটের 'Post Messages' পারমিশন নেই!</b>\n\n"
+                    f"🆔 চ্যানেল: <code>{LOG_CHANNEL_ID}</code>\n\n"
+                    f"🔧 চ্যানেল অ্যাডমিন প্যানেল থেকে বটকে Post Messages পারমিশন দিন।\n\n🧪 টেস্ট করতে: /testlog")
+        else:
+            print(f"✅ Log channel health check OK: {LOG_CHANNEL_ID} (bot is admin with post permission)")
+            return
+        print(warn)
+        try:
+            await bot.send_message(OWNER_ID, warn, parse_mode="HTML")
+        except: pass
+    except Exception as e:
+        try:
+            await bot.send_message(OWNER_ID,
+                f"⚠️ <b>লগ (লক) চ্যানেল চেক করা গেল না!</b>\n\n🆔 চ্যানেল: <code>{LOG_CHANNEL_ID}</code>\n"
+                f"কারণ: <code>{html_mod.escape(str(e))}</code>\n\n"
+                f"🔧 বটকে ওই চ্যানেলে অ্যাডমিন বানান, অথবা /setlogchannel দিয়ে সঠিক চ্যানেল সেট করুন।\n🧪 টেস্ট করতে: /testlog",
+                parse_mode="HTML")
+        except: pass
+
 # স্টার্টআপ ইভেন্ট
 @app.on_event("startup")
 async def on_startup():
@@ -287,6 +321,7 @@ async def on_startup():
     await load_banned_users()
     await seed_default_ads()
     await load_log_channel()
+    await check_log_channel()  # 🩺 লগ (লক) চ্যানেল ঠিক আছে কিনা স্টার্টআপেই চেক
     asyncio.create_task(auto_delete_worker())
     asyncio.create_task(broadcast_queue_worker())
     asyncio.create_task(auto_lock_worker())
@@ -796,32 +831,41 @@ async def finish_category_selection(c: types.CallbackQuery, state: FSMContext):
     if not selected_cats: return await c.answer("⚠️ অন্তত ১টি সিলেক্ট করুন!", show_alert=True)
     
     # state.clear() এখানে দেওয়া হলো না, কারণ নিচের বাটনে ক্লিক করার পর ডেটা লাগবে
+    # ✅ বাটনগুলো এখন পরিষ্কার বাংলায় — কোন বাটনে লগ (লক) চ্যানেলে পোস্ট যায় সেটা সরাসরি বোঝা যায়
     builder = InlineKeyboardBuilder()
-    builder.button(text="📝 Log Only (No Broadcast)", callback_data="action_log_only")
-    builder.button(text="🚀 New Movie (Broadcast & Log)", callback_data="action_new_bcast")
-    builder.button(text="➕ Add File Only (No Broadcast)", callback_data="action_add_file")
+    builder.button(text="📝 লক চ্যানেলে পোস্ট (No Broadcast)", callback_data="action_log_only")
+    builder.button(text="🚀 লক চ্যানেলে পোস্ট + সবাইকে ব্রডকাস্ট", callback_data="action_new_bcast")
+    builder.button(text="➕ শুধু Web App-এ যোগ (কোনো পোস্ট না)", callback_data="action_add_file")
     builder.adjust(1)
     await c.message.edit_text(
-        "✅ সব তথ্য নেওয়া হয়েছে!\n\n👇 এখন আপনি কি করতে চান তা নিচের যেকোনো একটি বাটনে ক্লিক করে নির্বাচন করুন:\n\n"
-        "📝 <b>Log Only</b> → লগ চ্যানেলে পোস্ট হবে, ব্রডকাস্ট হবে না\n"
-        "🚀 <b>Broadcast & Log</b> → লগ + সব ইউজারকে নোটিফিকেশন\n"
-        "➕ <b>Add File Only</b> → শুধু ওয়েব অ্যাপে যুক্ত হবে, লগ/ব্রডকাস্ট কিছুই হবে না",
+        "✅ সব তথ্য নেওয়া হয়েছে!\n\n👇 এখন আপনি কি করতে চান তা নিচের যেকোনো একটি বাটনে ক্লিক করে নির্বাচন করুন:\n\n"
+        "📝 <b>লক চ্যানেলে পোস্ট</b> → লগ (লক) চ্যানেলে মুভির পোস্ট যাবে, ব্রডকাস্ট হবে না\n"
+        "🚀 <b>লক চ্যানেলে পোস্ট + ব্রডকাস্ট</b> → লক চ্যানেলে পোস্ট + সব ইউজারকে নোটিফিকেশন\n"
+        "➕ <b>শুধু Web App-এ যোগ</b> → শুধু ওয়েব অ্যাপে যুক্ত হবে, কোনো পোস্ট/ব্রডকাস্ট হবে না",
         reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
     await c.answer()
 
 
-# 📝 লগ চ্যানেলের জন্য পোস্ট বানানোর হেল্পার (Log Only এবং Broadcast & Log দুটোতেই ব্যবহার হয়)
+# 📝 লগ (লক) চ্যানেলে পোস্ট বানানোর হেল্পার (Log Only এবং Broadcast & Log দুটোতেই ব্যবহার হয়)
+# ⚠️ মূল ফিক্স: টেলিগ্রামের নিয়ম অনুযায়ী চ্যানেল/গ্রুপের পোস্টে web_app বাটন দেওয়া যায় না (শুধু প্রাইভেট চ্যাটে চলে)।
+# আগের কোডে web_app বাটনসহ পোস্ট পাঠালে Telegram "Bad Request: BUTTON_TYPE_INVALID" এরর দিত →
+# পোস্ট চুপচাপ ফেল হতো (কনসোলে শুধু প্রিন্ট হতো), অথচ বট অ্যাডমিনকে "লগ চ্যানেলে পোস্ট হয়েছে" বলত।
+# এখন চ্যানেলের পোস্টে সাধারণ url বাটন (বট ডিপ-লিংক) ব্যবহার হয় + ফেল হলে বাটন ছাড়া রিট্রাই + ফলাফল রিটার্ন হয়।
+# রিটার্ন: (সফল হলো কিনা, ফেল হলে কারণ)
 async def send_log_post(data, selected_cats, movie_id):
-    if not LOG_CHANNEL_ID: return
+    if not LOG_CHANNEL_ID: return False, "লগ চ্যানেল আইডি (LOG_CHANNEL_ID) সেট করা নেই — /setlogchannel দিন"
     try:
-        # ✅ লগ চ্যানেলের Watch Now = সরাসরি ওয়েব অ্যাপে (?open=<movie_id>) — আগের সিস্টেমের মতোই:
-        # ক্লিক করলেই ওই মুভির পেজ খুলবে → "ফাইলটি প্রস্তুত" মেসেজ → অ্যাড → ফাইল দেখুন → ডাউনলোড
-        if APP_URL and movie_id:
-            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={movie_id}"))]
+        title_s = html_mod.escape(str(data['title']))
+        quality_s = html_mod.escape(str(data['quality']))
+        log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{title_s}</b>\n📺 Quality: <b>{quality_s}</b>\n📅 Year: <b>{html_mod.escape(str(data.get('year', 'N/A')))}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
+        # ✅ চ্যানেল-সেফ Watch Now বাটন: web_app বাদ → বট ডিপ-লিংক url বাটন —
+        # ইউজার চাপলে বটে যাবে → START চাপলে সরাসরি ওই মুভির ওয়েব অ্যাপ পেজ (?open=<movie_id>) খুলবে
+        if movie_id:
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start={movie_id}")]
         elif APP_URL:
-            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))]
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=APP_URL)]
         else:
             watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start=new")]
         log_kb = [
@@ -830,18 +874,44 @@ async def send_log_post(data, selected_cats, movie_id):
             [types.InlineKeyboardButton(text="📝 Request Movie", url="https://t.me/requestmoviebox")]
         ]
         log_markup = types.InlineKeyboardMarkup(inline_keyboard=log_kb)
-        log_text = f"🎬 <b>New Movie Uploaded</b>\n\n🏷 Title: <b>{data['title']}</b>\n📺 Quality: <b>{data['quality']}</b>\n📅 Year: <b>{data.get('year', 'N/A')}</b>\n📂 Categories: {', '.join(selected_cats)}\n\n👤 Uploaded by Admin"
-        # 🆗 পোস্টার ছাড়া আপলোড হলে ছবির বদলে টেক্সট পোস্ট যাবে —
-        # (আগে পোস্টার না থাকলে send_photo ফেল করত আর চুপচাপ পোস্ট যেত না, অথচ বট "পোস্ট হয়েছে" বলত)
-        if data.get("photo_id"):
-            await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
-        else:
-            await bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=log_markup)
+        # 🆗 পোস্টার ছাড়া আপলোড হলে ছবির বদলে টেক্সট পোস্ট যাবে
+        try:
+            if data.get("photo_id"):
+                await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
+            else:
+                await bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=log_markup)
+            return True, None
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
+            try:
+                if data.get("photo_id"):
+                    await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=log_text, parse_mode="HTML", reply_markup=log_markup)
+                else:
+                    await bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=log_markup)
+                return True, None
+            except Exception as e2:
+                print(f"Log post retry error: {e2}")
+                return False, str(e2)
+        except TelegramAPIError as e:
+            # 🛡️ ব্যাকআপ: কোনো কারণে বাটনসহ পোস্ট ফেল হলে বাটন ছাড়া পোস্ট করার চেষ্টা — চ্যানেলে পোস্ট যাওয়াটাই আসল
+            print(f"Log post with buttons failed, retrying without buttons: {e}")
+            try:
+                no_btn_text = log_text + f"\n\n▶️ মুভি দেখতে বটে যান: https://t.me/{BOT_USERNAME}"
+                if data.get("photo_id"):
+                    await bot.send_photo(LOG_CHANNEL_ID, photo=data["photo_id"], caption=no_btn_text, parse_mode="HTML")
+                else:
+                    await bot.send_message(LOG_CHANNEL_ID, no_btn_text, parse_mode="HTML")
+                return True, None
+            except Exception as e2:
+                print(f"Log post retry (no buttons) error: {e2}")
+                return False, str(e2)
     except Exception as e:
         print(f"Log post error: {e}")
+        return False, str(e)
 
 
 # নতুন মুভি হিসেবে ব্রডকাস্ট করার ফাংশন (DB + লগ পোস্ট + সব ইউজারকে নোটিফিকেশন)
+# ✅ ফিক্স: লগ চ্যানেল পোস্টের ফলাফল এখন সত্যি দেখানো হয় (ফেল হলে কারণ + সমাধানসহ)
 @dp.callback_query(F.data == "action_new_bcast")
 async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -850,14 +920,24 @@ async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
     
     movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
     
-    await c.message.edit_text(f"🎉 <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📝 লগ চ্যানেলে পোস্ট হয়েছে।\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।", parse_mode="HTML")
+    ok, err = await send_log_post(data, selected_cats, str(movie_id))
+    if ok:
+        log_report = "📝 ✅ <b>লগ (লক) চ্যানেলে পোস্ট হয়েছে।</b>"
+    else:
+        log_report = ("⚠️ ❌ <b>লগ (লক) চ্যানেলে পোস্ট ফেল:</b> <code>" + html_mod.escape(str(err)) + "</code>\n"
+                      "🔧 বটকে লগ চ্যানেলে অ্যাডমিন বানান (Post Messages), তারপর /testlog দিয়ে টেস্ট করুন।")
+    emoji = "🎉" if ok else "⚠️"
+    await c.message.edit_text(
+        f"{emoji} <b>{html_mod.escape(str(data['title']))} [{html_mod.escape(str(data['quality']))}]</b> সফলভাবে যুক্ত হয়েছে!\n\n{log_report}\n\n⏳ <b>ব্রডকাস্ট কিউতে যোগ করা হয়েছে...</b>\nআপনি চাইলে আরও মুভি আপলোড করতে পারেন, বট একটি একটি করে ইউজারদের কাছে মেসেজ পাঠাবে।",
+        parse_mode="HTML")
     
-    await send_log_post(data, selected_cats, str(movie_id))
     await broadcast_queue.put({"data": data, "selected_cats": selected_cats, "admin_id": c.from_user.id, "movie_id": str(movie_id)})
     await c.answer("🚀 ব্রডকাস্ট শুরু হচ্ছে...")
 
 
-# 📝 শুধু লগ চ্যানেলে পোস্ট হবে (DB-তে মুভি যুক্ত হবে, কিন্তু কোনো ব্রডকাস্ট হবে না)
+# 📝 শুধু লগ (লক) চ্যানেলে পোস্ট হবে (DB-তে মুভি যুক্ত হবে, কিন্তু কোনো ব্রডকাস্ট হবে না)
+# ✅ ফিক্স: আগে পোস্ট ফেল হলেও বট আগেই "লগ চ্যানেলে পোস্ট হয়েছে" লিখে দিত — এখন আসল পোস্ট হওয়ার পরেই
+# ফলাফল অনুযায়ী রিপোর্ট দেখায় (ফেল হলে কারণ + সমাধানসহ)।
 @dp.callback_query(F.data == "action_log_only")
 async def action_log_only(c: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
@@ -866,10 +946,18 @@ async def action_log_only(c: types.CallbackQuery, state: FSMContext):
     
     movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
     
-    await c.message.edit_text(f"✅ <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n📝 লগ চ্যানেলে পোস্ট হয়েছে।\n❌ কোনো ব্রডকাস্ট পাঠানো হয়নি।", parse_mode="HTML")
-    
-    await send_log_post(data, selected_cats, str(movie_id))
-    await c.answer("📝 লগ পোস্ট হয়েছে!")
+    ok, err = await send_log_post(data, selected_cats, str(movie_id))
+    if ok:
+        result_text = "📝 ✅ <b>লগ (লক) চ্যানেলে পোস্ট হয়েছে!</b>"
+    else:
+        result_text = ("⚠️ ❌ <b>লগ (লক) চ্যানেলে পোস্ট ফেল হয়েছে!</b>\n"
+                       f"কারণ: <code>{html_mod.escape(str(err))}</code>\n\n"
+                       "🔧 <b>সমাধান:</b> বটকে লগ চ্যানেলে <b>অ্যাডমিন</b> বানান (Post Messages পারমিশন দিন), তারপর /testlog দিয়ে টেস্ট করুন। চ্যানেল বদলাতে /setlogchannel।")
+    emoji = "✅" if ok else "⚠️"
+    await c.message.edit_text(
+        f"{emoji} <b>{html_mod.escape(str(data['title']))} [{html_mod.escape(str(data['quality']))}]</b> সফলভাবে যুক্ত হয়েছে!\n\n{result_text}\n\n❌ কোনো ব্রডকাস্ট পাঠানো হয়নি।",
+        parse_mode="HTML")
+    await c.answer("📝 লগ পোস্ট হয়েছে!" if ok else "⚠️ লগ পোস্ট ফেল!", show_alert=not ok)
 
 
 # শুধু ফাইল অ্যাড করার ফাংশন (কোনো ব্রডকাস্ট বা লগ হবে না)
