@@ -46,7 +46,7 @@ OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "bdlatestmovie_bot")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "MovieeBoxx_Bot")
 
 LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1004462840114")
 
@@ -810,8 +810,10 @@ async def send_log_post(data, selected_cats, movie_id):
         # ⚠️ চ্যানেল পোস্টে Telegram-এর WebApp বাটন কাজ করে না (শুধু প্রাইভেট চ্যাটে চলে)।
         # তাই লগ চ্যানেলের Watch Now বাটন সবার জন্য URL ডিপ-লিংক (?startapp=<movie_id>) —
         # চ্যানেলের যেকোনো ভিউয়ার (নতুন হোক বা পুরনো) চাপলেই ওয়েব অ্যাপ খুলে সরাসরি ওই মুভি দেখাবে।
-        if movie_id:
-            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?startapp={movie_id}")]
+        if APP_URL and movie_id:
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=f"{APP_URL}?open={movie_id}"))]
+        elif APP_URL:
+            watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))]
         else:
             watch_btn = [types.InlineKeyboardButton(text="🎬 Watch Now", url=f"https://t.me/{BOT_USERNAME}?start=new")]
         log_kb = [
@@ -1746,7 +1748,7 @@ async def web_ui():
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
             let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
-            let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''};
+            let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
             let trendingMovies = []; 
@@ -1965,11 +1967,12 @@ async def web_ui():
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
-                adStartTime = 0; adRound = 0;
+                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 let stepEl = document.getElementById('adStepText');
-                if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে আসুন।`; }
-                else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।`; }
+                let warn = ' ⚠️ সময়ের আগে ফিরে এলে আবার শুরু থেকে দেখতে হবে!';
+                if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে আসুন.${warn}`; }
+                else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে এসে নিচের বাটনে ক্লিক করুন.${warn}`; }
                 document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
                 document.getElementById('adClickBtn').style.display = 'block';
                 document.getElementById('adVerifyBtn').style.display = 'none';
@@ -2000,6 +2003,11 @@ async def web_ui():
                 </div>`;
             }
             
+            // 🛡️ অ্যান্টি-বাইপাস হেল্পার: শুধু অ্যাড পেজে (মিনি অ্যাপ লুকানো থাকা অবস্থায়) কাটানো সময়ই গোনা হয়;
+            // অ্যাপে ফিরে বসে থাকলে টাইমার এগোবে না — আগে ফিরলে আবার শুরু থেকে অ্যাড দেখতে হবে
+            function adTotalAway() { return adAwayMs + (adAwayStart !== null ? (Date.now() - adAwayStart) : 0); }
+            function adRemainSec() { return Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000)); }
+
             function openAdLink() {
                 document.getElementById('adClickBtn').style.display = 'none';
                 let linkToOpen = getActiveLink(activeIsAdult);
@@ -2011,21 +2019,27 @@ async def web_ui():
                 // 🔁 রোটেশন: এই মুহূর্তের অ্যাক্টিভ লিংক (৩০ মিনিট পর পর সার্ভার নিজে থেকে বদলায়)
                 tg.openLink(linkToOpen);
                 adStartTime = Date.now();
+                // 🛡️ অ্যাড খুলল — এখন থেকে শুধু অ্যাড পেজে থাকার সময় গোনা হবে
+                adAwayMs = 0; adAwayStart = Date.now(); adWasHidden = false;
                 let vBtn = document.getElementById('adVerifyBtn');
                 vBtn.style.display = 'block';
                 vBtn.disabled = true;
                 vBtn.innerText = `⏳ অপেক্ষা করুন ${adSettings.ad_wait}s`;
                 if (adCountdownTimer) clearInterval(adCountdownTimer);
                 adCountdownTimer = setInterval(() => {
-                    let remain = Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000);
-                    if (remain <= 0) { clearInterval(adCountdownTimer); adCountdownTimer = null; vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
-                    else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
+                    // 🛡️ ওয়াচডগ: অ্যাপ দৃশ্যমান কিন্তু ট্র্যাকিং এখনো "অ্যাডে আছে" — visibilitychange মিস হলেও ফিরে-আসা ধরা পড়বে
+                    if (!document.hidden && adWasHidden && adAwayStart !== null) { adUserReturned(); return; }
+                    let remain = adRemainSec();
+                    if (remain <= 0) {
+                        if (!document.hidden) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                    }
+                    else if (!document.hidden) { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                 }, 1000);
             }
             
             function checkAdWatched() {
                 if (adStartTime === 0) return;
-                let elapsed = Date.now() - adStartTime;
+                let elapsed = adTotalAway();  // 🛡️ শুধু অ্যাড পেজে কাটানো সময়
                 if (elapsed >= adSettings.ad_wait * 1000) {
                     adRound++;
                     if (adRound >= adSettings.ad_count) {
@@ -2039,17 +2053,41 @@ async def web_ui():
                         oBtn.innerText = `বিজ্ঞাপন ${adRound + 1}/${adSettings.ad_count} খুলুন`;
                     }
                 } else {
-                    let remaining = Math.ceil((adSettings.ad_wait * 1000 - elapsed) / 1000);
-                    tg.showAlert(`⚠️ আপনাকে আর ${remaining} সেকেন্ড অপেক্ষা করতে হবে!`);
+                    let remaining = adRemainSec();
+                    tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল)`);
                     document.getElementById('adVerifyBtn').style.display = 'none';
                     document.getElementById('adTryAgainBtn').style.display = 'block';
                 }
             }
-            
+
             function finishAdRounds() {
+                adStartTime = 0; adAwayMs = 0; adAwayStart = null;
+                if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 closeModal('adModal');
                 sendFileRequest(activeFileId);
             }
+
+            // 🛡️ অ্যান্টি-বাইপাস মূল চেক: ইউজার অ্যাড থেকে অ্যাপে ফিরে এলেই চেক হয় —
+            // পুরো wait সেকেন্ড অ্যাডে থাকলে ভেরিফাই চালু হয়, আগে ফিরলে এলার্ট + আবার শুরু থেকে অ্যাড দেখতে হবে
+            function adUserReturned() {
+                if (adStartTime === 0) return;
+                if (adAwayStart !== null) { adAwayMs += Date.now() - adAwayStart; adAwayStart = null; }
+                let remain = adRemainSec();
+                let vBtn = document.getElementById('adVerifyBtn');
+                if (remain <= 0) {
+                    if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
+                    vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
+                } else {
+                    resetAdModal();
+                    tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল)`);
+                }
+            }
+
+            document.addEventListener('visibilitychange', function() {
+                if (adStartTime === 0) return;  // অ্যাড ফেজ চলছে না
+                if (document.hidden) { adAwayStart = Date.now(); adWasHidden = true; }
+                else { adUserReturned(); }
+            });
 
             async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { closeModal('detailModal'); document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
