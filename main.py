@@ -541,11 +541,99 @@ async def search_movies_smart(q: str, limit: int = 6):
         if t.startswith(ql): return 1
         if ql in t: return 2
         return 3
-    results.sort(key=lambda mm: (rank(mm), -(mm.get("clicks") or 0)))
+    # 🆕 লেটেস্ট আগে: টাইটেল/কোয়ালিটি থেকে সর্বোচ্চ পর্ব-নম্বর বের করে নতুন আপলোড আগে দেখানো হয়,
+    # তারপর বেশি ভিউ — ফলে 'Becholor Point' লিখলে নতুন চ্যাপ্টার (যেমন EP 129-134) সবার আগে আসে
+    results.sort(key=lambda mm: (rank(mm), -_doc_latest_ep(mm["_id"], mm.get("qualities")), -(mm.get("clicks") or 0)))
     out = []
     for mm in results[:limit]:
-        out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0), "qualities": mm.get("qualities") or []})
+        out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0), "qualities": _qualities_desc(mm.get("qualities"))})
     return out
+
+# ==========================================
+# 🔢 সার্চ হেল্পার + রেন্ডারার: এপিসোড নম্বর ধরা ('AP30'/'ep 30'/'নাম 30'), কোয়ালিটি লিস্ট
+# গুছানো (নতুন→পুরনো), রেজাল্ট ক্যাপশন + বাটন (Watch on Home / NEXT / সিমিলার) এক জায়গা থেকে
+# বানানো — ইউজার ও অ্যাডমিন সার্চ দুটোই একই রেন্ডারার ব্যবহার করে।
+# ==========================================
+def _tok_number(tok):
+    mm = re.search(r"(?<!\d)(\d{1,3})(?!\d)", tok or "")
+    return int(mm.group()) if mm else None
+
+def _qualities_desc(quals):
+    """নতুন→পুরনো ক্রমে গুছানো (EP 96 • EP 95 • ...); সংখ্যা না থাকলে আলফাবেটিক। সর্বোচ্চ ১২টা।"""
+    def key(tok):
+        n = _tok_number(tok)
+        return (0, -n, "") if n is not None else (1, 0, tok or "")
+    return sorted([t for t in (quals or []) if t], key=key)[:12]
+
+def _doc_latest_ep(title, quals=()):
+    """ডকুমেন্টের সর্বোচ্চ পর্ব-নম্বর (টাইটেল 'EP 129-134' হলে 134)।
+    ডিজিট-বাউন্ডারি রেজেক্স — বছর '2026' কে '202'+'6' ভেঙে ধরা যাবে না।"""
+    nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,3}(?!\d)", title or "")]
+    nums += [n for n in (_tok_number(t) for t in (quals or [])) if n is not None]
+    return max(nums) if nums else 0
+
+def _short_title(t, n=30):
+    """বাটনে টাইটেল ছোট করা — শেষের অংশ (EP নম্বর) যেন কাটা না পড়ে"""
+    t = t or ""
+    return t if len(t) <= n else "…" + t[-(n - 1):]
+
+def _query_ep(q):
+    """সার্চ টেক্সটে এপিসোড নম্বর খোঁজা — 'AP30', 'AP 30', 'ep 30', 'batchelor point 30' সব ধরবে"""
+    mm = re.search(r"\b(?:ep|eps|episode|ap|bp|part|pt)\s*[._-]*\s*(\d{1,3})", q.lower())
+    if mm: return int(mm.group(1))
+    mm = re.search(r"(?<!\d)(\d{1,3})(?!\d)", q.lower())
+    return int(mm.group(1)) if mm else None
+
+def _doc_has_ep(mm, n):
+    """ওই ডকুমেন্টে n নম্বর পর্ব আছে কিনা — টাইটেলে সরাসরি/রেঞ্জে ('EP 27-34' → 27≤30≤34), বা কোয়ালিটি লিস্টে"""
+    t = mm.get("_id") or ""
+    if re.search(rf"(?<!\d){n}(?!\d)", t): return True
+    for a, b in re.findall(r"(\d{1,3})\s*[-–]\s*(\d{1,3})", t):
+        if int(a) <= n <= int(b): return True
+    for tok in (mm.get("qualities") or []):
+        if _tok_number(tok) == n: return True
+    return False
+
+def build_search_reply(results, q, name=None):
+    """🔍 সার্চ রেজাল্ট রেন্ডারার — লেটেস্ট আগে; 'AP30' লিখলে ৩০ নম্বর পর্বের ডকুমেন্ট টপে;
+    নিচে NEXT + সিমিলার বাটন (চাপলেই ওই পর্ব/মুভির পেজে সরাসরি ঢোকে)। Returns (caption, markup, best)"""
+    q_num = _query_ep(q)
+    best = results[0]
+    if q_num is not None:
+        for mm in results:
+            if _doc_has_ep(mm, q_num):
+                best = mm
+                break
+    # একই ডকুমেন্ট বারবার নয় — best বাদে বাকিগুলো (লেটেস্ট-ফার্স্ট অর্ডারেই)
+    others = [mm for mm in results if mm.get("doc_id") != best.get("doc_id")]
+    qd = _qualities_desc(best.get("qualities") or [best.get("quality") or "HD"])
+    head = (f"🎉 <b>দারুণ পছন্দ {name}!</b>\n\nআপনার কাঙ্ক্ষিত মুভি — <b>«{best['title']}»</b> আমাদের লাইব্রেরিতে রয়েছে! 😍"
+            if name else
+            f"🎉 <b>পাওয়া গেছে!</b>\n\n🎬 <b>«{best['title']}»</b> লাইব্রেরিতে আছে!")
+    ep_line = (f"\n🎯 আপনার খোঁজা <b>{q_num}</b> নম্বর পর্বটি এই লিংকেই আছে ✅"
+               if q_num is not None and _doc_has_ep(best, q_num) else "")
+    caption = (
+        f"{head}{ep_line}\n\n"
+        f"📺 Episodes (নতুন→পুরনো): <b>{' • '.join(qd)}</b>\n"
+        f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
+        f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
+        f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!\n"
+        f"⏭ নিচের <b>NEXT</b> / সিমিলার বাটনে চাপলে পরের পর্ব বা কাছাকাছি মুভিতেও সরাসরি ঢুকতে পারবেন।"
+    )
+    # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
+    if APP_URL:
+        watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
+    else:
+        watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
+    kb = [watch_row]
+    # ⏭ NEXT + সিমিলার: ক্লিক করলেই ওই পর্ব/মুভির পেজ খুলে যাবে (টাইটেলের EP অংশ যেন দেখা যায়)
+    if others:
+        nxt = others[0]
+        kb.append([types.InlineKeyboardButton(text=f"⏭ NEXT ▶ {_short_title(nxt['title'])}", url=f"https://t.me/{BOT_USERNAME}?startapp={nxt['doc_id']}")])
+        for o in others[1:4]:
+            kb.append([types.InlineKeyboardButton(text=f"🎬 {_short_title(o['title'])}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
+    kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
+    return caption, types.InlineKeyboardMarkup(inline_keyboard=kb), best
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
@@ -558,27 +646,8 @@ async def handle_user_messages(m: types.Message):
     if not q or q.startswith("/"): return
     results = await search_movies_smart(q)
     if results:
-        best = results[0]
-        others = results[1:5]
-        # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
-        if APP_URL:
-            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
-        else:
-            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
-        kb = [watch_row]
-        # আরও ম্যাচ পেলে অন্য মুভিগুলোর বাটনও দেখানো হয় (সহজে রিডাইরেক্ট)
-        for o in others:
-            kb.append([types.InlineKeyboardButton(text=f"🎬 {o['title'][:30]}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
-        kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
-        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-        caption = (
-            f"🎉 <b>দারুণ পছন্দ {name}!</b>\n\n"
-            f"আপনার কাঙ্ক্ষিত মুভি — <b>«{best['title']}»</b> আমাদের লাইব্রেরিতে রয়েছে! 😍\n\n"
-            f"📺 Quality: <b>{' • '.join(best.get('qualities') or [best.get('quality') or 'HD'])}</b>\n"
-            f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
-            f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
-            f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!"
-        )
+        # 🔍 লেটেস্ট-ফার্স্ট + NEXT/সিমিলার বাটনসহ রেন্ডার ('AP30'-স্টাইল এপিসোড ম্যাচও ধরা হয়)
+        caption, markup, best = build_search_reply(results, q, name)
         try:
             if best.get("photo_id"):
                 await bot.send_photo(uid, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
@@ -817,26 +886,8 @@ async def admin_search_movies(m: types.Message):
     if not q: return
     results = await search_movies_smart(q)
     if results:
-        best = results[0]
-        others = results[1:5]
-        # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
-        if APP_URL:
-            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
-        else:
-            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
-        kb = [watch_row]
-        for o in others:
-            kb.append([types.InlineKeyboardButton(text=f"🎬 {o['title'][:30]}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
-        kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
-        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
-        caption = (
-            f"🎉 <b>পাওয়া গেছে!</b>\n\n"
-            f"🎬 <b>«{best['title']}»</b> লাইব্রেরিতে আছে!\n\n"
-            f"📺 Quality: <b>{' • '.join(best.get('qualities') or [best.get('quality') or 'HD'])}</b>\n"
-            f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
-            f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
-            f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ করলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!"
-        )
+        # 🔍 অ্যাডমিন সার্চেও একই রেন্ডারার — লেটেস্ট-ফার্স্ট + NEXT/সিমিলার বাটন
+        caption, markup, best = build_search_reply(results, q)
         try:
             if best.get("photo_id"):
                 await bot.send_photo(m.from_user.id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
@@ -1773,6 +1824,10 @@ async def web_ui():
             .bot-go-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 16px 18px; font-size: 15.5px; font-weight: 800; color: white; background: linear-gradient(135deg, #10b981, #059669); border: none; border-radius: 14px; cursor: pointer; margin-top: 14px; animation: filePop .35s ease both, greenPulse 2s ease-in-out .5s infinite; box-shadow: 0 6px 18px rgba(16,185,129,.3); }
             .bot-go-btn i { font-size: 20px; animation: handPoint 1s ease-in-out infinite; }
             @keyframes greenPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } 50% { box-shadow: 0 0 0 10px rgba(16,185,129,0); } }
+
+            /* 🔙 অ্যাড পেজে ব্যাক বাটন — ভুল কোয়ালিটিতে ক্লিক করলে ফিরে গিয়ে ঠিকটা বেছে নেওয়া যায় */
+            .ad-back-btn { width: 100%; margin-top: 10px; padding: 10px; font-size: 13px; font-weight: 700; color: #94a3b8; background: transparent; border: 1px dashed #475569; border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; }
+            .ad-back-btn:active { transform: scale(.97); color: #fff; border-color: #94a3b8; }
             .age-box { text-align: center; }
             .age-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-top: 15px; }
             .age-yes { background: #ef4444; color: white; }
@@ -2133,6 +2188,7 @@ async def web_ui():
                 <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
                 <button class="ad-action-btn btn-ad-unlock" id="adVerifyBtn" onclick="checkAdWatched()" style="display:none;">✅ অ্যাড দেখে ফিরে এসেছি</button>
                 <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
+                <button class="ad-back-btn" onclick="closeModal('adModal'); resetAdModal(); openDownloadModal();"><i class="fa-solid fa-arrow-left"></i> ব্যাক — ডাউনলোড লিস্টে ফিরুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:5px;">💎 VIP হলে কোনো অ্যাড দেখতে হবে না — Profile ট্যাব থেকে VIP নিন!</p>
                 <div style="display:flex; justify-content:center; margin-top:5px;">
                     __BANNER_AD__
