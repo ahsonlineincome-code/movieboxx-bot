@@ -809,9 +809,9 @@ async def detect_log_channel_forward(m: types.Message):
 # 🔍 অ্যাডমিন মুভি সার্চ: অ্যাডমিও বটে মুভির নাম লিখে সার্চ করতে পারবেন (কোনো সমস্যা নেই)।
 # মুভি না পেলে ইউজারদের মতো "রিকোয়েস্ট অ্যাডমিনের কাছে গেল" মেসেজ যাবে না — অ্যাডমিনের
 # জন্য আলাদা মেসেজ: "এই মুভিটা নাই, আপনি দয়া করে আপলোড করুন"।
-# (StateFilter.default → FSM আপলোড/ব্রডকাস্ট ফ্লো চলাকালীন এই হ্যান্ডলার কিছুই ধরবে না)
+# (StateFilter(None) → FSM আপলোড/ব্রডকাস্ট ফ্লো চলাকালীন এই হ্যান্ডলার কিছুই ধরবে না)
 # ==========================================
-@dp.message(StateFilter.default, F.text, lambda m: m.chat.type == "private" and m.from_user.id in admin_cache and not (m.text or "").startswith("/"))
+@dp.message(StateFilter(None), F.text, lambda m: m.chat.type == "private" and m.from_user.id in admin_cache and not (m.text or "").startswith("/"))
 async def admin_search_movies(m: types.Message):
     q = (m.text or "").strip()
     if not q: return
@@ -2381,8 +2381,8 @@ async def web_ui():
                 f.setAttribute('scrolling', 'no');
                 f.setAttribute('frameborder', '0');
                 f.style.cssText = 'border:0;overflow:hidden;width:' + conf.w + 'px;height:' + conf.h + 'px;max-width:100%;';
-                let inner = "<script>atOptions = { 'key' : '" + conf.key + "', 'format' : 'iframe', 'height' : " + conf.h + ", 'width' : " + conf.w + ", 'params' : {} };<\/script>";
-                inner += "<script src='" + conf.src + "'><\/script>";
+                let inner = "<script>atOptions = { 'key' : '" + conf.key + "', 'format' : 'iframe', 'height' : " + conf.h + ", 'width' : " + conf.w + ", 'params' : {} };<\\/script>";
+                inner += "<script src='" + conf.src + "'><\\/script>";
                 f.srcdoc = "<html><body style='margin:0;padding:0;background:transparent'>" + inner + "</body></html>";
                 return f;
             }
