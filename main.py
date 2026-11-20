@@ -805,6 +805,55 @@ async def detect_log_channel_forward(m: types.Message):
         f"অথবা এই ফরোয়ার্ডে রিপ্লাই দিয়ে <code>/setlogchannel</code> লিখুন।",
         reply_markup=builder.as_markup(), parse_mode="HTML")
 
+# ==========================================
+# 🔍 অ্যাডমিন মুভি সার্চ: অ্যাডমিও বটে মুভির নাম লিখে সার্চ করতে পারবেন (কোনো সমস্যা নেই)।
+# মুভি না পেলে ইউজারদের মতো "রিকোয়েস্ট অ্যাডমিনের কাছে গেল" মেসেজ যাবে না — অ্যাডমিনের
+# জন্য আলাদা মেসেজ: "এই মুভিটা নাই, আপনি দয়া করে আপলোড করুন"।
+# (StateFilter.default → FSM আপলোড/ব্রডকাস্ট ফ্লো চলাকালীন এই হ্যান্ডলার কিছুই ধরবে না)
+# ==========================================
+@dp.message(StateFilter.default, F.text, lambda m: m.chat.type == "private" and m.from_user.id in admin_cache and not (m.text or "").startswith("/"))
+async def admin_search_movies(m: types.Message):
+    q = (m.text or "").strip()
+    if not q: return
+    results = await search_movies_smart(q)
+    if results:
+        best = results[0]
+        others = results[1:5]
+        # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
+        if APP_URL:
+            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
+        else:
+            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
+        kb = [watch_row]
+        for o in others:
+            kb.append([types.InlineKeyboardButton(text=f"🎬 {o['title'][:30]}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
+        kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
+        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
+        caption = (
+            f"🎉 <b>পাওয়া গেছে!</b>\n\n"
+            f"🎬 <b>«{best['title']}»</b> লাইব্রেরিতে আছে!\n\n"
+            f"📺 Quality: <b>{' • '.join(best.get('qualities') or [best.get('quality') or 'HD'])}</b>\n"
+            f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
+            f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
+            f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ করলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!"
+        )
+        try:
+            if best.get("photo_id"):
+                await bot.send_photo(m.from_user.id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
+            else:
+                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+        except Exception:
+            try:
+                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+            except Exception: pass
+        return
+    # ❌ অ্যাডমিনের জন্য আলাদা মেসেজ — রিকোয়েস্ট ফরওয়ার্ড হবে না, সরাসরি আপলোড করতে বলা হবে
+    await m.answer(
+        f"😔 <b>এই মুভিটি ডাটাবেজে নেই!</b>\n\n"
+        f"🔍 খোঁজা হয়েছে: <b>«{q[:60]}»</b>\n\n"
+        f"📤 আপনি দয়া করে মুভির ফাইল/ভিডিওটি এই চ্যাটে পাঠিয়ে দিন — আপলোড প্রসেস শুরু হয়ে যাবে।",
+        parse_mode="HTML")
+
 @dp.callback_query(F.data.startswith("setlog_"))
 async def set_log_channel_callback(c: types.CallbackQuery):
     if c.from_user.id not in admin_cache: return
@@ -1703,17 +1752,27 @@ async def web_ui():
             /* ⬇ ডাউনলোড হিন্ট + অ্যানিমেটেড তীর — ইউজার সহজে বুঝবে কোথায় ডাউনলোড হবে */
             .dl-hint { background: linear-gradient(45deg, rgba(56,189,248,.14), rgba(59,130,246,.08)); border: 1px dashed #38bdf8; color: #7dd3fc; font-size: 12.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin: 10px 0 4px 0; display: flex; align-items: center; gap: 8px; }
             .dl-hint b { color: #fff; }
-            .dl-arrow { animation: arrowBounce 1s ease-in-out infinite; margin-left: 2px; }
-            @keyframes arrowBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+            .dl-hand { animation: handPoint .9s ease-in-out infinite; margin-right: 2px; font-size: 17px; }
+            @keyframes handPoint { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(5px); } }
             .act-dl { animation: dlPulse 2.2s ease-in-out infinite; }
             @keyframes dlPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,.4); } 50% { box-shadow: 0 0 0 9px rgba(56,189,248,0); } }
             .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
             .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
-            .dl-file-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; color: white; font-weight: 700; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
-            body.oled-mode .dl-file-btn { background: #050505; border-color: #1a1a1a; }
-            .dl-file-btn i { color: #ef4444; font-size: 18px; }
+            /* 🎯 কোয়ালিটি বাটন — বড়, পপ-আপ স্টাইল, পপ-আপ খুললে সুন্দর এন্ট্রি অ্যানিমেশন */
+            .dl-file-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 16px 18px; font-size: 15px; background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid #3b82f6; color: white; font-weight: 800; border-radius: 14px; margin-bottom: 12px; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.45); animation: filePop .3s ease both; }
+            body.oled-mode .dl-file-btn { background: linear-gradient(135deg, #161616, #050505); border-color: #3b82f6; }
+            .dl-file-btn:active { transform: scale(.97); }
+            .dl-file-btn i { color: #60a5fa; font-size: 20px; }
+            .dl-file-btn .dl-chev { font-size: 12px; color: #64748b; }
+            .dl-file-btn.unlocked { border-color: #10b981; background: linear-gradient(135deg, rgba(16,185,129,.16), #0f172a); }
             .dl-file-btn.unlocked i { color: #10b981; }
+            @keyframes filePop { from { opacity: 0; transform: translateY(10px) scale(.95); } to { opacity: 1; transform: none; } }
+
+            /* 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" বাটন — লেখা মাঝখানে, সবুজ গ্লো পালস */
+            .bot-go-btn { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 16px 18px; font-size: 15.5px; font-weight: 800; color: white; background: linear-gradient(135deg, #10b981, #059669); border: none; border-radius: 14px; cursor: pointer; margin-top: 14px; animation: filePop .35s ease both, greenPulse 2s ease-in-out .5s infinite; box-shadow: 0 6px 18px rgba(16,185,129,.3); }
+            .bot-go-btn i { font-size: 20px; animation: handPoint 1s ease-in-out infinite; }
+            @keyframes greenPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,.45); } 50% { box-shadow: 0 0 0 10px rgba(16,185,129,0); } }
             .age-box { text-align: center; }
             .age-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-top: 15px; }
             .age-yes { background: #ef4444; color: white; }
@@ -2023,7 +2082,7 @@ async def web_ui():
 
                 <div class="act-row">
                     <button id="likeBtn" class="act-btn act-like" onclick="toggleLike()"><i class="fa-regular fa-heart"></i> Like</button>
-                    <button class="act-btn act-dl" onclick="openDownloadModal()"><i class="fa-solid fa-circle-down"></i> Download <i class="fa-solid fa-angles-down dl-arrow"></i></button>
+                    <button class="act-btn act-dl" onclick="openDownloadModal()"><i class="fa-solid fa-hand-point-right dl-hand"></i> Download</button>
                 </div>
                 <div class="act-row">
                     <button id="saveBtn" class="act-btn act-save" onclick="toggleSaved()"><i class="fa-regular fa-bookmark"></i> Save Later</button>
@@ -2108,7 +2167,7 @@ async def web_ui():
                 <h2>ফাইল পাঠানো হয়েছে! 🎉</h2>
                 <div class="ad-box-orange" style="margin-top:12px;">✨ সুখবর! আপনার মুভি বটে পাঠানো হয়েছে।</div>
                 <div class="ad-box-black" style="margin-top:10px;">👇 নিচের <b>"🤖 বটে গিয়ে ফাইল নিন"</b> বাটনে ক্লিক করুন — সরাসরি বট খুলে যাবে আর সাথে সাথেই আপনার মুভি পেয়ে যাবেন! বটের ওপরের মেসেজে ফাইলটা ট্যাপ করলেই দেখতে পারবেন।</div>
-                <button class="dl-file-btn unlocked" style="margin-top:14px; width:100%;" onclick="openBotForFile()"><i class="fa-solid fa-robot"></i> 🤖 বটে গিয়ে ফাইল নিন</button>
+                <button class="bot-go-btn" onclick="openBotForFile()"><i class="fa-solid fa-robot"></i> 🤖 বটে গিয়ে ফাইল নিন</button>
                 <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn" style="margin-top:10px;">🚀 Join Channel</a>
             </div>
         </div>
@@ -2120,7 +2179,7 @@ async def web_ui():
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2>🎉 সাকসেসফুল!</h2>
                 <p style="color:#94a3b8; margin-top:10px;">আপনার ফাইল প্রস্তুত! নিচের <b>বটে যান</b> বাটনে ক্লিক করে বট চ্যাট খুলুন, তারপর <b>START</b> চাপুন — ফাইলটি সাথে সাথেই আপনাকে পাঠিয়ে দেওয়া হবে।</p>
-                <a id="newUserBotLink" href="#" target="_blank" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);">🤖 বটে যান</a>
+                <a id="newUserBotLink" href="#" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);" onclick="event.preventDefault(); try { tg.openTelegramLink(this.href); } catch(e) { window.open(this.href, '_blank'); }">🤖 বটে যান</a>
                 <p style="color:#64748b; font-size:12px; margin-top:8px;">⚠️ অবশ্যই START চাপবেন — START চাপলেই ফাইল অটো চলে আসবে!</p>
             </div>
         </div>
@@ -2464,14 +2523,14 @@ async def web_ui():
                 // বাটনগুলো এখন ডাউনলোড পপ-আপ মোডালের ভিতরে থাকে (পেজে স্ক্রল না করেই খোলে)
                 let btnsHtml = "";
                 if (filesArr.length > 0) {
-                    btnsHtml = filesArr.map(function(f) {
+                    btnsHtml = filesArr.map(function(f, idx) {
                         let isFree = f.is_unlocked || isUserVip;
                         let fq = (f.quality && f.quality !== 'Main') ? f.quality : 'HD';
-                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${fq}</span></button>`;
+                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" style="animation-delay:${(idx * 0.08).toFixed(2)}s" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${fq}</span><i class="fa-solid fa-chevron-right dl-chev"></i></button>`;
                     }).join('');
                 } else {
                     let isFree = isUserVip;
-                    btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${quals[0]}</span></button>`;
+                    btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${quals[0]}</span><i class="fa-solid fa-chevron-right dl-chev"></i></button>`;
                 }
 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml;
@@ -2613,11 +2672,12 @@ async def web_ui():
                 return `<div class="comment-avatar" style="background:${color}">${escHtml(ch)}</div>`;
             }
             function commentItemHtml(c, isReply) {
-                // ✏️ নিজের মেসেজ এডিট/ডিলিট করতে পারবে; 🗑 অ্যাডমিন (isAdmin) যেকোনো খারাপ কমেন্ট ডিলিট করতে পারবে
+                // ✏️ নিজের মেসেজ এডিট করতে পারবে; 🗑 ডিলিট শুধু অ্যাডমিন (isAdmin) — ইউজার কারো
+                // মেসেজ (নিজেরটাসহ) ডিলিট করতে পারবে না, পারমিশন শুধু অ্যাডমিনের
                 let own = (c.uid && String(c.uid) === String(uid));
                 let acts = '';
                 if (own) acts += `<button class="comment-act edit" onclick="event.stopPropagation(); startEditComment('${c.id}')"><i class="fa-solid fa-pen"></i></button>`;
-                if (own || isAdmin) acts += `<button class="comment-act del" onclick="event.stopPropagation(); deleteComment('${c.id}')"><i class="fa-solid fa-trash"></i></button>`;
+                if (isAdmin) acts += `<button class="comment-act del" onclick="event.stopPropagation(); deleteComment('${c.id}')"><i class="fa-solid fa-trash"></i></button>`;
                 let actsHtml = acts ? `<span class="comment-acts">${acts}</span>` : '';
                 let replyBtn = isReply ? '' : `<button class="comment-reply-btn" onclick="setReplyTo('${c.id}')">↩ Reply</button>`;
                 // 👑 অ্যাডমিনের রিপ্লাই/কমেন্ট "Admin" গোল্ডেন ব্যাজ নিয়ে দেখাবে (ব্যক্তিগত নাম না, অফিসিয়াল উত্তর)
@@ -2861,13 +2921,14 @@ async def web_ui():
                 else { adUserReturned(); }
             });
 
-            // 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" — tg.openTelegramLink দিয়ে সরাসরি বটের চ্যাট খুলবে
-            // (আগের tg.close() চ্যানেল থেকে খোলা অ্যাপে ইউজারকে বটে নিয়ে যেত না — চ্যানেলেই ফিরত)
-            // লিংকে ?start=f_<movie_id> থাকায় বট ওল্ড ইউজারকে স্টার্ট মেসেজ ছাড়াই সাথে সাথে ফাইল দেয়
+            // 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" — ফাইল সার্ভার থেকেই ইউজারের বট চ্যাটে
+            // ডেলিভারি হয়ে যায় (/api/send), তাই প্লেইন লিংক দিলেই ক্লিক করলে বট চ্যাটে ফাইল সামনে
             let botFileLink = 'https://t.me/' + BOT_USERNAME;
-            function openBotForFile() { try { tg.openTelegramLink(botFileLink); } catch(e) { window.open(botFileLink, '_blank'); } }
+            // 🤖 "বটে গিয়ে ফাইল নিন" — ক্লিক করলেই সরাসরি বট চ্যাট খুলে যাবে (ফাইল আগেই বটে
+            // ডেলিভারি হয়ে থাকে), সাথে মিনি অ্যাপ পেজটাও বন্ধ হয়ে ইউজার বটেই থাকবে
+            function openBotForFile() { try { tg.openTelegramLink(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 400); } catch(e) { window.open(botFileLink, '_blank'); } }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
             async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
@@ -2980,7 +3041,7 @@ async def get_user_info(uid: int):
     is_vip = user.get("vip_until", datetime.datetime.min) > datetime.datetime.utcnow()
     
     # অ্যাডমিন চেক (Owner ID এর সাথে মিলিয়ে)
-    is_admin = (uid == OWNER_ID)
+    is_admin = (uid in admin_cache)
     
     return {
         "vip": is_vip,
@@ -3312,6 +3373,25 @@ async def web_comment(d: CommentModel):
     # 👑 অ্যাডমিন (OWNER_ID) কমেন্ট/রিপ্লাই দিলে নাম যাবে "Admin" হিসেবে — ওয়েব অ্যাপে গোল্ডেন ব্যাজসহ দেখাবে
     is_admin = (wuid == OWNER_ID)
     await db.comments.insert_one({"title": title, "uid": wuid, "name": "Admin" if is_admin else wname, "text": text, "parent_id": parent_id, "is_admin": is_admin, "created_at": datetime.datetime.utcnow()})
+    # 💬 অ্যাডমিন নোটিফিকেশন: কে কোন মুভিতে কমেন্ট করলো সাথে সাথে বটে চলে আসবে —
+    # "Open App" বাটন সরাসরি ওই মুভির পেজ খুলবে (ডিপ-লিংক), অ্যাডমিন কমেন্ট বক্সেই রিপ্লাই দিতে পারবে
+    if not is_admin:
+        note_text = (
+            f"💬 <b>নতুন কমেন্ট!</b>\n\n"
+            f"👤 ইউজার: <a href='tg://user?id={wuid}'>{wname}</a>\n"
+            f"🎬 মুভি: <b>{title}</b>\n"
+            f"✍️ কমেন্ট: <i>\"{text[:200]}\"</i>\n\n"
+            f"👉 নিচের বাটনে চাপলে সরাসরি ওই মুভির পেজ খুলবে — সেখানে রিপ্লাই দিতে পারবেন।")
+        note_kb = None
+        if APP_URL:
+            note_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+                types.InlineKeyboardButton(text="🎬 Open App — রিপ্লাই দিন", web_app=types.WebAppInfo(url=f"{APP_URL}?open={d.movie_id}"))
+            ]])
+        for aid in list(admin_cache):
+            if aid == wuid: continue
+            try:
+                await bot.send_message(aid, note_text, parse_mode="HTML", reply_markup=note_kb, disable_web_page_preview=True)
+            except Exception: pass
     return {"ok": True}
 
 class CommentIdModel(BaseModel):
@@ -3322,8 +3402,8 @@ class CommentEditModel(BaseModel):
 
 @app.post("/api/web/comment/delete")
 async def web_comment_delete(d: CommentIdModel):
-    """🗑 কমেন্ট ডিলিট: নিজের মেসেজ নিজে ডিলিট করতে পারবে, আর OWNER (অ্যাডমিন) যেকোনো
-    খারাপ কমেন্ট ডিলিট করতে পারবে। প্যারেন্ট কমেন্ট ডিলিট হলে তার সব রিপ্লাইও মুছে যাবে।"""
+    """🗑 কমেন্ট ডিলিট: শুধু অ্যাডমিন ডিলিট করতে পারবে — ইউজার নিজের মেসেজও ডিলিট করতে পারবে না।
+    প্যারেন্ট কমেন্ট ডিলিট হলে তার সব রিপ্লাইও মুছে যাবে।"""
     wuid, _ = tg_user_from_init(d.initData)
     if not wuid or not validate_tg_data(d.initData): return {"ok": False}
     try:
@@ -3331,7 +3411,8 @@ async def web_comment_delete(d: CommentIdModel):
     except Exception:
         return {"ok": False}
     if not c: return {"ok": False}
-    if c.get("uid") != wuid and wuid != OWNER_ID: return {"ok": False}
+    # 🔐 শুধু অ্যাডমিন ডিলিট পারমিশন — ইউজারদের কোনো ডিলিট পারমিশন নেই
+    if wuid not in admin_cache: return {"ok": False}
     await db.comments.delete_one({"_id": c["_id"]})
     await db.comments.delete_many({"parent_id": str(c["_id"])})
     return {"ok": True}
