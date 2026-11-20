@@ -603,7 +603,7 @@ def _doc_has_ep(mm, n):
 
 def build_search_reply(results, q, name=None):
     """🔍 সার্চ রেজাল্ট রেন্ডারার — লেটেস্ট আগে; 'AP30' লিখলে ৩০ নম্বর পর্বের ডকুমেন্ট টপে;
-    নিচে NEXT + সিমিলার বাটন (চাপলেই ওই পর্ব/মুভির পেজে সরাসরি ঢোকে)। Returns (caption, markup, best)"""
+    নিচে সিমিলার বাটন (চাপলেই ওই পর্ব/মুভির পেজে সরাসরি ঢোকে)। Returns (caption, markup, best)"""
     q_num = _query_ep(q)
     best = results[0]
     if q_num is not None:
@@ -627,7 +627,7 @@ def build_search_reply(results, q, name=None):
         f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
         f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
         f"👉 নিচের <b>মুভির নামের বাটনে</b> ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!\n"
-        f"⏭ নিচের <b>NEXT</b> / সিমিলার বাটনে চাপলে পরের পর্ব বা কাছাকাছি মুভিতেও সরাসরি ঢুকতে পারবেন।"
+        f"⏭ নিচের <b>সিমিলার বাটনে</b> চাপলে কাছাকাছি মুভি/পর্বেও সরাসরি ঢুকতে পারবেন।"
     )
     # 🎬 প্রথম বাটনেই মুভির পুরো নাম — 'Watch on Home' লেখার বদলে সার্চ দেওয়া মুভির নামটাই (ডিপ-লিংক)
     if APP_URL:
@@ -635,11 +635,9 @@ def build_search_reply(results, q, name=None):
     else:
         watch_row = [types.InlineKeyboardButton(text=f"🎬 {best['title']}", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
     kb = [watch_row]
-    # ⏭ NEXT + সিমিলার: ক্লিক করলেই ওই পর্ব/মুভির পেজ খুলে যাবে (টাইটেলের EP অংশ যেন দেখা যায়)
+    # 🎬 সিমিলার বাটন: ক্লিক করলেই ওই পর্ব/মুভির পেজ খুলে যাবে (টাইটেলের EP অংশ যেন দেখা যায়)
     if others:
-        nxt = others[0]
-        kb.append([types.InlineKeyboardButton(text=f"⏭ NEXT ▶ {_short_title(nxt['title'])}", url=f"https://t.me/{BOT_USERNAME}?startapp={nxt['doc_id']}")])
-        for o in others[1:4]:
+        for o in others[0:4]:
             kb.append([types.InlineKeyboardButton(text=f"🎬 {_short_title(o['title'])}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
     kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
     return caption, types.InlineKeyboardMarkup(inline_keyboard=kb), best
@@ -655,7 +653,7 @@ async def handle_user_messages(m: types.Message):
     if not q or q.startswith("/"): return
     results = await search_movies_smart(q)
     if results:
-        # 🔍 লেটেস্ট-ফার্স্ট + NEXT/সিমিলার বাটনসহ রেন্ডার ('AP30'-স্টাইল এপিসোড ম্যাচও ধরা হয়)
+        # 🔍 লেটেস্ট-ফার্স্ট + সিমিলার বাটনসহ রেন্ডার ('AP30'-স্টাইল এপিসোড ম্যাচও ধরা হয়)
         caption, markup, best = build_search_reply(results, q, name)
         try:
             if best.get("photo_id"):
@@ -2923,6 +2921,9 @@ async def web_ui():
             function adRemainSec() { return Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000)); }
 
             function openAdLink() {
+                // 📳 টেপ দিলেই ফোন ভাইব্রেট করবে (Telegram হ্যাপটিক ইঞ্জিন + ব্রাউজার ফলব্যাক)
+                try { tg.HapticFeedback.impactOccurred('medium'); } catch (e) {}
+                try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
                 document.getElementById('adClickBtn').style.display = 'none';
                 let linkToOpen = pickRandomLink(activeIsAdult);
                 if (!linkToOpen) {
