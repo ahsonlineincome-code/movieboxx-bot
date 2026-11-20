@@ -9,6 +9,7 @@ import hashlib
 import urllib.parse
 import secrets
 import random
+import re
 import json
 import math
 
@@ -122,6 +123,22 @@ BANNER_AD_JS_ADULT = """<script>
 </script>
 <script src="https://brijmohan.org/22/f1ac37c4ab0a5dab60781b14dd5696bb"></script>"""
 
+def _banner_conf(js: str):
+    """🧩 JS ব্যানার স্ট্রিং থেকে (key/src/width/height) বের করে — ওয়েব অ্যাপ JS দিয়ে ফিডের ভেতরে
+    iframe আকারে ব্যানার বসাতে (innerHTML দিলে <script> চলে না, তাই iframe.srcdoc ব্যবহার হয়)"""
+    try:
+        key = re.search(r"'key'\s*:\s*'([^']+)'", js).group(1)
+        h = int(re.search(r"'height'\s*:\s*(\d+)", js).group(1))
+        w = int(re.search(r"'width'\s*:\s*(\d+)", js).group(1))
+        src = re.search(r'src="([^"]+)"', js).group(1)
+        return {"w": w, "h": h, "key": key, "src": src}
+    except Exception:
+        return None
+
+BANNER_300_CONF = _banner_conf(BANNER_AD_JS)
+BANNER_320_CONF = _banner_conf(BANNER_AD_JS_320)
+BANNER_ADULT_CONF = _banner_conf(BANNER_AD_JS_ADULT)
+
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 app = FastAPI()
@@ -187,6 +204,9 @@ async def init_db():
     await db.payments.create_index("trx_id", unique=True)
     # 🎯 নতুন ইউজারের পেন্ডিং ফাইল ডেলিভারি (START চাপলেই অ্যাড দেখা ফাইল পাঠানো হয়)
     await db.pending_files.create_index("user_id")
+    # 💬 কমেন্ট সিস্টেম (মুভির টাইটেল অনুযায়ী সব পার্ট শেয়ার করে)
+    await db.comments.create_index("title")
+    await db.comments.create_index("created_at")
 
 # 💰 অ্যাড সেটিং সিড: DB খালি থাকলে ডিফল্ট Adsterra/Monetag লিংক + সেটিং বসিয়ে দেয়
 # (অ্যাডমিন নিজে লিংক বসালে তার লিংকই থাকবে, ওভাররাইট করবে না)
@@ -439,7 +459,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
 
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
 
-    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।"
+    text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।\n\n🔍 <b>টিপস:</b> যেকোনো মুভি খুঁজতে শুধু মুভির নামটা লিখে পাঠান — পোস্টারসহ খুঁজে দেখাবো! (নামের একটা অংশ দিলেও চলবে)"
     if delivered:
         text = "✅ <b>আপনার ফাইল সফলভাবে ডেলিভারি হয়েছে — উপরে চেক করুন! 🎉</b>\n\n" + text
     if uid in admin_cache: text += "\n\n⚙️ <b>অ্যাডমিন মোড অন.</b>"
@@ -474,16 +494,111 @@ async def unban_user(m: types.Message):
         await m.answer(f"✅ User <code>{uid}</code> আনব্যান করা হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /unban USER_ID", parse_mode="HTML")
 
+# ==========================================
+# 🔍 ইউজারের মেসেজ = মুভি সার্চ: নামের যেকোনো অংশ (একটা অক্ষর হলেও) দিলেই
+# পোস্টারসহ সুন্দর রেজাল্ট + Watch on Home বাটন। না পেলে সুন্দর গাইড মেসেজ +
+# রিকোয়েস্ট অ্যাডমিনের কাছে চলে যাবে — অ্যাডমিন ✍️ রিপ্লাই চাপলে সরাসরি ইউজারকে উত্তর যাবে।
+# ==========================================
+async def search_movies_smart(q: str, limit: int = 6):
+    """🔍 স্মার্ট মুভি সার্চ — নামের যেকোনো অংশ দিয়ে খোঁজা যায়।
+    ধাপ ১: সব শব্দ টাইটেলে মিলতে হবে (AND — 'রঘু ডাকাত' দিলে 'রঘু ডাকাত' পাবে);
+    ধাপ ২: না পেলে যেকোনো একটা শব্দ মিললেই (OR — ভুল/আংশিক নামে কাছাকাছি সাজেশন)।
+    এক্স্যাক্ট ম্যাচ সবার আগে, তারপর বেশি ভিউ পাওয়া মুভি আগে।"""
+    q = (q or "").strip()
+    if not q or len(q) > 60: return []
+    words = [w for w in re.split(r"\s+", q.lower()) if w]
+    if not words: return []
+    async def run_pipeline(match_stage):
+        pipeline = [
+            {"$match": match_stage},
+            {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}}},
+            {"$sort": {"created_at": -1}},
+            {"$limit": 40},
+        ]
+        try: return await db.movies.aggregate(pipeline).to_list(40)
+        except Exception: return []
+    results = await run_pipeline({"$and": [{"title": {"$regex": re.escape(w), "$options": "i"}} for w in words]})
+    if not results and len(words) > 1:
+        results = await run_pipeline({"$or": [{"title": {"$regex": re.escape(w), "$options": "i"}} for w in words]})
+    if not results: return []
+    ql = q.lower()
+    def rank(mm):
+        t = (mm["_id"] or "").lower()
+        if t == ql: return 0
+        if t.startswith(ql): return 1
+        if ql in t: return 2
+        return 3
+    results.sort(key=lambda mm: (rank(mm), -(mm.get("clicks") or 0)))
+    out = []
+    for mm in results[:limit]:
+        out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0)})
+    return out
+
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
+    uid = m.from_user.id
+    name = m.from_user.first_name or "Friend"
     if m.content_type not in ['text']:
         await m.answer("⚠️ দুঃখিত! আমি শুধুমাত্র টেক্সট মেসেজ গ্রহণ করি।\n\n🎬 মুভি দেখতে নিচের 'Watch Now' বাটনে ক্লিক করুন।", parse_mode="HTML")
         return
+    q = (m.text or "").strip()
+    if not q or q.startswith("/"): return
+    results = await search_movies_smart(q)
+    if results:
+        best = results[0]
+        others = results[1:5]
+        # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
+        if APP_URL:
+            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
+        else:
+            watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
+        kb = [watch_row]
+        # আরও ম্যাচ পেলে অন্য মুভিগুলোর বাটনও দেখানো হয় (সহজে রিডাইরেক্ট)
+        for o in others:
+            kb.append([types.InlineKeyboardButton(text=f"🎬 {o['title'][:30]}", url=f"https://t.me/{BOT_USERNAME}?startapp={o['doc_id']}")])
+        kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
+        markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
+        caption = (
+            f"🎉 <b>দারুণ পছন্দ {name}!</b>\n\n"
+            f"আপনার কাঙ্ক্ষিত মুভি — <b>«{best['title']}»</b> আমাদের লাইব্রেরিতে রয়েছে! 😍\n\n"
+            f"📺 Quality: <b>{best.get('quality') or 'HD'}</b>\n"
+            f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
+            f"🧩 Parts: <b>{best.get('parts', 1)}টি</b>\n\n"
+            f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!"
+        )
+        try:
+            if best.get("photo_id"):
+                await bot.send_photo(uid, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
+            else:
+                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+        except Exception:
+            try:
+                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+            except Exception: pass
+        return
+    # ❌ পাওয়া যায়নি → সুন্দর গাইড মেসেজ (সঠিক নাম নিয়ে আবার লিখতে বলা) + অ্যাডমিনকে রিকোয়েস্ট
+    tg_cfg = await db.settings.find_one({"id": "tg_link"})
+    tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
+    nf_kb = []
+    if APP_URL:
+        nf_kb.append([types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))])
+    nf_kb.append([types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link)])
+    nf_text = (
+        f"😔 <b>দুঃখিত {name}!</b>\n\n"
+        f"আপনি যে মুভিটি খুঁজছেন — <b>«{q[:60]}»</b> — এটি এখনো আমাদের লাইব্রেরিতে যোগ হয়নি।\n\n"
+        f"💡 <b>সম্ভবত নামটি সঠিক নয়!</b> গুগলে সার্চ করে মুভিটির <b>সঠিক নাম</b> নিয়ে এখানে আবার লিখুন — সাথে সাথেই খুঁজে পেয়ে যাবেন।\n\n"
+        f"✍️ আপনার রিকোয়েস্টটি অ্যাডমিন টিমের কাছে পাঠিয়ে দেওয়া হয়েছে — খুব দ্রুত মুভিটি যোগ করা হবে ইনশাআল্লাহ!\n\n"
+        f"👇 ততক্ষণ হাজারো মুভি ঘুরে দেখুন:"
+    )
+    try:
+        await m.answer(nf_text, parse_mode="HTML", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=nf_kb), disable_web_page_preview=True)
+    except Exception: pass
+    # 📩 অ্যাডমিনের কাছে রিকোয়েস্ট — ✍️ রিপ্লাই বাটনে চাপলে সরাসরি ইউজারকে উত্তর পাঠানো যাবে
     try:
         builder = InlineKeyboardBuilder()
-        builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{m.from_user.id}")
-        await bot.send_message(OWNER_ID, f"📩 <a href='tg://user?id={m.from_user.id}'>{m.from_user.first_name}</a>:\n\n{m.text}", parse_mode="HTML", reply_markup=builder.as_markup())
-    except: pass
+        builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{uid}")
+        await bot.send_message(OWNER_ID, f"🔍 <b>নতুন মুভি রিকোয়েস্ট!</b>\n\n👤 <a href='tg://user?id={uid}'>{name}</a> (<code>{uid}</code>)\n🎬 খোঁজে: <b>{q[:60]}</b>\n\n<i>রিপ্লাই বাটনে চাপলে ইউজারকে সরাসরি উত্তর পাঠাতে পারবেন (যেমন: ঠিক আছে ভাই, নেক্সটে অ্যাড করে দিবো)।</i>", parse_mode="HTML", reply_markup=builder.as_markup())
+    except Exception: pass
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
@@ -1449,10 +1564,12 @@ async def web_ui():
 
             .movie-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
             .movie-overlay { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, transparent 100%); padding: 40px 10px 10px 10px; }
-            .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 5px; text-shadow: 0 2px 4px rgba(0,0,0,0.8); white-space: normal; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            .movie-title { font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 6px; white-space: normal; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+            .movie-info { padding: 10px 12px 12px; background: rgba(30,41,59,0.55); }
+            body.oled-mode .movie-info { background: rgba(10,10,10,0.65); }
             .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
             .movie-cat-tag { background: rgba(239, 68, 68, 0.8); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #fff; }
-            .fav-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+            .fav-btn { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
             .admin-view-badge {
                 position: absolute;
@@ -1482,7 +1599,53 @@ async def web_ui():
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             body.oled-mode .modal-content { background: #000000; }
-            .detail-img { width: 100%; height: 250px; object-fit: cover; border-radius: 12px; margin-bottom: 15px; }
+            /* ✅ VIDEO DETAILS PAGE — ফুল পোস্টার + এনগেজমেন্ট (লাইক/কমেন্ট/শেয়ার/সেভ) */
+            .detail-img-full { width: 100%; max-height: 460px; object-fit: contain; background: #000; border-radius: 12px; display: block; }
+            .quality-tag { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.8); border: 1px solid #fff; color: #fff; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; }
+            .details-topbar { display: flex; align-items: center; gap: 12px; padding: 12px 15px 4px 15px; }
+            .details-topbar-title { font-size: 18px; font-weight: 800; color: #fff; }
+            .back-btn { background: #1e293b; border: none; color: #fff; width: 36px; height: 36px; min-width: 36px; border-radius: 50%; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+            .details-body { padding: 8px 15px 20px 15px; }
+            .details-body .detail-title { font-size: 20px; font-weight: 800; margin: 12px 0 4px 0; line-height: 1.35; }
+            .stats-row-wa { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+            .stat-box-wa { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 10px 4px; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px; }
+            body.oled-mode .stat-box-wa { background: #0a0a0a; border-color: #1a1a1a; }
+            .stat-box-wa b { color: #fff; font-size: 15px; }
+            .stat-box-wa i { font-size: 16px; }
+            .act-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+            .act-btn { padding: 13px; border-radius: 12px; font-weight: 800; font-size: 14px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: 'Inter', sans-serif; }
+            .act-btn:active { transform: scale(0.97); }
+            .act-like { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.5); color: #f87171; }
+            .act-like.liked { background: linear-gradient(45deg,#ef4444,#b91c1c); color: #fff; border-color: #ef4444; }
+            .act-dl { background: #fff; color: #000; }
+            .act-save { background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.5); color: #fbbf24; }
+            .act-save.saved { background: linear-gradient(45deg,#f59e0b,#b45309); color: #fff; border-color: #f59e0b; }
+            .act-share { background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.5); color: #38bdf8; }
+            .comments-wrap { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 14px; margin: 16px 0 30px; }
+            body.oled-mode .comments-wrap { background: #0a0a0a; border-color: #1a1a1a; }
+            .comment-item { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2a3548; }
+            .comment-item:last-child { border-bottom: none; }
+            .comment-avatar { width: 34px; height: 34px; min-width: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; font-size: 14px; }
+            .comment-body { flex: 1; min-width: 0; }
+            .comment-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+            .comment-name { font-weight: 700; font-size: 13px; color: #fff; }
+            .comment-time { font-size: 10px; color: #64748b; }
+            .comment-text { font-size: 13px; color: #cbd5e1; margin: 4px 0; word-wrap: break-word; line-height: 1.5; white-space: pre-wrap; }
+            .comment-reply-btn { background: none; border: none; color: #38bdf8; font-size: 11px; font-weight: 700; cursor: pointer; padding: 0; font-family: 'Inter', sans-serif; }
+            .comment-replies { margin-top: 8px; padding-left: 12px; border-left: 2px solid #334155; }
+            .comment-replies .comment-item { padding: 6px 0; }
+            .comment-replies .comment-avatar { width: 26px; height: 26px; min-width: 26px; font-size: 11px; }
+            .reply-state { background: rgba(56,189,248,0.1); border: 1px dashed rgba(56,189,248,0.4); color: #38bdf8; font-size: 12px; padding: 8px 10px; border-radius: 8px; margin: 10px 0 0 0; display: none; align-items: center; gap: 6px; }
+            .reply-cancel { margin-left: auto; background: none; border: none; color: #f87171; cursor: pointer; font-size: 13px; }
+            .comment-input-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
+            .comment-input { flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 13px; outline: none; min-width: 0; }
+            body.oled-mode .comment-input { background: #000; border-color: #1a1a1a; }
+            .comment-send { width: 44px; height: 44px; min-width: 44px; border-radius: 50%; border: none; background: linear-gradient(45deg,#ff416c,#ff4b2b); color: #fff; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+            .no-comment-hint { text-align: center; color: #64748b; font-size: 12px; padding: 16px 0; }
+            /* 🧩 হোম ফিড কার্ড ব্যাজ + ফিড ব্যানার */
+            .part-badge { position: absolute; top: 8px; right: 8px; background: linear-gradient(45deg,#10b981,#059669); color: #fff; font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+            .views-badge { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.75); color: #fff; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; }
+            .feed-ad-wrap { display: flex; justify-content: center; margin: 2px 0; }
             .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
             .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
@@ -1738,7 +1901,7 @@ async def web_ui():
         </div>
 
         <div id="tabSearch" class="page-section"><div class="search-box" style="padding-top:15px;"><input type="text" id="searchInputMain" class="search-input" placeholder="🔍 সার্চ..." oninput="searchMovies()"></div><div class="movie-list" id="movieListSearch"></div><div id="paginationSearch" class="pagination-container"></div></div>
-        <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div></div>
+        <div id="tabFav" class="page-section"><h3 style="padding: 15px; color: #fbbf24;">❤️ ফেভারিট</h3><div class="movie-list" id="movieListFav"></div><h3 style="padding: 15px; color: #38bdf8;">💾 সেভ লেটার</h3><div class="movie-list" id="movieListSaved"></div></div>
         
         <div id="tabSurprise" class="page-section">
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; text-align: center; padding: 20px;">
@@ -1773,15 +1936,38 @@ async def web_ui():
 
         <div id="ageModal" class="modal"><div class="modal-content age-box"><h2 style="color:#ef4444;">⚠️ বয়স সীমাবদ্ধতা</h2><p style="color:#cbd5e1; margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p><button class="age-btn age-yes" onclick="access18()">হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="closeModal('ageModal')">না</button></div></div>
 
-        <div id="detailModal" class="modal">
-            <div class="modal-content">
-                <button class="close-icon" onclick="closeModal('detailModal')"><i class="fa-solid fa-xmark"></i></button>
-                <img id="detailImg" class="detail-img" src="">
+        <!-- ✅ VIDEO DETAILS PAGE (রেফারেন্স লেআউট): ফুল পোস্টার + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + Save Later + কমেন্ট বক্স -->
+        <div id="tabDetails" class="page-section">
+            <div class="details-topbar">
+                <button class="back-btn" onclick="closeDetails()"><i class="fa-solid fa-arrow-left"></i></button>
+                <div class="details-topbar-title">Video Details</div>
+            </div>
+            <div class="details-body">
+                <div style="position:relative;">
+                    <img id="detailImg" class="detail-img-full" src="" alt="poster">
+                    <span id="detailQualityTag" class="quality-tag" style="display:none"></span>
+                </div>
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
-                <div id="detailCats" style="margin-bottom: 15px;"></div>
-                <!-- 💰 ব্যানার অ্যাড এখন ডাউনলোড বাটনের উপরে (মোবাইল ইউজাররাও স্ক্রল না করেই দেখতে পাবে):
-                     সাধারণ মুভিতে 320x50, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
+                <div id="detailCats" style="margin: 8px 0 4px 0;"></div>
+
+                <div class="stats-row-wa">
+                    <div class="stat-box-wa"><i class="fa-solid fa-heart" style="color:#ef4444"></i><b id="statLikes">0</b><span>LIKE</span></div>
+                    <div class="stat-box-wa"><i class="fa-solid fa-download" style="color:#38bdf8"></i><b id="statDownloads">0</b><span>DOWNLOAD</span></div>
+                    <div class="stat-box-wa"><i class="fa-solid fa-comment-dots" style="color:#a78bfa"></i><b id="statComments">0</b><span>COMMENTS</span></div>
+                    <div class="stat-box-wa"><i class="fa-solid fa-share-nodes" style="color:#fbbf24"></i><b id="statShares">0</b><span>SHARE</span></div>
+                </div>
+
+                <div class="act-row">
+                    <button id="likeBtn" class="act-btn act-like" onclick="toggleLike()"><i class="fa-regular fa-heart"></i> Like</button>
+                    <button class="act-btn act-dl" onclick="scrollToFileBtns()"><i class="fa-solid fa-circle-down"></i> Download</button>
+                </div>
+                <div class="act-row">
+                    <button id="saveBtn" class="act-btn act-save" onclick="toggleSaved()"><i class="fa-regular fa-bookmark"></i> Save Later</button>
+                    <button class="act-btn act-share" onclick="shareMovie()"><i class="fa-solid fa-share"></i> Share</button>
+                </div>
+
+                <!-- 💰 ব্যানার অ্যাড: সাধারণ মুভিতে 320x50 ছোট ব্যানার, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
                 <div id="detailBannerNormal" style="display:none; text-align:center; margin: 0 auto 12px auto;">
                     __BANNER_320__
                 </div>
@@ -1789,8 +1975,19 @@ async def web_ui():
                     __BANNER_ADULT__
                 </div>
                 <div id="fileButtonsContainer"></div>
-                <!-- 🔥 স্পন্সর অ্যাড (ডাউনলোড বাটনের নিচে, ডাউনলোড বাটনের মত সাইজ) -->
+                <!-- 🔥 স্পন্সর অ্যাড (ডাউনলোড বাটনের নিচে) -->
                 <div id="detailSponsor" style="margin-top:4px;"></div>
+
+                <!-- 💬 কমেন্ট সেকশন: সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে -->
+                <div class="comments-wrap" id="commentsWrap">
+                    <div class="section-header" style="font-size:16px; margin-bottom:6px;"><i class="fa-solid fa-comments"></i> Comments (<span id="commentsCountLbl">0</span>)</div>
+                    <div id="commentsList"></div>
+                    <div id="replyStateBox" class="reply-state">↩ <b id="replyStateName"></b> কে রিপ্লাই দিচ্ছেন <button onclick="cancelReply()" class="reply-cancel"><i class="fa-solid fa-xmark"></i></button></div>
+                    <div class="comment-input-row">
+                        <input type="text" id="commentInput" class="comment-input" placeholder="Add a public comment..." maxlength="500">
+                        <button class="comment-send" onclick="postComment()"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1871,6 +2068,15 @@ async def web_ui():
             const DIRECT_LINKS = __DL_JSON__; const ADULT_DIRECT_LINKS = __ADL_JSON__; const INIT_DATA = tg.initData || ""; 
             const TOKEN = "__BOT_TOKEN__";
             const BOT_USERNAME = "__BOT_USERNAME__";
+            /* 💰 ফিডের ভেতরে iframe আকারে বসানো ব্যানার কনফিগ (innerHTML দিলে <script> চলে না, তাই srcdoc iframe ব্যবহার) */
+            const AD_300_CONF = __AD300_CONF__;
+            const AD_320_CONF = __AD320_CONF__;
+            const AD_ADULT_CONF = __ADULT_CONF__;
+            /* ✅ ডিটেইলস পেজ + এনগেজমেন্ট স্টেট */
+            let activeDetailMovie = null; let commentReplyTo = null; let commentIndex = {};
+            let detailStats = {likes:0, downloads:0, comments:0, shares:0};
+            let favMovies = []; let savedMovies = [];
+            const AVATAR_COLORS = ['#ef4444','#f59e0b','#10b981','#38bdf8','#8b5cf6','#ec4899','#14b8a6'];
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
@@ -1974,22 +2180,47 @@ async def web_ui():
             }
 
             // ✅ Pagination Functions
-            async function loadHomeMovies(page = 1) { 
+            async function loadHomeMovies(page = 1) {
                 homeCurrentPage = page;
-                const list = document.getElementById('movieListHome'); 
-                list.innerHTML = '<div class="skeleton"></div>'; 
-                try { 
-                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page); 
-                    const data = await res.json(); 
-                    currentViewMovies = data.movies || []; 
-                    // 🔥 প্রতি ৬টা মুভি কার্ডের পর পর স্পন্সর অ্যাড কার্ড ঢুকবে
-                    list.innerHTML = currentViewMovies.length > 0 ? currentViewMovies.map(function(m, index) { 
-                        let card = createMovieCard(m, index); 
-                        if ((index + 1) % 6 === 0 && index < currentViewMovies.length - 1) card += sponsorCardHTML(false); 
-                        return card; 
-                    }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>'; 
-                    renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies'); 
-                } catch(e) {} 
+                const list = document.getElementById('movieListHome');
+                list.innerHTML = '<div class="skeleton"></div>';
+                try {
+                    const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page);
+                    const data = await res.json();
+                    currentViewMovies = data.movies || [];
+                    // 💰 ফিড ইন্টারলিভ: প্রতি ৫টা মুভি কার্ডের পর 300x250 স্কয়ার ব্যানার, প্রতি ১০টার পর স্পন্সর অ্যাড কার্ড
+                    let html = '';
+                    currentViewMovies.forEach(function(m, index) {
+                        html += createMovieCard(m, index);
+                        if ((index + 1) % 5 === 0 && index < currentViewMovies.length - 1) html += '<div class="feed-ad-wrap"></div>';
+                        if ((index + 1) % 10 === 0 && index < currentViewMovies.length - 1) html += sponsorCardHTML(false);
+                    });
+                    list.innerHTML = html || '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>';
+                    mountFeedAds(list);
+                    renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies');
+                } catch(e) {}
+            }
+
+            // 💰 ফিড ব্যানার মাউন্ট: প্রতিটা .feed-ad-wrap এ Adsterra iframe (srcdoc) বসানো —
+            // প্রতি iframe-এর নিজস্ব window থাকায় atOptions একে অপরকে overwrite করে না
+            function makeAdIframe(conf) {
+                if (!conf) return null;
+                const f = document.createElement('iframe');
+                f.setAttribute('scrolling', 'no');
+                f.setAttribute('frameborder', '0');
+                f.style.cssText = 'border:0;overflow:hidden;width:' + conf.w + 'px;height:' + conf.h + 'px;max-width:100%;';
+                let inner = "<script>atOptions = { 'key' : '" + conf.key + "', 'format' : 'iframe', 'height' : " + conf.h + ", 'width' : " + conf.w + ", 'params' : {} };<\/script>";
+                inner += "<script src='" + conf.src + "'><\/script>";
+                f.srcdoc = "<html><body style='margin:0;padding:0;background:transparent'>" + inner + "</body></html>";
+                return f;
+            }
+            function mountFeedAds(rootEl) {
+                if (!rootEl || !rootEl.querySelectorAll) return;
+                rootEl.querySelectorAll('.feed-ad-wrap:not([data-mounted])').forEach(function(box) {
+                    box.setAttribute('data-mounted', '1');
+                    let f = makeAdIframe(AD_300_CONF);
+                    if (f) box.appendChild(f);
+                });
             }
 
             async function searchMovies(page = 1) { 
@@ -2021,25 +2252,31 @@ async def web_ui():
                 window.scrollTo({top:0, behavior:'smooth'});
             }
 
-            function createMovieCard(m, index) { 
-                let isFav = userFavs.includes(m._id); 
+            function createMovieCard(m, index, srcName) {
+                let isFav = userFavs.includes(m._id);
                 let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 let isVerified = localStorage.getItem('isAdult') === 'true';
-                let catsHtml = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(''); 
                 let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
-                let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index})"`;
+                let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
 
-                // Admin View Count Badge
+                // 🧩 পার্ট কাউন্ট ব্যাজ (ডাউনলোড পেজে কয়টা পার্ট আছে) + 👁 ভিউ ব্যাজ (সবার জন্য)
+                let parts = (m.files && m.files.length) ? m.files.length : 1;
+                let partLabel = parts > 1 ? parts + ' Parts' : '1 Part';
+                let viewsBadge = `<div class="views-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
+
+                // Admin View Count Badge (শুধু অ্যাডমিন দেখবে)
                 let adminViewBadge = '';
                 if(isAdmin) {
-                    adminViewBadge = `<div class="admin-view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
+                    adminViewBadge = `<div class="admin-view-badge"><i class="fa-solid fa-crown"></i> ${m.clicks || 0}</div>`;
                 }
-                
+
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;">
+                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" loading="lazy">
                     ${lockOverlay}
+                    <div class="part-badge"><i class="fa-solid fa-list-ul"></i> ${partLabel}</div>
+                    ${viewsBadge}
                     ${adminViewBadge}
                 </div>
                 <div class="movie-info">
@@ -2049,48 +2286,231 @@ async def web_ui():
                             <span class="year-badge">${m.year || 'N/A'}</span>
                         </div>
                         <div class="right-meta">
-                            ${(m.categories || []).map(function(c) { return `<span class="cat-small-tag">${c}</span>`; }).join('')}
+                            ${(m.categories || []).slice(0, 2).map(function(c) { return `<span class="cat-small-tag">${c}</span>`; }).join('')}
                         </div>
                     </div>
                 </div>
                 <button class="fav-btn ${isFav ? 'active' : ''}" onclick="event.stopPropagation(); toggleFav('${m._id}', this)"><i class="fa-solid fa-heart"></i></button>
-            </div>`; 
+            </div>`;
             }
 
-            // ✅ FIXED openDetail to handle Single File and Multi File
-            function openDetail(index) { 
-                let m = currentViewMovies[index]; 
-                if(!m) return; 
-                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`; 
-                // Fix for "undefined" title
-                document.getElementById('detailTitle').innerText = m.title || 'Unknown Movie'; 
-                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span>`; 
-                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' '); 
-                
-                let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
-                let btnsHtml = "";
+            // ✅ openDetail — এখন মোডালের বদলে ফুল "Video Details" পেজ (রেফারেন্স লেআউট):
+            // ফুল পোস্টার + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + Save Later + কমেন্ট বক্স
+            function openDetail(index, srcName) {
+                let arr = srcName === 'fav' ? favMovies : (srcName === 'saved' ? savedMovies : currentViewMovies);
+                let m = arr[index];
+                if(!m) return;
+                activeDetailMovie = m;
+                // সব ট্যাব লুকিয়ে ডিটেইলস পেজ দেখানো
+                document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
+                document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
+                document.getElementById('tabDetails').classList.add('active');
+                window.scrollTo({top:0, behavior:'auto'});
+                renderDetailsPage(m);
+                loadDetailsStats(m);
+                loadComments(m);
+            }
 
-                // Check if it is a multi-file structure (files array exists)
+            function detailMovieId(m) { return (m.files && m.files.length && m.files[0] && m.files[0].id) ? m.files[0].id : m._id; }
+            function detailTitle(m) { return m.title || 'Unknown Movie'; }
+            function closeDetails() { switchTab('home', document.querySelector('.nav-item')); }
+            function scrollToFileBtns() { let el = document.getElementById('fileButtonsContainer'); if (el) el.scrollIntoView({behavior:'smooth', block:'center'}); }
+            function fmtCount(n) { n = n || 0; if (n >= 1000000) return (n/1000000).toFixed(1) + 'M'; if (n >= 1000) return (n/1000).toFixed(1) + 'K'; return String(n); }
+
+            function renderDetailsPage(m) {
+                document.getElementById('detailImg').src = `/api/image/${m.photo_id}`;
+                document.getElementById('detailTitle').innerText = detailTitle(m);
+                let parts = (m.files && m.files.length) ? m.files.length : 1;
+                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span> • <span>${parts > 1 ? '🧩 ' + parts + ' পার্ট' : '🎬 ফুল মুভি'}</span> • <span><i class="fa-solid fa-eye"></i> ${m.clicks || 0} বার দেখা হয়েছে</span>`;
+                document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' ');
+
+                let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
+                activeIsAdult = isAdult;
+
+                // 🏷️ কোয়ালিটি ব্যাজ (HD) — পোস্টারের নিচে ডানে
+                let q = (m.files && m.files[0] && m.files[0].quality) ? m.files[0].quality : (m.quality || '');
+                let qt = document.getElementById('detailQualityTag');
+                if (q) { qt.innerText = q; qt.style.display = 'block'; } else { qt.style.display = 'none'; }
+
+                // ✅ ডাউনলোড সিস্টেম হুবহু আগের মতো (পার্ট অনুযায়ী বাটন + লক/আনলক + অ্যাড ফ্লো)
+                let btnsHtml = "";
                 if (m.files && Array.isArray(m.files) && m.files.length > 0) {
-                    btnsHtml = m.files.map(function(f) { 
-                        let isFree = f.is_unlocked || isUserVip; 
-                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`; 
+                    btnsHtml = `<div class="section-header" style="font-size:15px; margin:14px 0 10px 0;"><i class="fa-solid fa-download"></i> ডাউনলোড লিংক — মোট ${m.files.length} পার্ট</div>`;
+                    btnsHtml += m.files.map(function(f) {
+                        let isFree = f.is_unlocked || isUserVip;
+                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`;
                     }).join('');
                 } else {
-                    // Handle Single File (The current bot structure)
-                    let isFree = isUserVip; 
+                    let isFree = isUserVip;
                     btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${m.quality || 'Full Movie'}</span></button>`;
                 }
-                
-                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml; 
-                // 💰 ডাউনলোড সেকশন: সাধারণ মুভিতে 320x50 ব্যানার, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার + স্পন্সর কার্ড
+
+                document.getElementById('fileButtonsContainer').innerHTML = btnsHtml;
+                // 💰 ডাউনলোড সেকশন: সাধারণ মুভিতে 320x50 ছোট ব্যানার, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার + স্পন্সর কার্ড
                 document.getElementById('detailBannerNormal').style.display = isAdult ? 'none' : 'block';
                 document.getElementById('detailBannerAdult').style.display = isAdult ? 'block' : 'none';
                 document.getElementById('detailSponsor').innerHTML = sponsorCardHTML(isAdult);
-                document.getElementById('detailModal').style.display = 'flex'; 
+
+                // স্ট্যাট রিসেট (আসল অবস্থা API থেকে আসবে)
+                detailStats = {likes:0, downloads:0, comments:0, shares:0};
+                document.getElementById('statLikes').innerText = '...';
+                document.getElementById('statDownloads').innerText = fmtCount(m.clicks || 0);
+                document.getElementById('statComments').innerText = '...';
+                document.getElementById('statShares').innerText = '...';
+                document.getElementById('commentsCountLbl').innerText = '0';
+                setLikeUI(false, 0); setSaveUI(false);
+                commentReplyTo = null; updateReplyState();
+                document.getElementById('commentInput').value = '';
+                document.getElementById('commentsList').innerHTML = '<div class="no-comment-hint">কমেন্ট লোড হচ্ছে...</div>';
+            }
+
+            async function loadDetailsStats(m) {
+                try {
+                    const res = await fetch('/api/web/details/' + detailMovieId(m) + '?uid=' + uid);
+                    const d = await res.json();
+                    if (!d || !d.movie) return;
+                    // গ্রুপ করা আসল ডেটা দিয়ে আপডেট (ডিপ-লিংক/ট্রেন্ডিং থেকে এলেও পার্ট লিস্ট ঠিক থাকে)
+                    activeDetailMovie = Object.assign({}, d.movie, m);
+                    if (!(m.files && m.files.length) && d.movie.files && d.movie.files.length) { renderDetailsPage(activeDetailMovie); loadComments(activeDetailMovie); }
+                    setLikeUI(!!d.liked, d.likes || 0);
+                    setSaveUI(!!d.saved);
+                    detailStats = {likes: d.likes || 0, downloads: d.downloads || 0, comments: d.comments_count || 0, shares: d.shares || 0};
+                    document.getElementById('statDownloads').innerText = fmtCount(detailStats.downloads);
+                    document.getElementById('statComments').innerText = fmtCount(detailStats.comments);
+                    document.getElementById('statShares').innerText = fmtCount(detailStats.shares);
+                    document.getElementById('commentsCountLbl').innerText = detailStats.comments;
+                } catch(e) {}
+            }
+
+            /* ❤️ লাইক সিস্টেম */
+            function setLikeUI(liked, count) {
+                let b = document.getElementById('likeBtn');
+                b.classList.toggle('liked', !!liked);
+                b.innerHTML = `<i class="fa-${liked ? 'solid' : 'regular'} fa-heart"></i> ${liked ? 'Liked' : 'Like'} · ${fmtCount(count)}`;
+                document.getElementById('statLikes').innerText = fmtCount(count);
+            }
+            async function toggleLike() {
+                if (!activeDetailMovie) return;
+                if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে লাইক দিতে পারবেন!'); return; }
+                try {
+                    const res = await fetch('/api/web/like/toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), initData: INIT_DATA})});
+                    const d = await res.json();
+                    if (d.ok) { setLikeUI(d.liked, d.likes); detailStats.likes = d.likes; if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} } }
+                } catch(e) {}
+            }
+
+            /* 💾 সেভ লেটার */
+            function setSaveUI(saved) {
+                let b = document.getElementById('saveBtn');
+                b.classList.toggle('saved', !!saved);
+                b.innerHTML = `<i class="fa-${saved ? 'solid' : 'regular'} fa-bookmark"></i> ${saved ? 'Saved ✓' : 'Save Later'}`;
+            }
+            async function toggleSaved() {
+                if (!activeDetailMovie) return;
+                if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে সেভ করতে পারবেন!'); return; }
+                try {
+                    const res = await fetch('/api/web/saved/toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), initData: INIT_DATA})});
+                    const d = await res.json();
+                    if (d.ok) setSaveUI(d.saved);
+                } catch(e) {}
+            }
+
+            /* 📤 শেয়ার */
+            async function shareMovie() {
+                if (!activeDetailMovie) return;
+                let mid = detailMovieId(activeDetailMovie);
+                let url = 'https://t.me/' + BOT_USERNAME + '?startapp=' + mid;
+                try {
+                    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent('🎬 ' + detailTitle(activeDetailMovie) + ' — Movie Box এ দেখুন!'));
+                } catch(e) { window.open('https://t.me/share/url?url=' + encodeURIComponent(url), '_blank'); }
+                try {
+                    const res = await fetch('/api/web/share', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: mid, initData: INIT_DATA})});
+                    const d = await res.json();
+                    if (d.ok) { detailStats.shares = d.shares; document.getElementById('statShares').innerText = fmtCount(detailStats.shares); }
+                } catch(e) {}
+            }
+
+            /* 💬 কমেন্ট সিস্টেম — সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে */
+            function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+            function timeAgo(iso) {
+                let t = new Date(iso).getTime(); if (isNaN(t)) return '';
+                let diff = Math.max(0, Date.now() - t) / 1000;
+                if (diff < 60) return 'এইমাত্র';
+                if (diff < 3600) return Math.floor(diff/60) + ' মিনিট আগে';
+                if (diff < 86400) return Math.floor(diff/3600) + ' ঘণ্টা আগে';
+                if (diff < 2592000) return Math.floor(diff/86400) + ' দিন আগে';
+                return new Date(iso).toLocaleDateString();
+            }
+            function avatarHtml(name, seed) {
+                let ch = (name || 'U').trim().charAt(0).toUpperCase();
+                let color = AVATAR_COLORS[Math.abs(seed || 0) % AVATAR_COLORS.length];
+                return `<div class="comment-avatar" style="background:${color}">${escHtml(ch)}</div>`;
+            }
+            function commentItemHtml(c, isReply) {
+                let replyBtn = isReply ? '' : `<button class="comment-reply-btn" onclick="setReplyTo('${c.id}')">↩ Reply</button>`;
+                let replies = (!isReply && c.replies && c.replies.length) ? '<div class="comment-replies">' + c.replies.map(function(r) { return commentItemHtml(r, true); }).join('') + '</div>' : '';
+                return `<div class="comment-item">
+                    ${avatarHtml(c.name, c.uid || 0)}
+                    <div class="comment-body">
+                        <div class="comment-head"><span class="comment-name">${escHtml(c.name)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></div>
+                        <div class="comment-text">${escHtml(c.text)}</div>
+                        ${replyBtn}${replies}
+                    </div>
+                </div>`;
+            }
+            function setReplyTo(id) {
+                let c = commentIndex[id]; if (!c) return;
+                commentReplyTo = {id: id, name: c.name};
+                updateReplyState();
+                let inp = document.getElementById('commentInput'); if (inp) inp.focus();
+            }
+            function cancelReply() { commentReplyTo = null; updateReplyState(); }
+            function updateReplyState() {
+                let box = document.getElementById('replyStateBox');
+                let inp = document.getElementById('commentInput');
+                if (commentReplyTo) {
+                    box.style.display = 'flex';
+                    document.getElementById('replyStateName').innerText = commentReplyTo.name;
+                    if (inp) inp.placeholder = 'Reply to ' + commentReplyTo.name + '...';
+                } else {
+                    box.style.display = 'none';
+                    if (inp) inp.placeholder = 'Add a public comment...';
+                }
+            }
+            async function loadComments(m) {
+                try {
+                    const res = await fetch('/api/web/comments/' + detailMovieId(m));
+                    const d = await res.json();
+                    let list = d.comments || [];
+                    commentIndex = {};
+                    list.forEach(function(c) { commentIndex[c.id] = c; (c.replies || []).forEach(function(r) { commentIndex[r.id] = r; }); });
+                    let html = list.length ? list.map(function(c) { return commentItemHtml(c, false); }).join('') : '<div class="no-comment-hint">এখনো কোনো কমেন্ট নেই — প্রথম কমেন্টটি আপনিই দিন! 💬</div>';
+                    document.getElementById('commentsList').innerHTML = html;
+                    document.getElementById('commentsCountLbl').innerText = d.total || 0;
+                } catch(e) {
+                    document.getElementById('commentsList').innerHTML = '<div class="no-comment-hint">কমেন্ট লোড করা যায়নি।</div>';
+                }
+            }
+            async function postComment() {
+                if (!activeDetailMovie) return;
+                let inp = document.getElementById('commentInput');
+                let text = inp.value.trim();
+                if (!text) return;
+                if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে কমেন্ট করতে পারবেন!'); return; }
+                try {
+                    const res = await fetch('/api/web/comment', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), text: text, parent_id: commentReplyTo ? commentReplyTo.id : '', initData: INIT_DATA})});
+                    const d = await res.json();
+                    if (d.ok) {
+                        inp.value = ''; cancelReply();
+                        await loadComments(activeDetailMovie);
+                        detailStats.comments = parseInt(document.getElementById('commentsCountLbl').innerText, 10) || 0;
+                        document.getElementById('statComments').innerText = fmtCount(detailStats.comments);
+                        if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
+                    } else { tg.showAlert('⚠️ কমেন্ট পোস্ট করা যায়নি!'); }
+                } catch(e) {}
             }
             
-            function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { closeModal('detailModal'); resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
+            function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
@@ -2227,8 +2647,10 @@ async def web_ui():
             let botFileLink = 'https://t.me/' + BOT_USERNAME;
             function openBotForFile() { try { tg.openTelegramLink(botFileLink); } catch(e) { window.open(botFileLink, '_blank'); } }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { closeModal('detailModal'); botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { closeModal('detailModal'); document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
-            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); currentViewMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} }
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
+            /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
+            async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
             async function toggleFav(title, btnEl) { try { const res = await fetch('/api/fav/toggle', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({uid: uid, title: title, initData: INIT_DATA})}); const data = await res.json(); if(data.isFav) { btnEl.classList.add('active'); userFavs.push(title); } else { btnEl.classList.remove('active'); userFavs = userFavs.filter(function(t) { return t !== title; }); } } catch(e) {} }
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
@@ -2293,6 +2715,10 @@ async def web_ui():
     html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS)
     html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320)
     html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT)
+    # 💰 ফিড ব্যানার কনফিগ (JS দিয়ে iframe বানাতে)
+    html_code = html_code.replace("__AD300_CONF__", json.dumps(BANNER_300_CONF))
+    html_code = html_code.replace("__AD320_CONF__", json.dumps(BANNER_320_CONF))
+    html_code = html_code.replace("__ADULT_CONF__", json.dumps(BANNER_ADULT_CONF))
     return HTMLResponse(html_code)
 
 # ==========================================
@@ -2522,7 +2948,7 @@ async def get_favs(uid: int):
     if not user: return []
     fav_titles = user.get("favorites", [])
     if not fav_titles: return []
-    pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
+    pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
     movies = await db.movies.aggregate(pipeline).to_list(len(fav_titles))
     for m in movies: m["is_adult"] = is_adult_movie(m)
     return movies
@@ -2553,6 +2979,154 @@ async def submit_payment(data: PaymentModel):
         await bot.send_message(OWNER_ID, f"💰 <b>Payment!</b>\n👤 <code>{data.uid}</code>\n🏦 {data.method.upper()}\n🧾 <code>{data.trx_id}</code>\n💵 {data.price} BDT", parse_mode="HTML", reply_markup=builder.as_markup())
     except: pass
     return {"ok": True}
+
+# ==========================================
+# 10.5 Web App Engagement APIs — ❤️ লাইক / 💬 কমেন্ট / 📤 শেয়ার / 💾 সেভ লেটার
+# সব কী মুভির টাইটেল দিয়ে — একই মুভির সব পার্ট একই লাইক/কমেন্ট শেয়ার করে
+# ক্লায়েন্টের পাঠানো uid-এর ওপর ভরসা না করে initData থেকে আসল ইউজার বের করা হয়
+# ==========================================
+def tg_user_from_init(init_data: str):
+    """🪪 initData থেকে (user_id, first_name) বের করা — ভুয়া uid দিয়ে স্প্যাম আটকাতে"""
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data or ""))
+        u = json.loads(parsed.get("user", "{}"))
+        return int(u.get("id") or 0), (u.get("first_name") or "User")
+    except Exception:
+        return 0, "User"
+
+async def movie_title_by_id(movie_id: str):
+    try:
+        doc = await db.movies.find_one({"_id": ObjectId(movie_id)}, {"title": 1})
+        return doc["title"] if doc else None
+    except Exception:
+        return None
+
+# ✅ ডিটেইলস পেজ API: মুভি (গ্রুপ করা) + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + ইউজারের liked/saved অবস্থা
+@app.get("/api/web/details/{movie_id}")
+async def web_details(movie_id: str, uid: int = 0):
+    try:
+        movie = await db.movies.find_one({"_id": ObjectId(movie_id)})
+        if not movie: return {"movie": None}
+        pipeline = [
+            {"$match": {"title": movie["title"]}},
+            {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
+        ]
+        rows = await db.movies.aggregate(pipeline).to_list(1)
+        if not rows: return {"movie": None}
+        m = rows[0]; m["title"] = m["_id"]; m["is_adult"] = is_adult_movie(m)
+        for f in m["files"]: f["is_unlocked"] = False
+        if uid != 0:
+            time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+            unlocked_ids = []
+            async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+                unlocked_ids.append(u["movie_id"])
+            for f in m["files"]: f["is_unlocked"] = f["id"] in unlocked_ids
+        title = m["_id"]
+        ldoc = await db.movie_likes.find_one({"key": title})
+        likes = len(ldoc.get("users", [])) if ldoc else 0
+        liked = (uid != 0 and ldoc is not None and uid in ldoc.get("users", []))
+        sdoc = await db.movie_shares.find_one({"key": title})
+        shares = sdoc.get("count", 0) if sdoc else 0
+        comments_count = await db.comments.count_documents({"title": title})
+        saved = False
+        if uid != 0:
+            u = await db.users.find_one({"user_id": uid}, {"saved": 1})
+            saved = bool(u and title in u.get("saved", []))
+        return {"movie": m, "likes": likes, "liked": liked, "downloads": m.get("clicks", 0), "shares": shares, "comments_count": comments_count, "saved": saved}
+    except Exception as e:
+        print(f"web details error: {e}")
+        return {"movie": None}
+
+class MovieActionModel(BaseModel):
+    movie_id: str; initData: str
+
+@app.post("/api/web/like/toggle")
+async def web_like_toggle(d: MovieActionModel):
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    title = await movie_title_by_id(d.movie_id)
+    if not title: return {"ok": False}
+    doc = await db.movie_likes.find_one({"key": title})
+    liked = bool(doc and wuid in doc.get("users", []))
+    if liked:
+        await db.movie_likes.update_one({"key": title}, {"$pull": {"users": wuid}}, upsert=True)
+        liked = False
+    else:
+        await db.movie_likes.update_one({"key": title}, {"$addToSet": {"users": wuid}}, upsert=True)
+        liked = True
+    doc = await db.movie_likes.find_one({"key": title})
+    return {"ok": True, "liked": liked, "likes": len(doc.get("users", [])) if doc else 0}
+
+@app.post("/api/web/share")
+async def web_share(d: MovieActionModel):
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    title = await movie_title_by_id(d.movie_id)
+    if not title: return {"ok": False}
+    await db.movie_shares.update_one({"key": title}, {"$inc": {"count": 1}}, upsert=True)
+    doc = await db.movie_shares.find_one({"key": title})
+    return {"ok": True, "shares": doc.get("count", 0) if doc else 0}
+
+class CommentModel(BaseModel):
+    movie_id: str; text: str; parent_id: str = ""; initData: str
+
+@app.post("/api/web/comment")
+async def web_comment(d: CommentModel):
+    wuid, wname = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    text = (d.text or "").strip()[:500]
+    if not text: return {"ok": False}
+    title = await movie_title_by_id(d.movie_id)
+    if not title: return {"ok": False}
+    parent_id = None
+    if d.parent_id:
+        try:
+            parent = await db.comments.find_one({"_id": ObjectId(d.parent_id), "title": title})
+            if parent: parent_id = str(parent["_id"])
+        except Exception: parent_id = None
+    await db.comments.insert_one({"title": title, "uid": wuid, "name": wname, "text": text, "parent_id": parent_id, "created_at": datetime.datetime.utcnow()})
+    return {"ok": True}
+
+@app.get("/api/web/comments/{movie_id}")
+async def web_comments(movie_id: str):
+    title = await movie_title_by_id(movie_id)
+    if not title: return {"comments": [], "total": 0}
+    docs = await db.comments.find({"title": title}).sort("created_at", 1).to_list(300)
+    parents = []; replies_by_parent = {}
+    total = len(docs)
+    for doc in docs:
+        item = {"id": str(doc["_id"]), "uid": doc.get("uid", 0), "name": doc.get("name", "User"), "text": doc.get("text", ""), "created_at": doc["created_at"].isoformat() + "Z", "replies": []}
+        pid = doc.get("parent_id")
+        if pid: replies_by_parent.setdefault(pid, []).append(item)
+        else: parents.append(item)
+    for p in parents: p["replies"] = replies_by_parent.get(p["id"], [])
+    parents.reverse()  # নতুন কমেন্ট উপরে
+    return {"comments": parents, "total": total}
+
+@app.post("/api/web/saved/toggle")
+async def web_saved_toggle(d: MovieActionModel):
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    title = await movie_title_by_id(d.movie_id)
+    if not title: return {"ok": False}
+    user = await db.users.find_one({"user_id": wuid})
+    saved = user.get("saved", []) if user else []
+    if title in saved:
+        await db.users.update_one({"user_id": wuid}, {"$pull": {"saved": title}})
+        return {"ok": True, "saved": False}
+    await db.users.update_one({"user_id": wuid}, {"$addToSet": {"saved": title}}, upsert=True)
+    return {"ok": True, "saved": True}
+
+@app.get("/api/web/saved/{uid}")
+async def web_get_saved(uid: int):
+    user = await db.users.find_one({"user_id": uid})
+    if not user: return []
+    saved_titles = user.get("saved", [])
+    if not saved_titles: return []
+    pipeline = [{"$match": {"title": {"$in": saved_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
+    movies = await db.movies.aggregate(pipeline).to_list(len(saved_titles))
+    for m in movies: m["is_adult"] = is_adult_movie(m)
+    return movies
 
 # ==========================================
 # 11. Main Application Startup
