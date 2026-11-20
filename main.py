@@ -511,7 +511,7 @@ async def search_movies_smart(q: str, limit: int = 6):
     async def run_pipeline(match_stage):
         pipeline = [
             {"$match": match_stage},
-            {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}}},
+            {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}, "qualities": {"$addToSet": {"$ifNull": ["$quality", "HD"]}}}},
             {"$sort": {"created_at": -1}},
             {"$limit": 40},
         ]
@@ -531,7 +531,7 @@ async def search_movies_smart(q: str, limit: int = 6):
     results.sort(key=lambda mm: (rank(mm), -(mm.get("clicks") or 0)))
     out = []
     for mm in results[:limit]:
-        out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0)})
+        out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0), "qualities": mm.get("qualities") or []})
     return out
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
@@ -561,9 +561,9 @@ async def handle_user_messages(m: types.Message):
         caption = (
             f"🎉 <b>দারুণ পছন্দ {name}!</b>\n\n"
             f"আপনার কাঙ্ক্ষিত মুভি — <b>«{best['title']}»</b> আমাদের লাইব্রেরিতে রয়েছে! 😍\n\n"
-            f"📺 Quality: <b>{best.get('quality') or 'HD'}</b>\n"
+            f"📺 Quality: <b>{' • '.join(best.get('qualities') or [best.get('quality') or 'HD'])}</b>\n"
             f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
-            f"🧩 Parts: <b>{best.get('parts', 1)}টি</b>\n\n"
+            f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
             f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!"
         )
         try:
@@ -1569,12 +1569,12 @@ async def web_ui():
             body.oled-mode .movie-info { background: rgba(10,10,10,0.65); }
             .movie-cats { display: flex; flex-wrap: wrap; gap: 5px; }
             .movie-cat-tag { background: rgba(239, 68, 68, 0.8); padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; color: #fff; }
-            .fav-btn { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
+            .fav-btn { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.6); border: none; width: 30px; height: 30px; border-radius: 50%; color: white; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 10; }
             .fav-btn.active { color: #ef4444; }
             .admin-view-badge {
                 position: absolute;
-                top: 10px;
-                left: 10px;
+                bottom: 8px;
+                right: 8px;
                 background: rgba(0,0,0,0.8);
                 color: #fbbf24; /* Gold */
                 padding: 2px 6px;
@@ -1588,7 +1588,9 @@ async def web_ui():
                 gap: 3px;
             }
             .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
-            .floating-btn { position: fixed; right: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
+            /* 🔧 ফ্লোটিং বাটন বাম দিকে সরানো হয়েছে — আগে ডানে থেকে কমেন্ট বক্সের সেন্ড বাটন আর
+               SHARE স্ট্যাট কার্ডের ওপর চাপাচাপি করত; বামে গেলে কমেন্টিং একদম স্মুথ হবে */
+            .floating-btn { position: fixed; left: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
@@ -1601,7 +1603,6 @@ async def web_ui():
             body.oled-mode .modal-content { background: #000000; }
             /* ✅ VIDEO DETAILS PAGE — ফুল পোস্টার + এনগেজমেন্ট (লাইক/কমেন্ট/শেয়ার/সেভ) */
             .detail-img-full { width: 100%; max-height: 460px; object-fit: contain; background: #000; border-radius: 12px; display: block; }
-            .quality-tag { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.8); border: 1px solid #fff; color: #fff; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; }
             .details-topbar { display: flex; align-items: center; gap: 12px; padding: 12px 15px 4px 15px; }
             .details-topbar-title { font-size: 18px; font-weight: 800; color: #fff; }
             .back-btn { background: #1e293b; border: none; color: #fff; width: 36px; height: 36px; min-width: 36px; border-radius: 50%; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -1640,12 +1641,40 @@ async def web_ui():
             .comment-input-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
             .comment-input { flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 13px; outline: none; min-width: 0; }
             body.oled-mode .comment-input { background: #000; border-color: #1a1a1a; }
-            .comment-send { width: 44px; height: 44px; min-width: 44px; border-radius: 50%; border: none; background: linear-gradient(45deg,#ff416c,#ff4b2b); color: #fff; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+            .comment-send { width: 38px; height: 38px; min-width: 38px; border-radius: 50%; border: none; background: linear-gradient(45deg,#ff416c,#ff4b2b); color: #fff; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 10px rgba(255,65,108,0.35); transition: transform .15s ease; }
+            .comment-send:active { transform: scale(0.9); }
             .no-comment-hint { text-align: center; color: #64748b; font-size: 12px; padding: 16px 0; }
             /* 🧩 হোম ফিড কার্ড ব্যাজ + ফিড ব্যানার */
             .part-badge { position: absolute; top: 8px; right: 8px; background: linear-gradient(45deg,#10b981,#059669); color: #fff; font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
             .views-badge { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.75); color: #fff; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; }
             .feed-ad-wrap { display: flex; justify-content: center; margin: 2px 0; }
+
+            /* ✨ ইউনিক এনগেজমেন্ট অ্যানিমেশন (লাইক বার্স্ট + কাউন্ট বাম্প + কমেন্ট এন্ট্রি) */
+            .burst-heart { position: fixed; pointer-events: none; z-index: 9999; animation: heartFly .85s ease-out forwards; }
+            @keyframes heartFly {
+                0% { transform: translate(0,0) scale(.5); opacity: 1; }
+                70% { opacity: .9; }
+                100% { transform: translate(var(--tx), var(--ty)) scale(1.35); opacity: 0; }
+            }
+            .like-pop { animation: likePop .35s cubic-bezier(.2,2.2,.4,1); }
+            @keyframes likePop { 0% { transform: scale(1); } 45% { transform: scale(1.18); } 100% { transform: scale(1); } }
+            .act-like.liked { animation: likeGlow .6s ease; }
+            @keyframes likeGlow { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,.55); } 100% { box-shadow: 0 0 0 14px rgba(239,68,68,0); } }
+            .stat-box-wa b.bump { animation: countBump .4s ease; display: inline-block; }
+            @keyframes countBump { 0% { transform: scale(1); } 40% { transform: scale(1.45); color: #fbbf24; } 100% { transform: scale(1); } }
+            .page-section .details-body > * { animation: fadeUpIn .35s ease both; }
+            @keyframes fadeUpIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+            .comment-item { animation: commentIn .3s ease both; }
+            @keyframes commentIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+            /* 👑 অ্যাডমিন কমেন্ট ব্যাজ + কমেন্ট ম্যানেজ বাটন (এডিট/ডিলিট) */
+            .admin-chip { background: linear-gradient(45deg,#f59e0b,#b45309); color: #fff; font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 20px; display: inline-flex; align-items: center; gap: 3px; letter-spacing: .4px; box-shadow: 0 2px 6px rgba(245,158,11,.35); }
+            .comment-acts { display: inline-flex; gap: 6px; margin-left: auto; }
+            .comment-act { background: none; border: none; color: #64748b; font-size: 11px; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
+            .comment-act:active { transform: scale(.88); }
+            .comment-act.del { color: #f87171; }
+            .comment-act.edit { color: #38bdf8; }
+            .edited-tag { font-size: 9px; color: #64748b; font-style: italic; }
             .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
             .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
@@ -1884,9 +1913,10 @@ async def web_ui():
                 </div>
             </div>
 
-            <!-- 💰 300x250 ব্যানার অ্যাড (Home) -->
+            <!-- 💰 300x250 ব্যানার অ্যাড (Home): নরমাল ক্যাটাগরিতে নরমাল ব্যানার, অ্যাডাল্ট ক্যাটাগরিতে অ্যাডাল্ট ব্যানার -->
             <div style="display:flex; justify-content:center; margin: 5px 15px 15px 15px;">
-                __BANNER_AD__
+                <div id="homeBannerNormal" style="width:100%; text-align:center;">__BANNER_AD__</div>
+                <div id="homeBannerAdult" style="width:100%; text-align:center; display:none;">__BANNER_ADULT__</div>
             </div>
 
             <!-- ✅ RECENTLY ADDED HEADER -->
@@ -1945,7 +1975,6 @@ async def web_ui():
             <div class="details-body">
                 <div style="position:relative;">
                     <img id="detailImg" class="detail-img-full" src="" alt="poster">
-                    <span id="detailQualityTag" class="quality-tag" style="display:none"></span>
                 </div>
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
@@ -1960,7 +1989,7 @@ async def web_ui():
 
                 <div class="act-row">
                     <button id="likeBtn" class="act-btn act-like" onclick="toggleLike()"><i class="fa-regular fa-heart"></i> Like</button>
-                    <button class="act-btn act-dl" onclick="scrollToFileBtns()"><i class="fa-solid fa-circle-down"></i> Download</button>
+                    <button class="act-btn act-dl" onclick="openDownloadModal()"><i class="fa-solid fa-circle-down"></i> Download</button>
                 </div>
                 <div class="act-row">
                     <button id="saveBtn" class="act-btn act-save" onclick="toggleSaved()"><i class="fa-regular fa-bookmark"></i> Save Later</button>
@@ -1974,15 +2003,12 @@ async def web_ui():
                 <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;">
                     __BANNER_ADULT__
                 </div>
-                <div id="fileButtonsContainer"></div>
-                <!-- 🔥 স্পন্সর অ্যাড (ডাউনলোড বাটনের নিচে) -->
-                <div id="detailSponsor" style="margin-top:4px;"></div>
-
                 <!-- 💬 কমেন্ট সেকশন: সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে -->
                 <div class="comments-wrap" id="commentsWrap">
                     <div class="section-header" style="font-size:16px; margin-bottom:6px;"><i class="fa-solid fa-comments"></i> Comments (<span id="commentsCountLbl">0</span>)</div>
                     <div id="commentsList"></div>
                     <div id="replyStateBox" class="reply-state">↩ <b id="replyStateName"></b> কে রিপ্লাই দিচ্ছেন <button onclick="cancelReply()" class="reply-cancel"><i class="fa-solid fa-xmark"></i></button></div>
+                    <div id="editStateBox" class="reply-state" style="display:none;">✏️ <b>মেসেজ এডিট করছেন</b> <button onclick="cancelEdit()" class="reply-cancel"><i class="fa-solid fa-xmark"></i></button></div>
                     <div class="comment-input-row">
                         <input type="text" id="commentInput" class="comment-input" placeholder="Add a public comment..." maxlength="500">
                         <button class="comment-send" onclick="postComment()"><i class="fa-solid fa-paper-plane"></i></button>
@@ -2018,6 +2044,27 @@ async def web_ui():
                 <div style="display:flex; justify-content:center; margin-top:5px;">
                     __BANNER_AD__
                 </div>
+            </div>
+        </div>
+
+        <!-- ⬇ DOWNLOAD POP-UP: বড় Download বাটনে ক্লিক করলে খুলবে — ভিতরে সব কোয়ালিটি লিংক + 320x50 ব্যানার + 300x250 স্কয়ার অ্যাড + স্পন্সর (১৮+ মুভিতে অ্যাডাল্ট অ্যাড) -->
+        <div id="downloadModal" class="modal">
+            <div class="modal-content">
+                <button class="close-icon" onclick="closeModal('downloadModal')"><i class="fa-solid fa-xmark"></i></button>
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+                    <i class="fa-solid fa-circle-down" style="font-size:28px; color:#38bdf8;"></i>
+                    <div>
+                        <div style="font-weight:800; font-size:17px; color:#fff;">Download Links</div>
+                        <div id="dlModalTitle" style="font-size:12px; color:#94a3b8;"></div>
+                    </div>
+                </div>
+                <div id="fileButtonsContainer"></div>
+                <div style="text-align:center; margin: 14px 0 10px 0;">
+                    <div id="dlBannerNormal">__BANNER_320__</div>
+                    <div id="dlBannerAdult" style="display:none;">__BANNER_ADULT__</div>
+                </div>
+                <div id="dlSquareSlot" style="display:flex; justify-content:center; margin-bottom:10px;"></div>
+                <div id="dlSponsorSlot"></div>
             </div>
         </div>
 
@@ -2173,13 +2220,12 @@ async def web_ui():
             }
 
             function openTrendingDetail(index) {
-                const originalView = currentViewMovies;
-                currentViewMovies = trendingMovies;
-                openDetail(index);
-                currentViewMovies = originalView;
+                // 🎯 সরাসরি মুভি অবজেক্ট পাঠানো হয় — currentViewMovies ওভাররাইট হলেও ভুল মুভি খুলবে না
+                openDetail(index, '', trendingMovies[index]);
             }
 
             // ✅ Pagination Functions
+            function activeCatIsAdult() { return activeCat && String(activeCat).toLowerCase().indexOf('adult') !== -1; }
             async function loadHomeMovies(page = 1) {
                 homeCurrentPage = page;
                 const list = document.getElementById('movieListHome');
@@ -2188,15 +2234,21 @@ async def web_ui():
                     const res = await fetch('/api/list?cat='+activeCat+'&uid='+uid+'&page='+page);
                     const data = await res.json();
                     currentViewMovies = data.movies || [];
-                    // 💰 ফিড ইন্টারলিভ: প্রতি ৫টা মুভি কার্ডের পর 300x250 স্কয়ার ব্যানার, প্রতি ১০টার পর স্পন্সর অ্যাড কার্ড
+                    // 💰 ক্যাটাগরি-ভিত্তিক অ্যাড: নরমাল ক্যাটাগরিতে নরমাল ব্যানার+স্কয়ার অ্যাড,
+                    // অ্যাডাল্ট ক্যাটাগরিতে অ্যাডাল্ট টপ ব্যানার + অ্যাডাল্ট স্কয়ার + অ্যাডাল্ট স্পন্সর লিংক
+                    // (অ্যাডাল্ট অ্যাড কখনো নরমাল ক্যাটাগরিতে দেখাবে না!)
+                    let adultCat = activeCatIsAdult();
+                    let hbN = document.getElementById('homeBannerNormal'); let hbA = document.getElementById('homeBannerAdult');
+                    if (hbN && hbA) { hbN.style.display = adultCat ? 'none' : 'block'; hbA.style.display = adultCat ? 'block' : 'none'; }
+                    // ফিড ইন্টারলিভ: প্রতি ৫টা মুভি কার্ডের পর 300x250 স্কয়ার ব্যানার, প্রতি ১০টার পর স্পন্সর অ্যাড কার্ড
                     let html = '';
                     currentViewMovies.forEach(function(m, index) {
                         html += createMovieCard(m, index);
                         if ((index + 1) % 5 === 0 && index < currentViewMovies.length - 1) html += '<div class="feed-ad-wrap"></div>';
-                        if ((index + 1) % 10 === 0 && index < currentViewMovies.length - 1) html += sponsorCardHTML(false);
+                        if ((index + 1) % 10 === 0 && index < currentViewMovies.length - 1) html += sponsorCardHTML(adultCat);
                     });
-                    list.innerHTML = html || '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>';
-                    mountFeedAds(list);
+                    list.innerHTML = html || '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>';
+                    mountFeedAds(list, adultCat ? AD_ADULT_CONF : AD_300_CONF);
                     renderPagination(data.total_pages, homeCurrentPage, 'paginationHome', 'loadHomeMovies');
                 } catch(e) {}
             }
@@ -2214,11 +2266,11 @@ async def web_ui():
                 f.srcdoc = "<html><body style='margin:0;padding:0;background:transparent'>" + inner + "</body></html>";
                 return f;
             }
-            function mountFeedAds(rootEl) {
+            function mountFeedAds(rootEl, conf) {
                 if (!rootEl || !rootEl.querySelectorAll) return;
                 rootEl.querySelectorAll('.feed-ad-wrap:not([data-mounted])').forEach(function(box) {
                     box.setAttribute('data-mounted', '1');
-                    let f = makeAdIframe(AD_300_CONF);
+                    let f = makeAdIframe(conf || AD_300_CONF);
                     if (f) box.appendChild(f);
                 });
             }
@@ -2260,12 +2312,13 @@ async def web_ui():
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
 
-                // 🧩 পার্ট কাউন্ট ব্যাজ (ডাউনলোড পেজে কয়টা পার্ট আছে) + 👁 ভিউ ব্যাজ (সবার জন্য)
-                let parts = (m.files && m.files.length) ? m.files.length : 1;
-                let partLabel = parts > 1 ? parts + ' Parts' : '1 Part';
+                // 🎞 কোয়ালিটি ব্যাজ ("পার্ট" লিখলে মানুষ ভাববে মুভির আলাদা পার্ট আছে — তাই কোয়ালিটি দেখানো হয়) + 👁 ভিউ ব্যাজ
+                let filesArr = m.files || [];
+                let qLabel = (filesArr[0] && filesArr[0].quality && filesArr[0].quality !== 'Main') ? filesArr[0].quality : (m.quality || 'HD');
+                if (qLabel === 'Main') qLabel = 'HD';
                 let viewsBadge = `<div class="views-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
 
-                // Admin View Count Badge (শুধু অ্যাডমিন দেখবে)
+                // 👑 Admin Badge (শুধু অ্যাডমিন দেখবে; বাম-উপরের কোণটা এখন লাভ বাটনের — তাই ডান-নিচে)
                 let adminViewBadge = '';
                 if(isAdmin) {
                     adminViewBadge = `<div class="admin-view-badge"><i class="fa-solid fa-crown"></i> ${m.clicks || 0}</div>`;
@@ -2275,7 +2328,7 @@ async def web_ui():
                 <div style="position: relative; flex-shrink: 0;">
                     <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" loading="lazy">
                     ${lockOverlay}
-                    <div class="part-badge"><i class="fa-solid fa-list-ul"></i> ${partLabel}</div>
+                    <div class="part-badge"><i class="fa-solid fa-clapperboard"></i> ${qLabel}</div>
                     ${viewsBadge}
                     ${adminViewBadge}
                 </div>
@@ -2296,9 +2349,9 @@ async def web_ui():
 
             // ✅ openDetail — এখন মোডালের বদলে ফুল "Video Details" পেজ (রেফারেন্স লেআউট):
             // ফুল পোস্টার + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + Save Later + কমেন্ট বক্স
-            function openDetail(index, srcName) {
+            function openDetail(index, srcName, movieObj) {
                 let arr = srcName === 'fav' ? favMovies : (srcName === 'saved' ? savedMovies : currentViewMovies);
-                let m = arr[index];
+                let m = movieObj || arr[index];
                 if(!m) return;
                 activeDetailMovie = m;
                 // সব ট্যাব লুকিয়ে ডিটেইলস পেজ দেখানো
@@ -2314,42 +2367,48 @@ async def web_ui():
             function detailMovieId(m) { return (m.files && m.files.length && m.files[0] && m.files[0].id) ? m.files[0].id : m._id; }
             function detailTitle(m) { return m.title || 'Unknown Movie'; }
             function closeDetails() { switchTab('home', document.querySelector('.nav-item')); }
-            function scrollToFileBtns() { let el = document.getElementById('fileButtonsContainer'); if (el) el.scrollIntoView({behavior:'smooth', block:'center'}); }
+            function openDownloadModal() { document.getElementById('downloadModal').style.display = 'flex'; }
             function fmtCount(n) { n = n || 0; if (n >= 1000000) return (n/1000000).toFixed(1) + 'M'; if (n >= 1000) return (n/1000).toFixed(1) + 'K'; return String(n); }
 
             function renderDetailsPage(m) {
                 document.getElementById('detailImg').src = `/api/image/${m.photo_id}`;
                 document.getElementById('detailTitle').innerText = detailTitle(m);
-                let parts = (m.files && m.files.length) ? m.files.length : 1;
-                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span> • <span>${parts > 1 ? '🧩 ' + parts + ' পার্ট' : '🎬 ফুল মুভি'}</span> • <span><i class="fa-solid fa-eye"></i> ${m.clicks || 0} বার দেখা হয়েছে</span>`;
+                // 🎞 কোয়ালিটি লিস্ট ("পার্ট" লেখা নেই — মানুষ যেন ভুল বুঝে মুভির আলাদা পার্ট মনে না করে)
+                let filesArr = m.files || [];
+                let quals = filesArr.map(function(f) { return (f.quality && f.quality !== 'Main') ? f.quality : 'HD'; });
+                quals = quals.filter(function(v, i) { return quals.indexOf(v) === i; });
+                if (!quals.length) quals = [(m.quality && m.quality !== 'Main') ? m.quality : 'HD'];
+                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span> • <span><i class="fa-solid fa-clapperboard"></i> ${quals.join(' • ')}</span> • <span><i class="fa-solid fa-eye"></i> ${m.clicks || 0} বার দেখা হয়েছে</span>`;
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' ');
 
                 let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 activeIsAdult = isAdult;
 
-                // 🏷️ কোয়ালিটি ব্যাজ (HD) — পোস্টারের নিচে ডানে
-                let q = (m.files && m.files[0] && m.files[0].quality) ? m.files[0].quality : (m.quality || '');
-                let qt = document.getElementById('detailQualityTag');
-                if (q) { qt.innerText = q; qt.style.display = 'block'; } else { qt.style.display = 'none'; }
-
-                // ✅ ডাউনলোড সিস্টেম হুবহু আগের মতো (পার্ট অনুযায়ী বাটন + লক/আনলক + অ্যাড ফ্লো)
+                // ✅ ডাউনলোড সিস্টেম হুবহু আগের মতো (কোয়ালিটি অনুযায়ী বাটন + লক/আনলক + অ্যাড ফ্লো) —
+                // বাটনগুলো এখন ডাউনলোড পপ-আপ মোডালের ভিতরে থাকে (পেজে স্ক্রল না করেই খোলে)
                 let btnsHtml = "";
-                if (m.files && Array.isArray(m.files) && m.files.length > 0) {
-                    btnsHtml = `<div class="section-header" style="font-size:15px; margin:14px 0 10px 0;"><i class="fa-solid fa-download"></i> ডাউনলোড লিংক — মোট ${m.files.length} পার্ট</div>`;
-                    btnsHtml += m.files.map(function(f) {
+                if (filesArr.length > 0) {
+                    btnsHtml = filesArr.map(function(f) {
                         let isFree = f.is_unlocked || isUserVip;
-                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${f.quality}</span></button>`;
+                        let fq = (f.quality && f.quality !== 'Main') ? f.quality : 'HD';
+                        return `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${f.id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${fq}</span></button>`;
                     }).join('');
                 } else {
                     let isFree = isUserVip;
-                    btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${m.quality || 'Full Movie'}</span></button>`;
+                    btnsHtml = `<button class="dl-file-btn ${isFree ? 'unlocked' : ''}" onclick="handleFileClick('${m._id}', ${isFree ? 'true' : 'false'}, ${isAdult ? 'true' : 'false'})"><span><i class="fa-solid fa-${isFree ? 'lock-open' : 'lock'}"></i> Download ${quals[0]}</span></button>`;
                 }
 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml;
-                // 💰 ডাউনলোড সেকশন: সাধারণ মুভিতে 320x50 ছোট ব্যানার, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার + স্পন্সর কার্ড
+                // ⬇ পপ-আপ মোডালের ভিতরে: টাইটেল + 320x50 ব্যানার + 300x250 স্কয়ার অ্যাড + স্পন্সর (১৮+ হলে সব অ্যাডাল্ট)
+                document.getElementById('dlModalTitle').innerText = detailTitle(m) + ' — ' + quals.join(' • ');
+                document.getElementById('dlBannerNormal').style.display = isAdult ? 'none' : 'block';
+                document.getElementById('dlBannerAdult').style.display = isAdult ? 'block' : 'none';
+                let sq = document.getElementById('dlSquareSlot'); sq.innerHTML = '';
+                let sqf = makeAdIframe(isAdult ? AD_ADULT_CONF : AD_300_CONF); if (sqf) sq.appendChild(sqf);
+                document.getElementById('dlSponsorSlot').innerHTML = sponsorCardHTML(isAdult);
+                // 💰 ডিটেইলস পেজেও একটা ছোট ব্যানার থাকবে: সাধারণ মুভিতে 320x50, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার
                 document.getElementById('detailBannerNormal').style.display = isAdult ? 'none' : 'block';
                 document.getElementById('detailBannerAdult').style.display = isAdult ? 'block' : 'none';
-                document.getElementById('detailSponsor').innerHTML = sponsorCardHTML(isAdult);
 
                 // স্ট্যাট রিসেট (আসল অবস্থা API থেকে আসবে)
                 detailStats = {likes:0, downloads:0, comments:0, shares:0};
@@ -2360,6 +2419,7 @@ async def web_ui():
                 document.getElementById('commentsCountLbl').innerText = '0';
                 setLikeUI(false, 0); setSaveUI(false);
                 commentReplyTo = null; updateReplyState();
+                editingCommentId = null; document.getElementById('editStateBox').style.display = 'none';
                 document.getElementById('commentInput').value = '';
                 document.getElementById('commentsList').innerHTML = '<div class="no-comment-hint">কমেন্ট লোড হচ্ছে...</div>';
             }
@@ -2382,12 +2442,36 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            /* ❤️ লাইক সিস্টেম */
+            /* ❤️ লাইক সিস্টেম — ইউনিক: হার্ট পপ + ছোট হার্টগুলো উপরে উড়ে যাওয়া + কাউন্ট বাম্প */
+            function heartBurst(btn) {
+                if (!btn) return;
+                let r = btn.getBoundingClientRect();
+                let colors = ['#ef4444','#f43f5e','#ec4899','#fb7185'];
+                for (let i = 0; i < 7; i++) {
+                    let h = document.createElement('span');
+                    h.className = 'burst-heart';
+                    h.innerHTML = '<i class="fa-solid fa-heart"></i>';
+                    h.style.left = (r.left + r.width/2 - 8) + 'px';
+                    h.style.top = (r.top + r.height/2 - 8) + 'px';
+                    h.style.setProperty('--tx', (Math.random()*140-70) + 'px');
+                    h.style.setProperty('--ty', (-55 - Math.random()*95) + 'px');
+                    h.style.fontSize = (10 + Math.random()*9) + 'px';
+                    h.style.color = colors[i % colors.length];
+                    document.body.appendChild(h);
+                    (function(el){ setTimeout(function(){ el.remove(); }, 900); })(h);
+                }
+            }
+            function bumpStat(id) {
+                let el = document.getElementById(id);
+                if (!el) return;
+                el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+            }
             function setLikeUI(liked, count) {
                 let b = document.getElementById('likeBtn');
                 b.classList.toggle('liked', !!liked);
                 b.innerHTML = `<i class="fa-${liked ? 'solid' : 'regular'} fa-heart"></i> ${liked ? 'Liked' : 'Like'} · ${fmtCount(count)}`;
-                document.getElementById('statLikes').innerText = fmtCount(count);
+                let sl = document.getElementById('statLikes');
+                if (sl.innerText !== fmtCount(count)) { sl.innerText = fmtCount(count); bumpStat('statLikes'); }
             }
             async function toggleLike() {
                 if (!activeDetailMovie) return;
@@ -2395,7 +2479,13 @@ async def web_ui():
                 try {
                     const res = await fetch('/api/web/like/toggle', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), initData: INIT_DATA})});
                     const d = await res.json();
-                    if (d.ok) { setLikeUI(d.liked, d.likes); detailStats.likes = d.likes; if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} } }
+                    if (d.ok) {
+                        setLikeUI(d.liked, d.likes); detailStats.likes = d.likes;
+                        let b = document.getElementById('likeBtn');
+                        b.classList.remove('like-pop'); void b.offsetWidth; b.classList.add('like-pop');
+                        if (d.liked) heartBurst(b);
+                        if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
+                    }
                 } catch(e) {}
             }
 
@@ -2447,12 +2537,21 @@ async def web_ui():
                 return `<div class="comment-avatar" style="background:${color}">${escHtml(ch)}</div>`;
             }
             function commentItemHtml(c, isReply) {
+                // ✏️ নিজের মেসেজ এডিট/ডিলিট করতে পারবে; 🗑 অ্যাডমিন (isAdmin) যেকোনো খারাপ কমেন্ট ডিলিট করতে পারবে
+                let own = (c.uid && String(c.uid) === String(uid));
+                let acts = '';
+                if (own) acts += `<button class="comment-act edit" onclick="event.stopPropagation(); startEditComment('${c.id}')"><i class="fa-solid fa-pen"></i></button>`;
+                if (own || isAdmin) acts += `<button class="comment-act del" onclick="event.stopPropagation(); deleteComment('${c.id}')"><i class="fa-solid fa-trash"></i></button>`;
+                let actsHtml = acts ? `<span class="comment-acts">${acts}</span>` : '';
                 let replyBtn = isReply ? '' : `<button class="comment-reply-btn" onclick="setReplyTo('${c.id}')">↩ Reply</button>`;
+                // 👑 অ্যাডমিনের রিপ্লাই/কমেন্ট "Admin" গোল্ডেন ব্যাজ নিয়ে দেখাবে (ব্যক্তিগত নাম না, অফিসিয়াল উত্তর)
+                let adminChip = c.is_admin ? ' <span class="admin-chip"><i class="fa-solid fa-crown"></i> ADMIN</span>' : '';
+                let editedTag = c.edited ? ' <span class="edited-tag">(edited)</span>' : '';
                 let replies = (!isReply && c.replies && c.replies.length) ? '<div class="comment-replies">' + c.replies.map(function(r) { return commentItemHtml(r, true); }).join('') + '</div>' : '';
                 return `<div class="comment-item">
                     ${avatarHtml(c.name, c.uid || 0)}
                     <div class="comment-body">
-                        <div class="comment-head"><span class="comment-name">${escHtml(c.name)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></div>
+                        <div class="comment-head"><span class="comment-name">${escHtml(c.name)}</span>${adminChip}<span class="comment-time">${timeAgo(c.created_at)}${editedTag}</span>${actsHtml}</div>
                         <div class="comment-text">${escHtml(c.text)}</div>
                         ${replyBtn}${replies}
                     </div>
@@ -2461,10 +2560,35 @@ async def web_ui():
             function setReplyTo(id) {
                 let c = commentIndex[id]; if (!c) return;
                 commentReplyTo = {id: id, name: c.name};
+                cancelEdit();
                 updateReplyState();
                 let inp = document.getElementById('commentInput'); if (inp) inp.focus();
             }
             function cancelReply() { commentReplyTo = null; updateReplyState(); }
+            /* ✏️ মেসেজ এডিট: নিজের কমেন্ট ইনপুট বক্সে লোড হবে, সেন্ড চাপলে আপডেট হবে */
+            let editingCommentId = null;
+            function startEditComment(id) {
+                let c = commentIndex[id]; if (!c) return;
+                editingCommentId = id;
+                document.getElementById('commentInput').value = c.text || '';
+                commentReplyTo = null; updateReplyState();
+                document.getElementById('editStateBox').style.display = 'flex';
+                let inp = document.getElementById('commentInput'); if (inp) inp.focus();
+            }
+            function cancelEdit() { editingCommentId = null; document.getElementById('editStateBox').style.display = 'none'; }
+            function refreshCommentStat() {
+                let n = parseInt(document.getElementById('commentsCountLbl').innerText, 10) || 0;
+                detailStats.comments = n;
+                document.getElementById('statComments').innerText = fmtCount(n);
+            }
+            /* 🗑 কমেন্ট ডিলিট — টেলিগ্রাম কনফার্মেশন দিয়ে (অ্যাডমিন/নিজের মেসেজ) */
+            async function deleteComment(id) {
+                let doDel = function() {
+                    fetch('/api/web/comment/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({comment_id: id, initData: INIT_DATA})})
+                        .then(function() { if (activeDetailMovie) { loadComments(activeDetailMovie); refreshCommentStat(); } }).catch(function(){});
+                };
+                try { tg.showConfirm('এই কমেন্টটি ডিলিট করবেন?', doDel); } catch(e) { if (confirm('এই কমেন্টটি ডিলিট করবেন?')) doDel(); }
+            }
             function updateReplyState() {
                 let box = document.getElementById('replyStateBox');
                 let inp = document.getElementById('commentInput');
@@ -2498,13 +2622,23 @@ async def web_ui():
                 if (!text) return;
                 if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে কমেন্ট করতে পারবেন!'); return; }
                 try {
+                    if (editingCommentId) {
+                        // ✏️ এডিট মোড: আগের মেসেজ আপডেট হবে
+                        const res = await fetch('/api/web/comment/edit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({comment_id: editingCommentId, text: text, initData: INIT_DATA})});
+                        const d = await res.json();
+                        if (d.ok) {
+                            inp.value = ''; cancelEdit();
+                            await loadComments(activeDetailMovie);
+                            if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
+                        } else { tg.showAlert('⚠️ এডিট করা যায়নি!'); }
+                        return;
+                    }
                     const res = await fetch('/api/web/comment', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), text: text, parent_id: commentReplyTo ? commentReplyTo.id : '', initData: INIT_DATA})});
                     const d = await res.json();
                     if (d.ok) {
                         inp.value = ''; cancelReply();
                         await loadComments(activeDetailMovie);
-                        detailStats.comments = parseInt(document.getElementById('commentsCountLbl').innerText, 10) || 0;
-                        document.getElementById('statComments').innerText = fmtCount(detailStats.comments);
+                        refreshCommentStat();
                         if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
                     } else { tg.showAlert('⚠️ কমেন্ট পোস্ট করা যায়নি!'); }
                 } catch(e) {}
@@ -2696,7 +2830,10 @@ async def web_ui():
                     btn.innerText = '✅ ফাইলটি দেখুন';
                 } else {
                     closeModal('fileGateModal');
-                    if (gateMovie) openDetail(0);
+                    // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
+                    // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
+                    // এখন গেটে যে মুভিটা দেখানো হয়েছিল (gateMovie) — সেটাই খুলবে
+                    if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
                 }
             }
             
@@ -3084,7 +3221,46 @@ async def web_comment(d: CommentModel):
             parent = await db.comments.find_one({"_id": ObjectId(d.parent_id), "title": title})
             if parent: parent_id = str(parent["_id"])
         except Exception: parent_id = None
-    await db.comments.insert_one({"title": title, "uid": wuid, "name": wname, "text": text, "parent_id": parent_id, "created_at": datetime.datetime.utcnow()})
+    # 👑 অ্যাডমিন (OWNER_ID) কমেন্ট/রিপ্লাই দিলে নাম যাবে "Admin" হিসেবে — ওয়েব অ্যাপে গোল্ডেন ব্যাজসহ দেখাবে
+    is_admin = (wuid == OWNER_ID)
+    await db.comments.insert_one({"title": title, "uid": wuid, "name": "Admin" if is_admin else wname, "text": text, "parent_id": parent_id, "is_admin": is_admin, "created_at": datetime.datetime.utcnow()})
+    return {"ok": True}
+
+class CommentIdModel(BaseModel):
+    comment_id: str; initData: str
+
+class CommentEditModel(BaseModel):
+    comment_id: str; text: str; initData: str
+
+@app.post("/api/web/comment/delete")
+async def web_comment_delete(d: CommentIdModel):
+    """🗑 কমেন্ট ডিলিট: নিজের মেসেজ নিজে ডিলিট করতে পারবে, আর OWNER (অ্যাডমিন) যেকোনো
+    খারাপ কমেন্ট ডিলিট করতে পারবে। প্যারেন্ট কমেন্ট ডিলিট হলে তার সব রিপ্লাইও মুছে যাবে।"""
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    try:
+        c = await db.comments.find_one({"_id": ObjectId(d.comment_id)})
+    except Exception:
+        return {"ok": False}
+    if not c: return {"ok": False}
+    if c.get("uid") != wuid and wuid != OWNER_ID: return {"ok": False}
+    await db.comments.delete_one({"_id": c["_id"]})
+    await db.comments.delete_many({"parent_id": str(c["_id"])})
+    return {"ok": True}
+
+@app.post("/api/web/comment/edit")
+async def web_comment_edit(d: CommentEditModel):
+    """✏️ নিজের মেসেজ এডিট — শুধু লেখক নিজেই (অ্যাডমিন বা সাধারণ ইউজার) এডিট করতে পারবে"""
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
+    text = (d.text or "").strip()[:500]
+    if not text: return {"ok": False}
+    try:
+        c = await db.comments.find_one({"_id": ObjectId(d.comment_id)})
+    except Exception:
+        return {"ok": False}
+    if not c or c.get("uid") != wuid: return {"ok": False}
+    await db.comments.update_one({"_id": c["_id"]}, {"$set": {"text": text, "edited": True}})
     return {"ok": True}
 
 @app.get("/api/web/comments/{movie_id}")
@@ -3095,7 +3271,7 @@ async def web_comments(movie_id: str):
     parents = []; replies_by_parent = {}
     total = len(docs)
     for doc in docs:
-        item = {"id": str(doc["_id"]), "uid": doc.get("uid", 0), "name": doc.get("name", "User"), "text": doc.get("text", ""), "created_at": doc["created_at"].isoformat() + "Z", "replies": []}
+        item = {"id": str(doc["_id"]), "uid": doc.get("uid", 0), "name": doc.get("name", "User"), "text": doc.get("text", ""), "created_at": doc["created_at"].isoformat() + "Z", "is_admin": doc.get("is_admin", False), "edited": doc.get("edited", False), "replies": []}
         pid = doc.get("parent_id")
         if pid: replies_by_parent.setdefault(pid, []).append(item)
         else: parents.append(item)
