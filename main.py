@@ -217,9 +217,9 @@ async def init_db():
     await db.payments.create_index("trx_id", unique=True)
     # 🎯 নতুন ইউজারের পেন্ডিং ফাইল ডেলিভারি (START চাপলেই অ্যাড দেখা ফাইল পাঠানো হয়)
     await db.pending_files.create_index("user_id")
-    # 💬 কমেন্ট সিস্টেম (মুভির টাইটেল অনুযায়ী সব পার্ট শেয়ার করে)
-    await db.comments.create_index("title")
-    await db.comments.create_index("created_at")
+    # 🗳️ রেটিং পোল (মুভির টাইটেল অনুযায়ী সব পার্ট শেয়ার করে) — ইউনিক ইনডেক্স: এক ইউজার এক ভোট
+    await db.votes.create_index([("title", 1), ("uid", 1)], unique=True)
+    await db.votes.create_index("title")
 
 # 💰 অ্যাড সেটিং সিড: DB খালি থাকলে ডিফল্ট Adsterra/Monetag লিংক + সেটিং বসিয়ে দেয়
 # (অ্যাডমিন নিজে লিংক বসালে তার লিংকই থাকবে, ওভাররাইট করবে না)
@@ -1708,8 +1708,7 @@ async def web_ui():
                 gap: 3px;
             }
             .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
-            /* 🔧 ফ্লোটিং বাটন আবার ডান দিকে (আগের জায়গায়), কিন্তু ছোট (42px) আর একটু উপরে —
-               যাতে নিচের কমেন্ট ইনপুট ও সেন্ড বাটন কোনোটাই না ঢাকে, কমেন্টিং স্মুথ থাকে */
+            /* 🔧 ফ্লোটিং বাটন ডান দিকে, ছোট (42px) আর একটু উপরে — নিচের কনটেন্ট ঢেকে দেয় না */
             .floating-btn { position: fixed; right: 15px; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 200px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
             .btn-18 { bottom: 148px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
@@ -1732,7 +1731,7 @@ async def web_ui():
             .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: none; align-items: flex-end; justify-content: center; z-index: 3000; }
             .modal-content { background: #1e293b; width: 100%; max-width: 400px; padding: 25px; border-radius: 20px 20px 0 0; max-height: 90vh; overflow-y: auto; position: relative; }
             body.oled-mode .modal-content { background: #000000; }
-            /* ✅ VIDEO DETAILS PAGE — ফুল পোস্টার + এনগেজমেন্ট (লাইক/কমেন্ট/শেয়ার/সেভ) */
+            /* ✅ VIDEO DETAILS PAGE — ফুল পোস্টার + এনগেজমেন্ট (লাইক/ভোট/শেয়ার/সেভ) */
             .detail-img-full { width: 100%; max-height: 460px; object-fit: contain; background: #000; border-radius: 12px; display: block; }
             .details-topbar { display: flex; align-items: center; gap: 12px; padding: 12px 15px 4px 15px; }
             .details-topbar-title { font-size: 18px; font-weight: 800; color: #fff; }
@@ -1753,34 +1752,63 @@ async def web_ui():
             .act-save { background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.5); color: #fbbf24; }
             .act-save.saved { background: linear-gradient(45deg,#f59e0b,#b45309); color: #fff; border-color: #f59e0b; }
             .act-share { background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.5); color: #38bdf8; }
-            .comments-wrap { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 14px; margin: 16px 0 30px; }
-            body.oled-mode .comments-wrap { background: #0a0a0a; border-color: #1a1a1a; }
-            .comment-item { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2a3548; }
-            .comment-item:last-child { border-bottom: none; }
-            .comment-avatar { width: 34px; height: 34px; min-width: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; font-size: 14px; }
-            .comment-body { flex: 1; min-width: 0; }
-            .comment-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-            .comment-name { font-weight: 700; font-size: 13px; color: #fff; }
-            .comment-time { font-size: 10px; color: #64748b; }
-            .comment-text { font-size: 13px; color: #cbd5e1; margin: 4px 0; word-wrap: break-word; line-height: 1.5; white-space: pre-wrap; }
-            .comment-reply-btn { background: none; border: none; color: #38bdf8; font-size: 11px; font-weight: 700; cursor: pointer; padding: 0; font-family: 'Inter', sans-serif; }
-            .comment-replies { margin-top: 8px; padding-left: 12px; border-left: 2px solid #334155; }
-            .comment-replies .comment-item { padding: 6px 0; }
-            .comment-replies .comment-avatar { width: 26px; height: 26px; min-width: 26px; font-size: 11px; }
-            .reply-state { background: rgba(56,189,248,0.1); border: 1px dashed rgba(56,189,248,0.4); color: #38bdf8; font-size: 12px; padding: 8px 10px; border-radius: 8px; margin: 10px 0 0 0; display: none; align-items: center; gap: 6px; }
-            .reply-cancel { margin-left: auto; background: none; border: none; color: #f87171; cursor: pointer; font-size: 13px; }
-            .comment-input-row { display: flex; gap: 10px; margin-top: 12px; align-items: center; }
-            .comment-input { flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 13px; outline: none; min-width: 0; }
-            body.oled-mode .comment-input { background: #000; border-color: #1a1a1a; }
-            .comment-send { width: 38px; height: 38px; min-width: 38px; border-radius: 50%; border: none; background: linear-gradient(45deg,#ff416c,#ff4b2b); color: #fff; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 10px rgba(255,65,108,0.35); transition: transform .15s ease; }
-            .comment-send:active { transform: scale(0.9); }
-            .no-comment-hint { text-align: center; color: #64748b; font-size: 12px; padding: 16px 0; }
+            /* 🗳️ রেটিং পোল — রেফারেন্স ডিজাইন হুবহু: প্রোগ্রেস হেডার + অপশন কার্ড (Must Watch/Good/Average/Worst) */
+            .poll-wrap { margin: 16px 0 30px; }
+            .poll-header { background: #232b3b; border: 1px solid #2f3a4f; border-radius: 16px; padding: 14px 16px; margin-bottom: 12px; }
+            body.oled-mode .poll-header { background: #0a0a0a; border-color: #1a1a1a; }
+            .poll-track { height: 10px; background: #3a4356; border-radius: 999px; overflow: hidden; }
+            .poll-bar { height: 100%; width: 0%; background: #22d3ee; border-radius: 999px; transition: width .8s cubic-bezier(.22,1,.36,1); box-shadow: 0 0 10px rgba(34,211,238,.55); }
+            .poll-headline { margin-top: 10px; font-size: 15px; color: #e2e8f0; }
+            .poll-headline b { font-size: 18px; color: #fff; margin-right: 4px; }
+            .poll-votes { margin-top: 4px; font-size: 13px; color: #94a3b8; }
+            .poll-opt { display: flex; align-items: center; gap: 12px; padding: 13px 14px; border-radius: 16px; border: 1.5px solid transparent; margin-bottom: 10px; cursor: pointer; opacity: 0; transform: translateY(14px); animation: pollIn .45s cubic-bezier(.22,1,.36,1) forwards; transition: border-color .25s ease, box-shadow .25s ease; }
+            .poll-opt:active { transform: scale(.985) !important; }
+            @keyframes pollIn { to { opacity: 1; transform: translateY(0); } }
+            .poll-opt.must { background: rgba(34,197,94,.14); border-color: rgba(34,197,94,.28); }
+            .poll-opt.good { background: rgba(56,189,248,.13); border-color: rgba(56,189,248,.26); }
+            .poll-opt.avg { background: rgba(245,158,11,.13); border-color: rgba(245,158,11,.26); }
+            .poll-opt.worst { background: rgba(239,68,68,.13); border-color: rgba(239,68,68,.26); }
+            .poll-check { width: 26px; height: 26px; min-width: 26px; border-radius: 9px; border: 3px solid; display: flex; align-items: center; justify-content: center; font-size: 13px; color: transparent; transition: background .25s ease, color .25s ease, transform .25s cubic-bezier(.34,1.56,.64,1); }
+            .poll-opt.must .poll-check { border-color: #22c55e; }
+            .poll-opt.good .poll-check { border-color: #38bdf8; }
+            .poll-opt.avg .poll-check { border-color: #f59e0b; }
+            .poll-opt.worst .poll-check { border-color: #ef4444; }
+            .poll-emoji { width: 46px; height: 46px; min-width: 46px; border-radius: 13px; display: flex; align-items: center; justify-content: center; font-size: 24px; }
+            .poll-opt.must .poll-emoji { background: rgba(34,197,94,.28); }
+            .poll-opt.good .poll-emoji { background: rgba(56,189,248,.26); }
+            .poll-opt.avg .poll-emoji { background: rgba(245,158,11,.26); }
+            .poll-opt.worst .poll-emoji { background: rgba(239,68,68,.26); }
+            .poll-txt { flex: 1; min-width: 0; }
+            .poll-title { font-weight: 800; font-size: 16px; color: #fff; }
+            .poll-sub { font-size: 12.5px; color: #cbd5e1; margin-top: 1px; }
+            .poll-count { width: 46px; height: 46px; min-width: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; color: #fff; }
+            .poll-opt.must .poll-count { background: #16a34a; }
+            .poll-opt.good .poll-count { background: #0284c7; }
+            .poll-opt.avg .poll-count { background: #d97706; }
+            .poll-opt.worst .poll-count { background: #dc2626; }
+            /* ✅ ভোট দেওয়া অবস্থা — চেক ভরা + কার্ড গ্লো (ভোট উঠানো যায় না, শুধু বদলানো যায়) */
+            .poll-opt.voted { box-shadow: 0 6px 18px rgba(0,0,0,.3); }
+            .poll-opt.must.voted { border-color: #22c55e; }
+            .poll-opt.good.voted { border-color: #38bdf8; }
+            .poll-opt.avg.voted { border-color: #f59e0b; }
+            .poll-opt.worst.voted { border-color: #ef4444; }
+            .poll-opt.voted .poll-check { color: #fff; }
+            .poll-opt.must.voted .poll-check { background: #22c55e; }
+            .poll-opt.good.voted .poll-check { background: #38bdf8; }
+            .poll-opt.avg.voted .poll-check { background: #f59e0b; }
+            .poll-opt.worst.voted .poll-check { background: #ef4444; }
+            /* 🎬 পোল অ্যানিমেশন — ইমোজি বাউন্স + ব্যাজ পপ */
+            .poll-emoji.bounce { animation: emojiBounce .5s cubic-bezier(.34,1.56,.64,1); }
+            @keyframes emojiBounce { 0% { transform: scale(1); } 35% { transform: scale(1.3) rotate(-6deg); } 70% { transform: scale(.95) rotate(4deg); } 100% { transform: scale(1); } }
+            .poll-count.pop { animation: countPop .45s cubic-bezier(.34,1.56,.64,1); }
+            @keyframes countPop { 0% { transform: scale(1); } 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+            .poll-note { font-size: 11.5px; color: #64748b; text-align: center; margin-top: 4px; line-height: 1.5; }
             /* 🧩 হোম ফিড কার্ড ব্যাজ + ফিড ব্যানার */
             .part-badge { position: absolute; top: 8px; right: 8px; background: linear-gradient(45deg,#10b981,#059669); color: #fff; font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
             .views-badge { position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.75); color: #fff; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; z-index: 6; display: flex; align-items: center; gap: 4px; }
             .feed-ad-wrap { display: flex; justify-content: center; margin: 2px 0; }
 
-            /* ✨ ইউনিক এনগেজমেন্ট অ্যানিমেশন (লাইক বার্স্ট + কাউন্ট বাম্প + কমেন্ট এন্ট্রি) */
+            /* ✨ ইউনিক এনগেজমেন্ট অ্যানিমেশন (লাইক বার্স্ট + কাউন্ট বাম্প + পোল এন্ট্রি) */
             .burst-heart { position: fixed; pointer-events: none; z-index: 9999; animation: heartFly .85s ease-out forwards; }
             @keyframes heartFly {
                 0% { transform: translate(0,0) scale(.5); opacity: 1; }
@@ -1795,17 +1823,6 @@ async def web_ui():
             @keyframes countBump { 0% { transform: scale(1); } 40% { transform: scale(1.45); color: #fbbf24; } 100% { transform: scale(1); } }
             .page-section .details-body > * { animation: fadeUpIn .35s ease both; }
             @keyframes fadeUpIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-            .comment-item { animation: commentIn .3s ease both; }
-            @keyframes commentIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-            /* 👑 অ্যাডমিন কমেন্ট ব্যাজ + কমেন্ট ম্যানেজ বাটন (এডিট/ডিলিট) */
-            .admin-chip { background: linear-gradient(45deg,#f59e0b,#b45309); color: #fff; font-size: 9px; font-weight: 800; padding: 2px 7px; border-radius: 20px; display: inline-flex; align-items: center; gap: 3px; letter-spacing: .4px; box-shadow: 0 2px 6px rgba(245,158,11,.35); }
-            .comment-acts { display: inline-flex; gap: 6px; margin-left: auto; }
-            .comment-act { background: none; border: none; color: #64748b; font-size: 11px; cursor: pointer; padding: 2px 4px; border-radius: 5px; }
-            .comment-act:active { transform: scale(.88); }
-            .comment-act.del { color: #f87171; }
-            .comment-act.edit { color: #38bdf8; }
-            .edited-tag { font-size: 9px; color: #64748b; font-style: italic; }
 
             /* ⬇ ডাউনলোড হিন্ট + অ্যানিমেটেড তীর — ইউজার সহজে বুঝবে কোথায় ডাউনলোড হবে */
             .dl-hint { background: linear-gradient(45deg, rgba(56,189,248,.14), rgba(59,130,246,.08)); border: 1px dashed #38bdf8; color: #7dd3fc; font-size: 12.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin: 10px 0 4px 0; display: flex; align-items: center; gap: 8px; }
@@ -2135,7 +2152,7 @@ async def web_ui():
 
         <div id="ageModal" class="modal"><div class="modal-content age-box"><h2 style="color:#ef4444;">⚠️ বয়স সীমাবদ্ধতা</h2><p style="color:#cbd5e1; margin:15px 0;">আপনার বয়স কি ১৮ বছরের বেশি?</p><button class="age-btn age-yes" onclick="access18()">হ্যাঁ, আমি ১৮+</button><button class="age-btn age-no" onclick="closeModal('ageModal')">না</button></div></div>
 
-        <!-- ✅ VIDEO DETAILS PAGE (রেফারেন্স লেআউট): ফুল পোস্টার + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + Save Later + কমেন্ট বক্স -->
+        <!-- ✅ VIDEO DETAILS PAGE (রেফারেন্স লেআউট): ফুল পোস্টার + লাইক/ডাউনলোড/ভোট/শেয়ার স্ট্যাট + Save Later + রেটিং পোল -->
         <div id="tabDetails" class="page-section">
             <div class="details-topbar">
                 <button class="back-btn" onclick="closeDetails()"><i class="fa-solid fa-arrow-left"></i></button>
@@ -2154,7 +2171,7 @@ async def web_ui():
                 <div class="stats-row-wa">
                     <div class="stat-box-wa"><i class="fa-solid fa-heart" style="color:#ef4444"></i><b id="statLikes">0</b><span>LIKE</span></div>
                     <div class="stat-box-wa"><i class="fa-solid fa-download" style="color:#38bdf8"></i><b id="statDownloads">0</b><span>DOWNLOAD</span></div>
-                    <div class="stat-box-wa"><i class="fa-solid fa-comment-dots" style="color:#a78bfa"></i><b id="statComments">0</b><span>COMMENTS</span></div>
+                    <div class="stat-box-wa"><i class="fa-solid fa-chart-simple" style="color:#a78bfa"></i><b id="statVotes">0</b><span>VOTES</span></div>
                     <div class="stat-box-wa"><i class="fa-solid fa-share-nodes" style="color:#fbbf24"></i><b id="statShares">0</b><span>SHARE</span></div>
                 </div>
 
@@ -2174,16 +2191,15 @@ async def web_ui():
                 <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;">
                     __BANNER_320_ADULT__
                 </div>
-                <!-- 💬 কমেন্ট সেকশন: সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে -->
-                <div class="comments-wrap" id="commentsWrap">
-                    <div class="section-header" style="font-size:16px; margin-bottom:6px;"><i class="fa-solid fa-comments"></i> Comments (<span id="commentsCountLbl">0</span>)</div>
-                    <div id="commentsList"></div>
-                    <div id="replyStateBox" class="reply-state">↩ <b id="replyStateName"></b> কে রিপ্লাই দিচ্ছেন <button onclick="cancelReply()" class="reply-cancel"><i class="fa-solid fa-xmark"></i></button></div>
-                    <div id="editStateBox" class="reply-state" style="display:none;">✏️ <b>মেসেজ এডিট করছেন</b> <button onclick="cancelEdit()" class="reply-cancel"><i class="fa-solid fa-xmark"></i></button></div>
-                    <div class="comment-input-row">
-                        <input type="text" id="commentInput" class="comment-input" placeholder="Add a public comment..." maxlength="500">
-                        <button class="comment-send" onclick="postComment()"><i class="fa-solid fa-paper-plane"></i></button>
+                <!-- 🗳️ রেটিং পোল (কমেন্টের বদলে): দর্শকের ভোট — এক ইউজার এক ভোট, বদলানো যায় উঠানো যায় না -->
+                <div class="poll-wrap" id="pollWrap">
+                    <div class="poll-header">
+                        <div class="poll-track"><div class="poll-bar" id="pollBar"></div></div>
+                        <div class="poll-headline"><b id="pollPercent">0%</b> <span>দর্শক এটি দেখার পরামর্শ দিয়েছেন</span></div>
+                        <div class="poll-votes" id="pollTotal">0 votes</div>
                     </div>
+                    <div id="pollOptions"></div>
+                    <div class="poll-note" id="pollNote">আপনার ভোট দিন — একবার ভোট দিলে তা আর উঠানো যাবে না, চাইলে অন্য অপশনে বদলাতে পারবেন।</div>
                 </div>
             </div>
         </div>
@@ -2293,10 +2309,9 @@ async def web_ui():
             const AD_320_CONF = __AD320_CONF__;
             const AD_ADULT_CONF = __ADULT_CONF__;
             /* ✅ ডিটেইলস পেজ + এনগেজমেন্ট স্টেট */
-            let activeDetailMovie = null; let commentReplyTo = null; let commentIndex = {};
-            let detailStats = {likes:0, downloads:0, comments:0, shares:0};
+            let activeDetailMovie = null; let pollState = {counts: {}, total: 0, percent: 0, user_vote: null};
+            let detailStats = {likes:0, downloads:0, votes:0, shares:0};
             let favMovies = []; let savedMovies = [];
-            const AVATAR_COLORS = ['#ef4444','#f59e0b','#10b981','#38bdf8','#8b5cf6','#ec4899','#14b8a6'];
             let uid = tg.initDataUnsafe && tg.initDataUnsafe.user ? tg.initDataUnsafe.user.id : 0; 
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
@@ -2548,7 +2563,7 @@ async def web_ui():
             }
 
             // ✅ openDetail — এখন মোডালের বদলে ফুল "Video Details" পেজ (রেফারেন্স লেআউট):
-            // ফুল পোস্টার + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + Save Later + কমেন্ট বক্স
+            // ফুল পোস্টার + লাইক/ডাউনলোড/ভোট/শেয়ার স্ট্যাট + Save Later + রেটিং পোল
             function openDetail(index, srcName, movieObj) {
                 let arr = srcName === 'fav' ? favMovies : (srcName === 'saved' ? savedMovies : currentViewMovies);
                 let m = movieObj || arr[index];
@@ -2569,7 +2584,7 @@ async def web_ui():
                 window.scrollTo({top:0, behavior:'auto'});
                 renderDetailsPage(m);
                 loadDetailsStats(m);
-                loadComments(m);
+                loadPoll(m);
             }
 
             function detailMovieId(m) { return (m.files && m.files.length && m.files[0] && m.files[0].id) ? m.files[0].id : m._id; }
@@ -2626,17 +2641,17 @@ async def web_ui():
                 document.getElementById('detailBannerAdult').style.display = isAdult ? 'block' : 'none';
 
                 // স্ট্যাট রিসেট (আসল অবস্থা API থেকে আসবে)
-                detailStats = {likes:0, downloads:0, comments:0, shares:0};
+                detailStats = {likes:0, downloads:0, votes:0, shares:0};
                 document.getElementById('statLikes').innerText = '...';
                 document.getElementById('statDownloads').innerText = fmtCount(m.clicks || 0);
-                document.getElementById('statComments').innerText = '...';
+                document.getElementById('statVotes').innerText = '...';
                 document.getElementById('statShares').innerText = '...';
-                document.getElementById('commentsCountLbl').innerText = '0';
                 setLikeUI(false, 0); setSaveUI(false);
-                commentReplyTo = null; updateReplyState();
-                editingCommentId = null; document.getElementById('editStateBox').style.display = 'none';
-                document.getElementById('commentInput').value = '';
-                document.getElementById('commentsList').innerHTML = '<div class="no-comment-hint">কমেন্ট লোড হচ্ছে...</div>';
+                pollState = {counts: {}, total: 0, percent: 0, user_vote: null};
+                document.getElementById('pollBar').style.width = '0%';
+                document.getElementById('pollPercent').innerText = '0%';
+                document.getElementById('pollTotal').innerText = '0 votes';
+                document.getElementById('pollOptions').innerHTML = '<div class="poll-note">পোল লোড হচ্ছে...</div>';
             }
 
             async function loadDetailsStats(m) {
@@ -2646,14 +2661,13 @@ async def web_ui():
                     if (!d || !d.movie) return;
                     // গ্রুপ করা আসল ডেটা দিয়ে আপডেট (ডিপ-লিংক/ট্রেন্ডিং থেকে এলেও পার্ট লিস্ট ঠিক থাকে)
                     activeDetailMovie = Object.assign({}, d.movie, m);
-                    if (!(m.files && m.files.length) && d.movie.files && d.movie.files.length) { renderDetailsPage(activeDetailMovie); loadComments(activeDetailMovie); }
+                    if (!(m.files && m.files.length) && d.movie.files && d.movie.files.length) { renderDetailsPage(activeDetailMovie); loadPoll(activeDetailMovie); }
                     setLikeUI(!!d.liked, d.likes || 0);
                     setSaveUI(!!d.saved);
-                    detailStats = {likes: d.likes || 0, downloads: d.downloads || 0, comments: d.comments_count || 0, shares: d.shares || 0};
+                    detailStats = {likes: d.likes || 0, downloads: d.downloads || 0, votes: d.votes_count || 0, shares: d.shares || 0};
                     document.getElementById('statDownloads').innerText = fmtCount(detailStats.downloads);
-                    document.getElementById('statComments').innerText = fmtCount(detailStats.comments);
+                    document.getElementById('statVotes').innerText = fmtCount(detailStats.votes);
                     document.getElementById('statShares').innerText = fmtCount(detailStats.shares);
-                    document.getElementById('commentsCountLbl').innerText = detailStats.comments;
                 } catch(e) {}
             }
 
@@ -2735,128 +2749,82 @@ async def web_ui():
                 } catch(e) {}
             }
 
-            /* 💬 কমেন্ট সিস্টেম — সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে */
+            /* 🗳️ রেটিং পোল (কমেন্ট সিস্টেমের বদলে) — রেফারেন্স ডিজাইন হুবহু:
+               এক ইউজার এক ভোট — ভোট বদলানো যায়, উঠানো যায় না; হ্যাপটিক + অ্যানিমেশনসহ */
             function escHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-            function timeAgo(iso) {
-                let t = new Date(iso).getTime(); if (isNaN(t)) return '';
-                let diff = Math.max(0, Date.now() - t) / 1000;
-                if (diff < 60) return 'এইমাত্র';
-                if (diff < 3600) return Math.floor(diff/60) + ' মিনিট আগে';
-                if (diff < 86400) return Math.floor(diff/3600) + ' ঘণ্টা আগে';
-                if (diff < 2592000) return Math.floor(diff/86400) + ' দিন আগে';
-                return new Date(iso).toLocaleDateString();
-            }
-            function avatarHtml(name, seed) {
-                let ch = (name || 'U').trim().charAt(0).toUpperCase();
-                let color = AVATAR_COLORS[Math.abs(seed || 0) % AVATAR_COLORS.length];
-                return `<div class="comment-avatar" style="background:${color}">${escHtml(ch)}</div>`;
-            }
-            function commentItemHtml(c, isReply) {
-                // ✏️ নিজের মেসেজ এডিট করতে পারবে; 🗑 ডিলিট শুধু অ্যাডমিন (isAdmin) — ইউজার কারো
-                // মেসেজ (নিজেরটাসহ) ডিলিট করতে পারবে না, পারমিশন শুধু অ্যাডমিনের
-                let own = (c.uid && String(c.uid) === String(uid));
-                let acts = '';
-                if (own) acts += `<button class="comment-act edit" onclick="event.stopPropagation(); startEditComment('${c.id}')"><i class="fa-solid fa-pen"></i></button>`;
-                if (isAdmin) acts += `<button class="comment-act del" onclick="event.stopPropagation(); deleteComment('${c.id}')"><i class="fa-solid fa-trash"></i></button>`;
-                let actsHtml = acts ? `<span class="comment-acts">${acts}</span>` : '';
-                let replyBtn = isReply ? '' : `<button class="comment-reply-btn" onclick="setReplyTo('${c.id}')">↩ Reply</button>`;
-                // 👑 অ্যাডমিনের রিপ্লাই/কমেন্ট "Admin" গোল্ডেন ব্যাজ নিয়ে দেখাবে (ব্যক্তিগত নাম না, অফিসিয়াল উত্তর)
-                let adminChip = c.is_admin ? ' <span class="admin-chip"><i class="fa-solid fa-crown"></i> ADMIN</span>' : '';
-                let editedTag = c.edited ? ' <span class="edited-tag">(edited)</span>' : '';
-                let replies = (!isReply && c.replies && c.replies.length) ? '<div class="comment-replies">' + c.replies.map(function(r) { return commentItemHtml(r, true); }).join('') + '</div>' : '';
-                return `<div class="comment-item">
-                    ${avatarHtml(c.name, c.uid || 0)}
-                    <div class="comment-body">
-                        <div class="comment-head"><span class="comment-name">${escHtml(c.name)}</span>${adminChip}<span class="comment-time">${timeAgo(c.created_at)}${editedTag}</span>${actsHtml}</div>
-                        <div class="comment-text">${escHtml(c.text)}</div>
-                        ${replyBtn}${replies}
-                    </div>
+            const POLL_OPTIONS = [
+                {key: 'must', emoji: '🔥', title: 'Must Watch', sub: 'অবশ্যই দেখুন'},
+                {key: 'good', emoji: '👍', title: 'Good', sub: 'ভালো লেগেছে'},
+                {key: 'avg', emoji: '😐', title: 'Average', sub: 'মোটামুটি'},
+                {key: 'worst', emoji: '👎', title: 'Worst', sub: 'সময় নষ্ট'}
+            ];
+            function pollOptionHtml(o, count, voted, idx) {
+                return `<div class="poll-opt ${o.key}${voted ? ' voted' : ''}" style="animation-delay:${(idx * 0.08).toFixed(2)}s" onclick="votePoll('${o.key}')">
+                    <div class="poll-check"><i class="fa-solid fa-check"></i></div>
+                    <div class="poll-emoji">${o.emoji}</div>
+                    <div class="poll-txt"><div class="poll-title">${o.title}</div><div class="poll-sub">${o.sub}</div></div>
+                    <div class="poll-count" id="pollCount_${o.key}">${count}</div>
                 </div>`;
             }
-            function setReplyTo(id) {
-                let c = commentIndex[id]; if (!c) return;
-                commentReplyTo = {id: id, name: c.name};
-                cancelEdit();
-                updateReplyState();
-                let inp = document.getElementById('commentInput'); if (inp) inp.focus();
-            }
-            function cancelReply() { commentReplyTo = null; updateReplyState(); }
-            /* ✏️ মেসেজ এডিট: নিজের কমেন্ট ইনপুট বক্সে লোড হবে, সেন্ড চাপলে আপডেট হবে */
-            let editingCommentId = null;
-            function startEditComment(id) {
-                let c = commentIndex[id]; if (!c) return;
-                editingCommentId = id;
-                document.getElementById('commentInput').value = c.text || '';
-                commentReplyTo = null; updateReplyState();
-                document.getElementById('editStateBox').style.display = 'flex';
-                let inp = document.getElementById('commentInput'); if (inp) inp.focus();
-            }
-            function cancelEdit() { editingCommentId = null; document.getElementById('editStateBox').style.display = 'none'; }
-            function refreshCommentStat() {
-                let n = parseInt(document.getElementById('commentsCountLbl').innerText, 10) || 0;
-                detailStats.comments = n;
-                document.getElementById('statComments').innerText = fmtCount(n);
-            }
-            /* 🗑 কমেন্ট ডিলিট — টেলিগ্রাম কনফার্মেশন দিয়ে (অ্যাডমিন/নিজের মেসেজ) */
-            async function deleteComment(id) {
-                let doDel = function() {
-                    fetch('/api/web/comment/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({comment_id: id, initData: INIT_DATA})})
-                        .then(function() { if (activeDetailMovie) { loadComments(activeDetailMovie); refreshCommentStat(); } }).catch(function(){});
-                };
-                try { tg.showConfirm('এই কমেন্টটি ডিলিট করবেন?', doDel); } catch(e) { if (confirm('এই কমেন্টটি ডিলিট করবেন?')) doDel(); }
-            }
-            function updateReplyState() {
-                let box = document.getElementById('replyStateBox');
-                let inp = document.getElementById('commentInput');
-                if (commentReplyTo) {
-                    box.style.display = 'flex';
-                    document.getElementById('replyStateName').innerText = commentReplyTo.name;
-                    if (inp) inp.placeholder = 'Reply to ' + commentReplyTo.name + '...';
+            function renderPoll(full) {
+                let box = document.getElementById('pollOptions');
+                if (full || !box.children.length) {
+                    // প্রথম রেন্ডার — স্ট্যাগার্ড স্লাইড-ইন অ্যানিমেশনসহ সব কার্ড
+                    box.innerHTML = POLL_OPTIONS.map(function(o, i) { return pollOptionHtml(o, pollState.counts[o.key] || 0, pollState.user_vote === o.key, i); }).join('');
                 } else {
-                    box.style.display = 'none';
-                    if (inp) inp.placeholder = 'Add a public comment...';
+                    // ভোটের পরে — শুধু কাউন্ট/ভোটেড স্টেট আপডেট (এন্ট্রি অ্যানিমেশন আবার চলবে না)
+                    POLL_OPTIONS.forEach(function(o) {
+                        let el = box.querySelector('.poll-opt.' + o.key); if (!el) return;
+                        el.querySelector('.poll-count').innerText = pollState.counts[o.key] || 0;
+                        el.classList.toggle('voted', pollState.user_vote === o.key);
+                    });
+                }
+                document.getElementById('pollBar').style.width = pollState.percent + '%';
+                document.getElementById('pollPercent').innerText = pollState.percent + '%';
+                document.getElementById('pollTotal').innerText = pollState.total + ' votes';
+                let note = document.getElementById('pollNote');
+                if (pollState.user_vote) {
+                    let my = POLL_OPTIONS.filter(function(o) { return o.key === pollState.user_vote; })[0] || POLL_OPTIONS[0];
+                    note.innerHTML = '✅ আপনার ভোট: <b>' + my.emoji + ' ' + my.title + '</b> — ভোট উঠানো যাবে না, অন্য অপশনে চেপে বদলাতে পারবেন।';
+                } else {
+                    note.textContent = 'আপনার ভোট দিন — একবার ভোট দিলে তা আর উঠানো যাবে না, চাইলে অন্য অপশনে বদলাতে পারবেন।';
                 }
             }
-            async function loadComments(m) {
+            async function loadPoll(m) {
+                if (!m) return;
                 try {
-                    const res = await fetch('/api/web/comments/' + detailMovieId(m));
+                    const res = await fetch('/api/web/poll/' + detailMovieId(m) + '?uid=' + (uid || 0));
                     const d = await res.json();
-                    let list = d.comments || [];
-                    commentIndex = {};
-                    list.forEach(function(c) { commentIndex[c.id] = c; (c.replies || []).forEach(function(r) { commentIndex[r.id] = r; }); });
-                    let html = list.length ? list.map(function(c) { return commentItemHtml(c, false); }).join('') : '<div class="no-comment-hint">এখনো কোনো কমেন্ট নেই — প্রথম কমেন্টটি আপনিই দিন! 💬</div>';
-                    document.getElementById('commentsList').innerHTML = html;
-                    document.getElementById('commentsCountLbl').innerText = d.total || 0;
+                    pollState = {counts: d.counts || {}, total: d.total || 0, percent: d.percent || 0, user_vote: d.user_vote || null};
+                    renderPoll(true);
                 } catch(e) {
-                    document.getElementById('commentsList').innerHTML = '<div class="no-comment-hint">কমেন্ট লোড করা যায়নি।</div>';
+                    document.getElementById('pollOptions').innerHTML = '<div class="poll-note">পোল লোড করা যায়নি।</div>';
                 }
             }
-            async function postComment() {
+            async function votePoll(option) {
                 if (!activeDetailMovie) return;
-                let inp = document.getElementById('commentInput');
-                let text = inp.value.trim();
-                if (!text) return;
-                if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে কমেন্ট করতে পারবেন!'); return; }
+                if (!uid) { tg.showAlert('বট থেকে অ্যাপ খুলে ভোট দিতে পারবেন!'); return; }
+                // 🚫 ভোট উঠানো যাবে না — একই অপশনে আবার চাপলে জানিয়ে দেওয়া হয়; অন্য অপশনে চাপলে ভোট বদলাবে
+                if (pollState.user_vote === option) {
+                    try { tg.HapticFeedback.impactOccurred('rigid'); } catch(e) {}
+                    tg.showAlert('আপনি ইতিমধ্যে এই ভোটটি দিয়েছেন — ভোট উঠানো যায় না। চাইলে অন্য অপশনে চেপে বদলাতে পারবেন!');
+                    return;
+                }
+                try { tg.HapticFeedback.impactOccurred('medium'); } catch(e) {}
+                try { if (navigator.vibrate) navigator.vibrate(60); } catch(e) {}
+                let emojiEl = document.querySelector('.poll-opt.' + option + ' .poll-emoji');
+                if (emojiEl) { emojiEl.classList.remove('bounce'); void emojiEl.offsetWidth; emojiEl.classList.add('bounce'); }
                 try {
-                    if (editingCommentId) {
-                        // ✏️ এডিট মোড: আগের মেসেজ আপডেট হবে
-                        const res = await fetch('/api/web/comment/edit', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({comment_id: editingCommentId, text: text, initData: INIT_DATA})});
-                        const d = await res.json();
-                        if (d.ok) {
-                            inp.value = ''; cancelEdit();
-                            await loadComments(activeDetailMovie);
-                            if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
-                        } else { tg.showAlert('⚠️ এডিট করা যায়নি!'); }
-                        return;
-                    }
-                    const res = await fetch('/api/web/comment', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), text: text, parent_id: commentReplyTo ? commentReplyTo.id : '', initData: INIT_DATA})});
+                    const res = await fetch('/api/web/poll/vote', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: detailMovieId(activeDetailMovie), option: option, initData: INIT_DATA})});
                     const d = await res.json();
                     if (d.ok) {
-                        inp.value = ''; cancelReply();
-                        await loadComments(activeDetailMovie);
-                        refreshCommentStat();
-                        if (tg.HapticFeedback && tg.HapticFeedback.impactOccurred) { try { tg.HapticFeedback.impactOccurred('light'); } catch(e) {} }
-                    } else { tg.showAlert('⚠️ কমেন্ট পোস্ট করা যায়নি!'); }
+                        pollState = {counts: d.counts || {}, total: d.total || 0, percent: d.percent || 0, user_vote: d.user_vote || null};
+                        renderPoll(false);
+                        let cnt = document.getElementById('pollCount_' + option);
+                        if (cnt) { cnt.classList.add('pop'); setTimeout(function() { cnt.classList.remove('pop'); }, 460); }
+                        detailStats.votes = pollState.total;
+                        document.getElementById('statVotes').innerText = fmtCount(pollState.total);
+                    } else { tg.showAlert('⚠️ ভোট দেওয়া যায়নি! আবার চেষ্টা করুন।'); }
                 } catch(e) {}
             }
             
@@ -3350,8 +3318,8 @@ async def submit_payment(data: PaymentModel):
     return {"ok": True}
 
 # ==========================================
-# 10.5 Web App Engagement APIs — ❤️ লাইক / 💬 কমেন্ট / 📤 শেয়ার / 💾 সেভ লেটার
-# সব কী মুভির টাইটেল দিয়ে — একই মুভির সব পার্ট একই লাইক/কমেন্ট শেয়ার করে
+# 10.5 Web App Engagement APIs — ❤️ লাইক / 🗳️ রেটিং পোল / 📤 শেয়ার / 💾 সেভ লেটার
+# সব কী মুভির টাইটেল দিয়ে — একই মুভির সব পার্ট একই লাইক/পোল শেয়ার করে
 # ক্লায়েন্টের পাঠানো uid-এর ওপর ভরসা না করে initData থেকে আসল ইউজার বের করা হয়
 # ==========================================
 def tg_user_from_init(init_data: str):
@@ -3370,7 +3338,7 @@ async def movie_title_by_id(movie_id: str):
     except Exception:
         return None
 
-# ✅ ডিটেইলস পেজ API: মুভি (গ্রুপ করা) + লাইক/ডাউনলোড/কমেন্ট/শেয়ার স্ট্যাট + ইউজারের liked/saved অবস্থা
+# ✅ ডিটেইলস পেজ API: মুভি (গ্রুপ করা) + লাইক/ডাউনলোড/ভোট/শেয়ার স্ট্যাট + ইউজারের liked/saved অবস্থা
 @app.get("/api/web/details/{movie_id}")
 async def web_details(movie_id: str, uid: int = 0):
     try:
@@ -3396,12 +3364,12 @@ async def web_details(movie_id: str, uid: int = 0):
         liked = (uid != 0 and ldoc is not None and uid in ldoc.get("users", []))
         sdoc = await db.movie_shares.find_one({"key": title})
         shares = sdoc.get("count", 0) if sdoc else 0
-        comments_count = await db.comments.count_documents({"title": title})
+        votes_count = await db.votes.count_documents({"title": title})
         saved = False
         if uid != 0:
             u = await db.users.find_one({"user_id": uid}, {"saved": 1})
             saved = bool(u and title in u.get("saved", []))
-        return {"movie": m, "likes": likes, "liked": liked, "downloads": m.get("clicks", 0), "shares": shares, "comments_count": comments_count, "saved": saved}
+        return {"movie": m, "likes": likes, "liked": liked, "downloads": m.get("clicks", 0), "shares": shares, "votes_count": votes_count, "saved": saved}
     except Exception as e:
         print(f"web details error: {e}")
         return {"movie": None}
@@ -3436,100 +3404,53 @@ async def web_share(d: MovieActionModel):
     doc = await db.movie_shares.find_one({"key": title})
     return {"ok": True, "shares": doc.get("count", 0) if doc else 0}
 
-class CommentModel(BaseModel):
-    movie_id: str; text: str; parent_id: str = ""; initData: str
+# 🗳️ রেটিং পোল APIs — Must Watch / Good / Average / Worst (কমেন্ট সিস্টেম সম্পূর্ণ বাদ)
+# নিয়ম: এক ইউজার এক ভোট — ভোট বদলাতে পারবে (আগেরটা সরে নতুনটা বসে), কিন্তু উঠাতে পারবে না
+# (কোনো unvote/ডিলিট API-ই নেই)। সব কী মুভির টাইটেল দিয়ে — একই মুভির সব পার্ট একই পোল শেয়ার করে।
+VOTE_OPTIONS = {"must": "Must Watch", "good": "Good", "avg": "Average", "worst": "Worst"}
 
-@app.post("/api/web/comment")
-async def web_comment(d: CommentModel):
+def _poll_percent(counts):
+    """দর্শক-পরামর্শ পার্সেন্ট = (Must Watch + Good) ÷ মোট ভোট × ১০০"""
+    total = sum(counts.values())
+    if not total: return 0
+    return int(round((counts.get("must", 0) + counts.get("good", 0)) * 100 / total))
+
+async def poll_snapshot(title: str, uid: int = 0):
+    """পোলের হিসাব — কাউন্ট সবসময় votes কালেকশন থেকে লাইভ অ্যাগ্রিগেট (ভোট বদলালেও সবসময় সঠিক থাকে)"""
+    counts = {k: 0 for k in VOTE_OPTIONS}
+    async for row in db.votes.aggregate([{"$match": {"title": title}}, {"$group": {"_id": "$option", "n": {"$sum": 1}}}]):
+        if row["_id"] in counts: counts[row["_id"]] = row["n"]
+    my = None
+    if uid:
+        doc = await db.votes.find_one({"title": title, "uid": uid}, {"option": 1})
+        my = doc.get("option") if doc else None
+    return {"counts": counts, "total": sum(counts.values()), "percent": _poll_percent(counts), "user_vote": my}
+
+class VoteModel(BaseModel):
+    movie_id: str; option: str; initData: str
+
+@app.post("/api/web/poll/vote")
+async def web_poll_vote(d: VoteModel):
+    """🗳 ভোট দেওয়া/বদলানো — ভুয়া uid স্প্যাম আটকাতে initData ভেরিফাই করা হয়।
+    ইউজার আগে ভোট দিয়ে থাকলে $set দিয়ে নতুন অপশনে বদলে যাবে — উঠানোর (মুছে ফেলার) কোনো পথ নেই।"""
     wuid, wname = tg_user_from_init(d.initData)
     if not wuid or not validate_tg_data(d.initData): return {"ok": False}
-    text = (d.text or "").strip()[:500]
-    if not text: return {"ok": False}
+    if d.option not in VOTE_OPTIONS: return {"ok": False}
     title = await movie_title_by_id(d.movie_id)
     if not title: return {"ok": False}
-    parent_id = None
-    if d.parent_id:
-        try:
-            parent = await db.comments.find_one({"_id": ObjectId(d.parent_id), "title": title})
-            if parent: parent_id = str(parent["_id"])
-        except Exception: parent_id = None
-    # 👑 অ্যাডমিন (OWNER_ID) কমেন্ট/রিপ্লাই দিলে নাম যাবে "Admin" হিসেবে — ওয়েব অ্যাপে গোল্ডেন ব্যাজসহ দেখাবে
-    is_admin = (wuid == OWNER_ID)
-    await db.comments.insert_one({"title": title, "uid": wuid, "name": "Admin" if is_admin else wname, "text": text, "parent_id": parent_id, "is_admin": is_admin, "created_at": datetime.datetime.utcnow()})
-    # 💬 অ্যাডমিন নোটিফিকেশন: কে কোন মুভিতে কমেন্ট করলো সাথে সাথে বটে চলে আসবে —
-    # "Open App" বাটন সরাসরি ওই মুভির পেজ খুলবে (ডিপ-লিংক), অ্যাডমিন কমেন্ট বক্সেই রিপ্লাই দিতে পারবে
-    if not is_admin:
-        note_text = (
-            f"💬 <b>নতুন কমেন্ট!</b>\n\n"
-            f"👤 ইউজার: <a href='tg://user?id={wuid}'>{wname}</a>\n"
-            f"🎬 মুভি: <b>{title}</b>\n"
-            f"✍️ কমেন্ট: <i>\"{text[:200]}\"</i>\n\n"
-            f"👉 নিচের বাটনে চাপলে সরাসরি ওই মুভির পেজ খুলবে — সেখানে রিপ্লাই দিতে পারবেন।")
-        note_kb = None
-        if APP_URL:
-            note_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
-                types.InlineKeyboardButton(text="🎬 Open App — রিপ্লাই দিন", web_app=types.WebAppInfo(url=f"{APP_URL}?open={d.movie_id}"))
-            ]])
-        for aid in list(admin_cache):
-            if aid == wuid: continue
-            try:
-                await bot.send_message(aid, note_text, parse_mode="HTML", reply_markup=note_kb, disable_web_page_preview=True)
-            except Exception: pass
-    return {"ok": True}
+    now = datetime.datetime.utcnow()
+    await db.votes.update_one(
+        {"title": title, "uid": wuid},
+        {"$set": {"option": d.option, "name": wname, "updated_at": now}, "$setOnInsert": {"created_at": now}},
+        upsert=True)
+    snap = await poll_snapshot(title, wuid)
+    return {"ok": True, **snap}
 
-class CommentIdModel(BaseModel):
-    comment_id: str; initData: str
-
-class CommentEditModel(BaseModel):
-    comment_id: str; text: str; initData: str
-
-@app.post("/api/web/comment/delete")
-async def web_comment_delete(d: CommentIdModel):
-    """🗑 কমেন্ট ডিলিট: শুধু অ্যাডমিন ডিলিট করতে পারবে — ইউজার নিজের মেসেজও ডিলিট করতে পারবে না।
-    প্যারেন্ট কমেন্ট ডিলিট হলে তার সব রিপ্লাইও মুছে যাবে।"""
-    wuid, _ = tg_user_from_init(d.initData)
-    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
-    try:
-        c = await db.comments.find_one({"_id": ObjectId(d.comment_id)})
-    except Exception:
-        return {"ok": False}
-    if not c: return {"ok": False}
-    # 🔐 শুধু অ্যাডমিন ডিলিট পারমিশন — ইউজারদের কোনো ডিলিট পারমিশন নেই
-    if wuid not in admin_cache: return {"ok": False}
-    await db.comments.delete_one({"_id": c["_id"]})
-    await db.comments.delete_many({"parent_id": str(c["_id"])})
-    return {"ok": True}
-
-@app.post("/api/web/comment/edit")
-async def web_comment_edit(d: CommentEditModel):
-    """✏️ নিজের মেসেজ এডিট — শুধু লেখক নিজেই (অ্যাডমিন বা সাধারণ ইউজার) এডিট করতে পারবে"""
-    wuid, _ = tg_user_from_init(d.initData)
-    if not wuid or not validate_tg_data(d.initData): return {"ok": False}
-    text = (d.text or "").strip()[:500]
-    if not text: return {"ok": False}
-    try:
-        c = await db.comments.find_one({"_id": ObjectId(d.comment_id)})
-    except Exception:
-        return {"ok": False}
-    if not c or c.get("uid") != wuid: return {"ok": False}
-    await db.comments.update_one({"_id": c["_id"]}, {"$set": {"text": text, "edited": True}})
-    return {"ok": True}
-
-@app.get("/api/web/comments/{movie_id}")
-async def web_comments(movie_id: str):
+@app.get("/api/web/poll/{movie_id}")
+async def web_poll(movie_id: str, uid: int = 0):
     title = await movie_title_by_id(movie_id)
-    if not title: return {"comments": [], "total": 0}
-    docs = await db.comments.find({"title": title}).sort("created_at", 1).to_list(300)
-    parents = []; replies_by_parent = {}
-    total = len(docs)
-    for doc in docs:
-        item = {"id": str(doc["_id"]), "uid": doc.get("uid", 0), "name": doc.get("name", "User"), "text": doc.get("text", ""), "created_at": doc["created_at"].isoformat() + "Z", "is_admin": doc.get("is_admin", False), "edited": doc.get("edited", False), "replies": []}
-        pid = doc.get("parent_id")
-        if pid: replies_by_parent.setdefault(pid, []).append(item)
-        else: parents.append(item)
-    for p in parents: p["replies"] = replies_by_parent.get(p["id"], [])
-    parents.reverse()  # নতুন কমেন্ট উপরে
-    return {"comments": parents, "total": total}
+    if not title: return {"ok": True, "counts": {}, "total": 0, "percent": 0, "user_vote": None}
+    return {"ok": True, **(await poll_snapshot(title, uid))}
 
 @app.post("/api/web/saved/toggle")
 async def web_saved_toggle(d: MovieActionModel):
