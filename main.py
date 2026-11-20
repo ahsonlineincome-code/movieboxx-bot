@@ -551,11 +551,11 @@ async def search_movies_smart(q: str, limit: int = 6):
 
 # ==========================================
 # 🔢 সার্চ হেল্পার + রেন্ডারার: এপিসোড নম্বর ধরা ('AP30'/'ep 30'/'নাম 30'), কোয়ালিটি লিস্ট
-# গুছানো (নতুন→পুরনো), রেজাল্ট ক্যাপশন + বাটন (Watch on Home / NEXT / সিমিলার) এক জায়গা থেকে
+# গুছানো (নতুন→পুরনো), রেজাল্ট ক্যাপশন + বাটন (মুভির নাম / NEXT / সিমিলার) এক জায়গা থেকে
 # বানানো — ইউজার ও অ্যাডমিন সার্চ দুটোই একই রেন্ডারার ব্যবহার করে।
 # ==========================================
 def _tok_number(tok):
-    mm = re.search(r"(?<!\d)(\d{1,3})(?!\d)", tok or "")
+    mm = re.search(r"(?<!\d)(\d{1,4})(?!\d)", tok or "")
     return int(mm.group()) if mm else None
 
 def _qualities_desc(quals):
@@ -567,15 +567,22 @@ def _qualities_desc(quals):
 
 def _doc_latest_ep(title, quals=()):
     """ডকুমেন্টের সর্বোচ্চ পর্ব-নম্বর (টাইটেল 'EP 129-134' হলে 134)।
-    ডিজিট-বাউন্ডারি রেজেক্স — বছর '2026' কে '202'+'6' ভেঙে ধরা যাবে না।"""
+    বছর '2026' বা রেজোলিউশন '1080p' পর্ব হিসেবে ধরা যাবে না — শুধু EP/AP-ধাঁচের টোকেন।"""
     nums = [int(x) for x in re.findall(r"(?<!\d)\d{1,3}(?!\d)", title or "")]
-    nums += [n for n in (_tok_number(t) for t in (quals or [])) if n is not None]
+    for tok in (quals or []):
+        if re.search(r"(?i)(?:\bep|\bap|episode)", tok or ""):
+            n = _tok_number(tok)
+            if n: nums.append(n)
     return max(nums) if nums else 0
 
-def _short_title(t, n=30):
-    """বাটনে টাইটেল ছোট করা — শেষের অংশ (EP নম্বর) যেন কাটা না পড়ে"""
+def _is_series_quals(quals):
+    """কোয়ালিটি টোকেনগুলো পর্ব-ধাঁচের (EP/AP) কিনা — হলে ক্যাপশনে 'Episodes', নাহলে 'Quality'"""
+    return any(re.search(r"(?i)(?:\bep|\bap|episode)", t or "") for t in (quals or []))
+
+def _short_title(t, n=64):
+    """বাটনে টাইটেল — নাম আগে; লম্বা হলেও শুরুর নাম অক্ষত রেখে শেষে কাটা হয়"""
     t = t or ""
-    return t if len(t) <= n else "…" + t[-(n - 1):]
+    return t if len(t) <= n else t[:n - 1].rstrip() + "…"
 
 def _query_ep(q):
     """সার্চ টেক্সটে এপিসোড নম্বর খোঁজা — 'AP30', 'AP 30', 'ep 30', 'batchelor point 30' সব ধরবে"""
@@ -612,19 +619,21 @@ def build_search_reply(results, q, name=None):
             f"🎉 <b>পাওয়া গেছে!</b>\n\n🎬 <b>«{best['title']}»</b> লাইব্রেরিতে আছে!")
     ep_line = (f"\n🎯 আপনার খোঁজা <b>{q_num}</b> নম্বর পর্বটি এই লিংকেই আছে ✅"
                if q_num is not None and _doc_has_ep(best, q_num) else "")
+    # সিরিজের EP-ধাঁচের লিস্ট হলে 'Episodes', মুভির রেজোলিউশন হলে 'Quality' লেবেল
+    q_label = "Episodes (নতুন→পুরনো)" if _is_series_quals(qd) else "Quality (ভালো→কম)"
     caption = (
         f"{head}{ep_line}\n\n"
-        f"📺 Episodes (নতুন→পুরনো): <b>{' • '.join(qd)}</b>\n"
+        f"📺 {q_label}: <b>{' • '.join(qd)}</b>\n"
         f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
         f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
-        f"👉 নিচের <b>'Watch on Home'</b> বাটনে ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!\n"
+        f"👉 নিচের <b>মুভির নামের বাটনে</b> ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!\n"
         f"⏭ নিচের <b>NEXT</b> / সিমিলার বাটনে চাপলে পরের পর্ব বা কাছাকাছি মুভিতেও সরাসরি ঢুকতে পারবেন।"
     )
-    # 🎬 Watch on Home — মিনি অ্যাপ সরাসরি এই মুভির পেজ নিয়ে খুলবে (ডিপ-লিংক)
+    # 🎬 প্রথম বাটনেই মুভির পুরো নাম — 'Watch on Home' লেখার বদলে সার্চ দেওয়া মুভির নামটাই (ডিপ-লিংক)
     if APP_URL:
-        watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
+        watch_row = [types.InlineKeyboardButton(text=f"🎬 {best['title']}", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
     else:
-        watch_row = [types.InlineKeyboardButton(text="🎬 Watch on Home 🍿", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
+        watch_row = [types.InlineKeyboardButton(text=f"🎬 {best['title']}", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
     kb = [watch_row]
     # ⏭ NEXT + সিমিলার: ক্লিক করলেই ওই পর্ব/মুভির পেজ খুলে যাবে (টাইটেলের EP অংশ যেন দেখা যায়)
     if others:
@@ -1832,15 +1841,31 @@ async def web_ui():
             .age-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-top: 15px; }
             .age-yes { background: #ef4444; color: white; }
             .age-no { background: #334155; color: white; }
-            .ad-box { text-align: center; padding: 20px; }
-            .ad-icon { font-size: 60px; margin-bottom: 10px; color: #fbbf24; }
-            .ad-title { color: #fbbf24; font-size: 20px; font-weight: 800; margin-bottom: 15px; }
-            .ad-box-orange { background: #ea580c; color: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-weight: 600; }
-            .ad-box-black { background: #000000; color: #e2e8f0; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
-            .ad-action-btn { width: 100%; padding: 15px; border-radius: 8px; font-weight: 700; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
-            .btn-ad-open { background: #ea580c; color: white; }
-            .btn-ad-unlock { background: #10b981; color: white; }
-            .btn-ad-tryagain { background: #ef4444; color: white; }
+            /* 🎬 অ্যাড মোডাল — নতুন ডিজাইন: পপ-ইন, গ্লো বার, পালসিং আইকন, শাইন, ভাইব্রেট তীর */
+            .ad-box { text-align: center; padding: 24px 18px; position: relative; overflow: hidden; background: linear-gradient(165deg, #16213b 0%, #101a2e 55%, #0c1526 100%); border: 1px solid rgba(251,191,36,.22); border-radius: 18px; box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 34px rgba(251,146,60,.14); animation: adPopIn .45s cubic-bezier(.34,1.4,.64,1) both; }
+            @keyframes adPopIn { from { opacity: 0; transform: translateY(-22px) scale(.93); } to { opacity: 1; transform: none; } }
+            .ad-glowbar { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #f59e0b, #ef4444, #8b5cf6, #f59e0b); background-size: 300% 100%; animation: adGlowSlide 3.5s linear infinite; }
+            @keyframes adGlowSlide { from { background-position: 0% 0; } to { background-position: 300% 0; } }
+            .ad-icon { width: 68px; height: 68px; margin: 2px auto 10px; font-size: 34px; line-height: 68px; border-radius: 50%; background: radial-gradient(circle at 32% 28%, #fde68a, #f59e0b 62%, #d97706); box-shadow: 0 6px 18px rgba(245,158,11,.35); position: relative; animation: adIconBob 2.2s ease-in-out infinite; }
+            .ad-icon::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; border: 2px solid rgba(251,191,36,.55); animation: adIconPulse 1.8s ease-out infinite; }
+            @keyframes adIconPulse { from { transform: scale(.85); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
+            @keyframes adIconBob { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-5px) rotate(3deg); } }
+            .ad-title { font-size: 23px; font-weight: 900; margin-bottom: 14px; letter-spacing: .5px; background: linear-gradient(90deg, #fbbf24, #f97316, #fbbf24); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: adTitleFlow 2.8s linear infinite; }
+            @keyframes adTitleFlow { to { background-position: 200% center; } }
+            .ad-box-orange { background: linear-gradient(135deg, #ea580c, #f97316); color: white; padding: 12px 14px; border-radius: 12px; margin-bottom: 10px; font-weight: 800; font-size: 14px; position: relative; overflow: hidden; box-shadow: 0 6px 16px rgba(234,88,12,.3); }
+            .ad-box-orange::before { content: ''; position: absolute; top: 0; left: -80%; width: 55%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); animation: adShine 2.6s ease-in-out infinite; }
+            @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
+            .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
+            .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
+            .ad-action-btn:active { transform: scale(.96); }
+            .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
+            @keyframes adBtnBreathe { 0%, 100% { box-shadow: 0 8px 22px rgba(234,88,12,.42); } 50% { box-shadow: 0 8px 30px rgba(234,88,12,.62); } }
+            .btn-ad-open::before { content: ''; position: absolute; top: 0; left: -80%; width: 50%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.38), transparent); transform: skewX(-20deg); animation: adShine 2.2s ease-in-out infinite; }
+            /* 👉 তীর আইকন — লেবেলের পাশে সবসময় থাকবে (innerText বদলালেও হারাবে না), ভাইব্রেট করবে */
+            .btn-ad-open::after { content: '↗'; display: inline-block; margin-left: 10px; font-size: 19px; animation: adArrowVibe 1.1s ease-in-out infinite; }
+            @keyframes adArrowVibe { 0%, 100% { transform: translate(0,0) rotate(0deg); } 20% { transform: translate(2px,-2px) rotate(9deg); } 40% { transform: translate(-2px,2px) rotate(-9deg); } 60% { transform: translate(2px,1px) rotate(7deg); } 80% { transform: translate(-2px,-1px) rotate(-6deg); } }
+            .btn-ad-unlock { background: linear-gradient(135deg, #10b981, #059669); color: white; box-shadow: 0 6px 18px rgba(16,185,129,.35); animation: greenPulse 1.8s infinite; }
+            .btn-ad-tryagain { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; }
             .search-box { padding: 0 15px 15px; }
             .search-input { width: 100%; padding: 14px; border-radius: 12px; border: none; outline: none; background: #1e293b; color: #fff; font-size: 15px; border: 1px solid #334155; }
             body.oled-mode .search-input { background: #0a0a0a; border-color: #1a1a1a; }
@@ -2181,6 +2206,7 @@ async def web_ui():
 
         <div id="adModal" class="modal">
             <div class="modal-content ad-box">
+                <div class="ad-glowbar"></div>
                 <div class="ad-icon">⚠️</div>
                 <h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
