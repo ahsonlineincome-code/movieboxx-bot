@@ -123,6 +123,18 @@ BANNER_AD_JS_ADULT = """<script>
 </script>
 <script src="https://brijmohan.org/22/f1ac37c4ab0a5dab60781b14dd5696bb"></script>"""
 
+# 🚫 18+ মুভির জন্য ছোট 320x50 অ্যাডাল্ট ব্যানার (স্টিকি টপ বার + ডিটেইলস + ডাউনলোড পপ-আপে)
+BANNER_AD_JS_320_ADULT = """<script>
+  atOptions = {
+    'key' : 'f96407c772e15f558541667b8d868edc',
+    'format' : 'iframe',
+    'height' : 50,
+    'width' : 320,
+    'params' : {}
+  };
+</script>
+<script src="https://brijmohan.org/22/f96407c772e15f558541667b8d868edc"></script>"""
+
 def _banner_conf(js: str):
     """🧩 JS ব্যানার স্ট্রিং থেকে (key/src/width/height) বের করে — ওয়েব অ্যাপ JS দিয়ে ফিডের ভেতরে
     iframe আকারে ব্যানার বসাতে (innerHTML দিলে <script> চলে না, তাই iframe.srcdoc ব্যবহার হয়)"""
@@ -138,6 +150,7 @@ def _banner_conf(js: str):
 BANNER_300_CONF = _banner_conf(BANNER_AD_JS)
 BANNER_320_CONF = _banner_conf(BANNER_AD_JS_320)
 BANNER_ADULT_CONF = _banner_conf(BANNER_AD_JS_ADULT)
+BANNER_320_ADULT_CONF = _banner_conf(BANNER_AD_JS_320_ADULT)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -1588,11 +1601,22 @@ async def web_ui():
                 gap: 3px;
             }
             .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
-            /* 🔧 ফ্লোটিং বাটন বাম দিকে সরানো হয়েছে — আগে ডানে থেকে কমেন্ট বক্সের সেন্ড বাটন আর
-               SHARE স্ট্যাট কার্ডের ওপর চাপাচাপি করত; বামে গেলে কমেন্টিং একদম স্মুথ হবে */
-            .floating-btn { position: fixed; left: 15px; width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
-            .btn-tg { bottom: 160px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
-            .btn-18 { bottom: 100px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
+            /* 🔧 ফ্লোটিং বাটন আবার ডান দিকে (আগের জায়গায়), কিন্তু ছোট (42px) আর একটু উপরে —
+               যাতে নিচের কমেন্ট ইনপুট ও সেন্ড বাটন কোনোটাই না ঢাকে, কমেন্টিং স্মুথ থাকে */
+            .floating-btn { position: fixed; right: 15px; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
+            .btn-tg { bottom: 200px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
+            .btn-18 { bottom: 148px; background: linear-gradient(45deg, #ef4444, #b91c1c); font-weight: bold; }
+
+            /* 💰 স্টিকি টপ অ্যাড বার (ছোট 320x50) — শুধু হোম ট্যাবে দেখাবে, header-এর ঠিক নিচে ফিক্সড */
+            #topAdBar { position: fixed; left: 0; width: 100%; z-index: 900; background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px); border-bottom: 1px solid #1e293b; padding: 5px 0; text-align: center; display: none; }
+            body.oled-mode #topAdBar { background: rgba(0, 0, 0, 0.97); border-color: #1a1a1a; }
+            #topAdBar.show { display: block; }
+            #topAdBar iframe { display: inline-block; }
+
+            /* 🎯 অ্যাড গেট ও সাকসেস মোডাল সব মোডালের উপরে — ডাউনলোড পপ-আপের পেছনে খুলে
+               ইউজার আটকে যাওয়ার বাগ এখন নেই */
+            #adModal { z-index: 4000; }
+            #successModal, #newUserModal { z-index: 4100; }
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
             body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
@@ -1675,6 +1699,14 @@ async def web_ui():
             .comment-act.del { color: #f87171; }
             .comment-act.edit { color: #38bdf8; }
             .edited-tag { font-size: 9px; color: #64748b; font-style: italic; }
+
+            /* ⬇ ডাউনলোড হিন্ট + অ্যানিমেটেড তীর — ইউজার সহজে বুঝবে কোথায় ডাউনলোড হবে */
+            .dl-hint { background: linear-gradient(45deg, rgba(56,189,248,.14), rgba(59,130,246,.08)); border: 1px dashed #38bdf8; color: #7dd3fc; font-size: 12.5px; font-weight: 600; padding: 10px 14px; border-radius: 12px; margin: 10px 0 4px 0; display: flex; align-items: center; gap: 8px; }
+            .dl-hint b { color: #fff; }
+            .dl-arrow { animation: arrowBounce 1s ease-in-out infinite; margin-left: 2px; }
+            @keyframes arrowBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+            .act-dl { animation: dlPulse 2.2s ease-in-out infinite; }
+            @keyframes dlPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,.4); } 50% { box-shadow: 0 0 0 9px rgba(56,189,248,0); } }
             .detail-title { font-size: 22px; font-weight: 800; margin-bottom: 5px; }
             .detail-meta { color: #94a3b8; font-size: 14px; margin-bottom: 15px; }
             .close-icon { position: absolute; top: 12px; right: 15px; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; border: none; }
@@ -1890,6 +1922,12 @@ async def web_ui():
         <div id="welcomeScreen"><div class="ws-brand">Movie Box</div><div class="ws-bn">মুভি বক্স জগতে স্বাগতম</div></div>
         <header onclick="switchTab('home')"><div class="logo">Movie Box</div></header>
 
+        <!-- 💰 স্টিকি টপ ব্যানার (ছোট 320x50): হোমে স্ক্রল করলেও সবসময় উপরে থাকবে — নরমাল ক্যাটাগরিতে নরমাল অ্যাড, অ্যাডাল্ট ক্যাটাগরিতে অ্যাডাল্ট অ্যাড -->
+        <div id="topAdBar">
+            <div id="homeBannerNormal">__BANNER_320__</div>
+            <div id="homeBannerAdult" style="display:none;">__BANNER_320_ADULT__</div>
+        </div>
+
         <div id="tabHome" class="page-section active">
             <div class="search-box"><input type="text" id="searchInput" class="search-input" placeholder="🔍 খুঁজুন..."></div>
             <div class="cat-row">
@@ -1913,13 +1951,7 @@ async def web_ui():
                 </div>
             </div>
 
-            <!-- 💰 300x250 ব্যানার অ্যাড (Home): নরমাল ক্যাটাগরিতে নরমাল ব্যানার, অ্যাডাল্ট ক্যাটাগরিতে অ্যাডাল্ট ব্যানার -->
-            <div style="display:flex; justify-content:center; margin: 5px 15px 15px 15px;">
-                <div id="homeBannerNormal" style="width:100%; text-align:center;">__BANNER_AD__</div>
-                <div id="homeBannerAdult" style="width:100%; text-align:center; display:none;">__BANNER_ADULT__</div>
-            </div>
-
-            <!-- ✅ RECENTLY ADDED HEADER -->
+            <!-- ✅ RECENTLY ADDED HEADER (💰 ট্রেন্ডিং-এর নিচের 300x250 ব্যানার সরানো হয়েছে — অ্যাড এখন উপরে স্টিকি টপ বারে) -->
             <div style="padding: 0 15px 10px 15px;">
                 <div class="section-header" style="margin-bottom: 5px; margin-left: 0px;">
                     <i class="fa-solid fa-clock"></i> Recently Added
@@ -1979,6 +2011,8 @@ async def web_ui():
                 <h2 id="detailTitle" class="detail-title"></h2>
                 <div id="detailMeta" class="detail-meta"></div>
                 <div id="detailCats" style="margin: 8px 0 4px 0;"></div>
+                <!-- ⬇ ডাউনলোড হিন্ট মেসেজ — ইউজার সহজে বুঝবে ডাউনলোড কোথায় হবে -->
+                <div class="dl-hint"><i class="fa-solid fa-circle-arrow-down"></i> <span>ডাউনলোড করতে নিচের <b>Download</b> বাটনে ক্লিক করুন!</span></div>
 
                 <div class="stats-row-wa">
                     <div class="stat-box-wa"><i class="fa-solid fa-heart" style="color:#ef4444"></i><b id="statLikes">0</b><span>LIKE</span></div>
@@ -1989,7 +2023,7 @@ async def web_ui():
 
                 <div class="act-row">
                     <button id="likeBtn" class="act-btn act-like" onclick="toggleLike()"><i class="fa-regular fa-heart"></i> Like</button>
-                    <button class="act-btn act-dl" onclick="openDownloadModal()"><i class="fa-solid fa-circle-down"></i> Download</button>
+                    <button class="act-btn act-dl" onclick="openDownloadModal()"><i class="fa-solid fa-circle-down"></i> Download <i class="fa-solid fa-angles-down dl-arrow"></i></button>
                 </div>
                 <div class="act-row">
                     <button id="saveBtn" class="act-btn act-save" onclick="toggleSaved()"><i class="fa-regular fa-bookmark"></i> Save Later</button>
@@ -2001,7 +2035,7 @@ async def web_ui():
                     __BANNER_320__
                 </div>
                 <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;">
-                    __BANNER_ADULT__
+                    __BANNER_320_ADULT__
                 </div>
                 <!-- 💬 কমেন্ট সেকশন: সবাই কমেন্ট করতে পারবে, রিপ্লাইও দিতে পারবে -->
                 <div class="comments-wrap" id="commentsWrap">
@@ -2061,7 +2095,7 @@ async def web_ui():
                 <div id="fileButtonsContainer"></div>
                 <div style="text-align:center; margin: 14px 0 10px 0;">
                     <div id="dlBannerNormal">__BANNER_320__</div>
-                    <div id="dlBannerAdult" style="display:none;">__BANNER_ADULT__</div>
+                    <div id="dlBannerAdult" style="display:none;">__BANNER_320_ADULT__</div>
                 </div>
                 <div id="dlSquareSlot" style="display:flex; justify-content:center; margin-bottom:10px;"></div>
                 <div id="dlSponsorSlot"></div>
@@ -2128,6 +2162,8 @@ async def web_ui():
             let isUserVip = false; 
             let isAdmin = false; // Admin Variable
             let activeCat = "Home"; let userFavs = []; let active18Btn = null; let activeFileId = null; let activeIsAdult = false; let adStartTime = 0; let currentViewMovies = [];
+            // 🔙 ডিটেইলস খোলার আগের ট্যাব + স্ক্রল পজিশন — ব্যাক করলে সেখানেই ফেরা যাবে
+            let detailsReturnTab = 'home'; let detailsReturnScroll = 0;
             let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
@@ -2145,7 +2181,32 @@ async def web_ui():
                 } catch(e) {} 
             }
             
-            function switchTab(tabName, btnEl) { document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); }); document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); }); if(tabName === 'home') { activeCat = 'Home'; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); } document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active'); if(btnEl) btnEl.classList.add('active'); if(tabName === 'home') loadHomeMovies(1); if(tabName === 'fav') loadFavorites(); window.scrollTo({top:0, behavior:'smooth'}); }
+            // 💰 টপ অ্যাড বার: শুধু হোম ট্যাব অ্যাক্টিভ থাকলে দেখাবে; header-এর উচ্চতা মেপে তার নিচে বসে,
+            // হোম কনটেন্টে padding-top দিয়ে যাতে অ্যাড বার কোনো কার্ড ঢেকে না দেয়
+            function updateTopAdBar() {
+                let bar = document.getElementById('topAdBar'); if (!bar) return;
+                let header = document.querySelector('header');
+                if (header) bar.style.top = header.offsetHeight + 'px';
+                let active = document.querySelector('.page-section.active');
+                let show = !!active && active.id === 'tabHome';
+                bar.classList.toggle('show', show);
+                let homeSec = document.getElementById('tabHome');
+                if (homeSec && header) homeSec.style.paddingTop = show ? (header.offsetHeight + bar.offsetHeight + 8) + 'px' : '';
+            }
+            window.addEventListener('resize', updateTopAdBar);
+            function switchTab(tabName, btnEl, opts) {
+                opts = opts || {};
+                document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
+                document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
+                // 🔙 noReload: ব্যাক করে ফেরার সময় হোম ফিড আবার লোড/রিসেট হবে না — আগের অবস্থাই থাকবে
+                if(tabName === 'home' && !opts.noReload) { activeCat = 'Home'; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); var fc = document.querySelector('.cat-chip'); if(fc) fc.classList.add('active'); }
+                document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1)).classList.add('active');
+                if(btnEl) btnEl.classList.add('active');
+                if(tabName === 'home' && !opts.noReload) loadHomeMovies(1);
+                if(tabName === 'fav' && !opts.noReload) loadFavorites();
+                updateTopAdBar();
+                if (!opts.noScrollTop) window.scrollTo({top:0, behavior:'smooth'});
+            }
             function filterCat(cat, btnEl) { activeCat = cat; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(1); }
             
             function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { if(btnEl) filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
@@ -2312,10 +2373,10 @@ async def web_ui():
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
 
-                // 🎞 কোয়ালিটি ব্যাজ ("পার্ট" লিখলে মানুষ ভাববে মুভির আলাদা পার্ট আছে — তাই কোয়ালিটি দেখানো হয়) + 👁 ভিউ ব্যাজ
+                // 🗂 ফাইল কাউন্ট ব্যাজ — ভিতরে কয়টা ফাইল/লিংক আছে ("পার্ট" বা 720p লেখা হয় না) + 👁 ভিউ ব্যাজ
                 let filesArr = m.files || [];
-                let qLabel = (filesArr[0] && filesArr[0].quality && filesArr[0].quality !== 'Main') ? filesArr[0].quality : (m.quality || 'HD');
-                if (qLabel === 'Main') qLabel = 'HD';
+                let nFiles = filesArr.length > 0 ? filesArr.length : 1;
+                let fileLabel = nFiles > 1 ? nFiles + ' ফাইল' : '1 ফাইল';
                 let viewsBadge = `<div class="views-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
 
                 // 👑 Admin Badge (শুধু অ্যাডমিন দেখবে; বাম-উপরের কোণটা এখন লাভ বাটনের — তাই ডান-নিচে)
@@ -2328,7 +2389,7 @@ async def web_ui():
                 <div style="position: relative; flex-shrink: 0;">
                     <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" loading="lazy">
                     ${lockOverlay}
-                    <div class="part-badge"><i class="fa-solid fa-clapperboard"></i> ${qLabel}</div>
+                    <div class="part-badge"><i class="fa-solid fa-layer-group"></i> ${fileLabel}</div>
                     ${viewsBadge}
                     ${adminViewBadge}
                 </div>
@@ -2353,11 +2414,19 @@ async def web_ui():
                 let arr = srcName === 'fav' ? favMovies : (srcName === 'saved' ? savedMovies : currentViewMovies);
                 let m = movieObj || arr[index];
                 if(!m) return;
+                // 🔙 ব্যাক করলে যেন আগের ট্যাব + হুবহু আগের স্ক্রল পজিশনে ফেরা যায়
+                let activeSec = document.querySelector('.page-section.active');
+                if (activeSec && activeSec.id !== 'tabDetails') {
+                    detailsReturnTab = activeSec.id.replace(/^tab/, '');
+                    detailsReturnTab = detailsReturnTab.charAt(0).toLowerCase() + detailsReturnTab.slice(1);
+                    detailsReturnScroll = window.scrollY || 0;
+                }
                 activeDetailMovie = m;
                 // সব ট্যাব লুকিয়ে ডিটেইলস পেজ দেখানো
                 document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
                 document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
                 document.getElementById('tabDetails').classList.add('active');
+                updateTopAdBar();
                 window.scrollTo({top:0, behavior:'auto'});
                 renderDetailsPage(m);
                 loadDetailsStats(m);
@@ -2366,7 +2435,14 @@ async def web_ui():
 
             function detailMovieId(m) { return (m.files && m.files.length && m.files[0] && m.files[0].id) ? m.files[0].id : m._id; }
             function detailTitle(m) { return m.title || 'Unknown Movie'; }
-            function closeDetails() { switchTab('home', document.querySelector('.nav-item')); }
+            function closeDetails() {
+                // 🔙 আগের ট্যাবে (হোম/সার্চ/ফেভ...) ফেরা + স্ক্রল হুবহু আগের জায়গায় — ফিড আর রিলোড হয় না
+                let navMap = {home:0, search:1, fav:2, favorites:2, surprise:3, profile:4};
+                let navs = document.querySelectorAll('.nav-item');
+                let idx = (navMap[detailsReturnTab] !== undefined) ? navMap[detailsReturnTab] : 0;
+                switchTab(detailsReturnTab || 'home', navs[idx] || null, {noReload: true, noScrollTop: true});
+                setTimeout(function(){ window.scrollTo({top: detailsReturnScroll || 0, behavior: 'auto'}); }, 60);
+            }
             function openDownloadModal() { document.getElementById('downloadModal').style.display = 'flex'; }
             function fmtCount(n) { n = n || 0; if (n >= 1000000) return (n/1000000).toFixed(1) + 'M'; if (n >= 1000) return (n/1000).toFixed(1) + 'K'; return String(n); }
 
@@ -2644,7 +2720,17 @@ async def web_ui():
                 } catch(e) {}
             }
             
-            function handleFileClick(fileId, isFree, isAdult) { activeFileId = fileId; activeIsAdult = isAdult; if(isFree) { sendFileRequest(fileId); } else { resetAdModal(); document.getElementById('adModal').style.display = 'flex'; } }
+            // 🎯 ফিক্স: আগে অ্যাড গেট (adModal) ডাউনলোড পপ-আপের পেছনে খুলে যেত — DOM-এ আগে আর
+            // z-index সমান হওয়ায় পপ-আপটাই উপরে থেকে গেট ঢেকে দিত, ইউজার মনে করত "বাগে চলে গেছে"।
+            // এখন: পপ-আপ বন্ধ করে সাথে সাথে শর্ত/অ্যাড পেজ সামনে আসবে; VIP ছাড়া সবাই গেট দেখবে
+            // (আনলকড হোক বা না হোক), তারপর বিজ্ঞাপন দেখে ফাইল পাবে। 💎 VIP সরাসরি ফাইল পায়।
+            function handleFileClick(fileId, isFree, isAdult) {
+                activeFileId = fileId; activeIsAdult = isAdult;
+                closeModal('downloadModal');
+                if (isUserVip) { sendFileRequest(fileId); return; }
+                resetAdModal();
+                document.getElementById('adModal').style.display = 'flex';
+            }
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
@@ -2841,7 +2927,7 @@ async def web_ui():
             async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); adSettings.active_link = s.active_link || ''; adSettings.active_adult_link = s.active_adult_link || ''; } catch(e) {} }
             
             // বুটস্ট্র্যাপ অর্ডার: আগে ডিপ-লিংক চেক (is_new ঠিক করার জন্য), তারপর ইউজার রেজিস্ট্রেশন ও লিস্ট লোড
-            (async function(){ await openFromDeepLink(); loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
+            (async function(){ updateTopAdBar(); await openFromDeepLink(); loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
         </script>
     </body></html>'''
     
@@ -2852,10 +2938,12 @@ async def web_ui():
     html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS)
     html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320)
     html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT)
+    html_code = html_code.replace("__BANNER_320_ADULT__", BANNER_AD_JS_320_ADULT)
     # 💰 ফিড ব্যানার কনফিগ (JS দিয়ে iframe বানাতে)
     html_code = html_code.replace("__AD300_CONF__", json.dumps(BANNER_300_CONF))
     html_code = html_code.replace("__AD320_CONF__", json.dumps(BANNER_320_CONF))
     html_code = html_code.replace("__ADULT_CONF__", json.dumps(BANNER_ADULT_CONF))
+    html_code = html_code.replace("__AD320_ADULT_CONF__", json.dumps(BANNER_320_ADULT_CONF))
     return HTMLResponse(html_code)
 
 # ==========================================
