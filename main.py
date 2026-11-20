@@ -8,6 +8,7 @@ import hmac
 import hashlib
 import urllib.parse
 import secrets
+import random
 import json
 import math
 
@@ -56,22 +57,25 @@ LOG_CHANNEL_ID = os.getenv("LOG_CHANNEL_ID", "-1004462840114")
 # পরে /addlink বা /dellink দিয়ে যেকোনো সময় বদলানো যাবে।
 # ==========================================
 DEFAULT_DIRECT_LINKS = [
-    "https://asiafilm.org/4/7ef304669bcfc15f3404e1a5e5dcf1ba",   # Adsterra Direct Link 1
-    "https://asiafilm.org/4/dd496e8de5fdbe10f2ccf3defc93c342",   # Adsterra Direct Link 2
-    "https://uplcm.com/4/12080503",                              # Monetag Direct Link
+    "https://asiafilm.org/4/1952b9f3548cd57e994e610fde24e41f",   # Normal Direct Link 1
+    "https://asiafilm.org/4/7ef304669bcfc15f3404e1a5e5dcf1ba",   # Normal Direct Link 2
+    "https://asiafilm.org/4/dd496e8de5fdbe10f2ccf3defc93c342",   # Normal Direct Link 3
+    "https://uplcm.com/4/10918781",                              # Normal Direct Link 4
+    "https://uplcm.com/4/12080503",                              # Normal Direct Link 5
 ]
 DEFAULT_ADULT_DIRECT_LINKS = [
     "https://auctionr.org/4/1b6df569ebc094e3e8e592d2fd017b4f",   # Adult Direct Link 1
-    "https://auctionr.org/4/ef5b10414fe8fdd3f602e74bcdd4225c",   # Adult Direct Link 2
+    "https://auctionr.org/4/ae2d07d4c0488d06e6aec709d40d437f",   # Adult Direct Link 2
+    "https://auctionr.org/4/ef5b10414fe8fdd3f602e74bcdd4225c",   # Adult Direct Link 3
 ]
-# 🔁 রোটেশন টাইম: প্রতি ৩০ মিনিটে অ্যাক্টিভ ডাইরেক্ট লিংক নিজে নিজে বদলাবে
-ROTATION_SECONDS = 1800
 
-def pick_active_link(links):
-    """⏱️ সময়ভিত্তিক রোটেশন — প্রতি ৩০ মিনিটে লিস্টের পরের লিংকটি 'অ্যাক্টিভ' হয় (সার্ভার-সাইড, সবার জন্য একই)।"""
+def pick_random_link(links, last_served=None):
+    """🎲 র‍্যান্ডম পিক — পুল থেকে র‍্যান্ডম লিংক; সর্বশেষ দেখানো লিংকটি পরপর দুইবার যাবে না।"""
     if not links: return None
-    try: return links[math.floor(time.time() / ROTATION_SECONDS) % len(links)]
-    except Exception: return links[0]
+    pool = [u for u in links if u != last_served]
+    if not pool: pool = list(links)
+    try: return random.choice(pool)
+    except Exception: return pool[0]
 
 def is_adult_movie(m):
     """🎯 অ্যাডাল্ট ডিটেকশন — মুভির টাইটেলে '18+' লেখা থাকলে অ্যাডাল্ট (অ্যাডাল্ট ডাইরেক্ট লিংক যাবে);
@@ -196,6 +200,14 @@ async def seed_default_ads():
         if not adl_cfg or not adl_cfg.get("links"):
             await db.settings.update_one({"id": "adult_direct_links"}, {"$set": {"links": DEFAULT_ADULT_DIRECT_LINKS}}, upsert=True)
             print(f"🔴 Seeded {len(DEFAULT_ADULT_DIRECT_LINKS)} default adult direct links.")
+        # 🎲 র‍্যান্ডম অ্যাড সিস্টেম মাইগ্রেশন (একবারই চলে): নতুন নরমাল ৫টা + অ্যাডাল্ট ৩টা ডাইরেক্ট লিংক
+        # পুলে যোগ হয় ($addToSet — যেগুলো আগে থেকেই আছে সেগুলো ডুপ্লিকেট হবে না)
+        mig = await db.settings.find_one({"id": "random_links_migrated"})
+        if not mig:
+            await db.settings.update_one({"id": "direct_links"}, {"$addToSet": {"links": {"$each": DEFAULT_DIRECT_LINKS}}}, upsert=True)
+            await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": {"$each": DEFAULT_ADULT_DIRECT_LINKS}}}, upsert=True)
+            await db.settings.update_one({"id": "random_links_migrated"}, {"$set": {"done": True}}, upsert=True)
+            print("🎲 Random ad system: new direct links added to pools (normal+adult).")
         defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72}
         for key, val in defaults.items():
             cfg = await db.settings.find_one({"id": key})
@@ -568,14 +580,10 @@ async def list_ads_cmd(m: types.Message):
     aw_cfg = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw_cfg.get("value", 10) if aw_cfg else 10
     bd_cfg = await db.settings.find_one({"id": "bcast_del"}); bdel = bd_cfg.get("value", 72) if bd_cfg else 72
     bdel_text = "অফ (কখনো ডিলিট হবে না)" if bdel == 0 else f"{bdel} ঘণ্টা"
-    active_now = pick_active_link(links) or "—"
-    active_adult_now = pick_active_link(alinks) or "—"
     text = (f"💰 <b>বর্তমান অ্যাড সেটিংস</b>\n\n"
             f"🔗 সাধারণ ডাইরেক্ট লিংক: <b>{len(links)}</b>টি\n"
             f"🔴 ১৮+ ডাইরেক্ট লিংক: <b>{len(alinks)}</b>টি\n"
-            f"🔁 রোটেশন: প্রতি <b>৩০ মিনিটে</b> অ্যাক্টিভ লিংক অটো-চেঞ্জ\n"
-            f"▶️ এখন অ্যাক্টিভ (সাধারণ): <code>{active_now}</code>\n"
-            f"▶️ এখন অ্যাক্টিভ (১৮+): <code>{active_adult_now}</code>\n"
+            f"🎲 র‍্যান্ডম সিস্টেম চালু: প্রতিবার ক্লিকে পুল থেকে র‍্যান্ডম লিংক — সেইম লিংক পরপর দুইবার যায় না\n"
             f"🎯 প্রতি আনলকে অ্যাড সংখ্যা: <b>{ad_count}</b>টি\n"
             f"⏱️ প্রতি অ্যাডে অপেক্ষার সময়: <b>{ad_wait} সেকেন্ড</b>\n"
             f"📢 ব্রডকাস্ট অটো-ডিলিট: <b>{bdel_text}</b>\n\n"
@@ -2098,19 +2106,24 @@ async def web_ui():
                 document.getElementById('adTryAgainBtn').style.display = 'none';
             }
             
-            // 🔁 ৩০ মিনিট রোটেশন: সার্ভারের অ্যাক্টিভ লিংক ব্যবহার হয়; সেটিং না পেলে ক্লায়েন্ট-সাইডে সময় ধরে রোটেট করে
-            function getActiveLink(isAdult) {
+            // 🎲 র‍্যান্ডম লিংক পিক: প্রতিবার ক্লিকে পুল থেকে র‍্যান্ডম লিংক সিলেক্ট হয় —
+            // শুধু সেইম লিংক পরপর দুইবার যাবে না (এই সেশনে সর্বশেষ যেটা খোলা হয়েছে সেটা বাদ দিয়ে)
+            let lastOpenedNormal = ''; let lastOpenedAdult = '';
+            function pickRandomLink(isAdult) {
                 let pool = (isAdult && ADULT_DIRECT_LINKS && ADULT_DIRECT_LINKS.length > 0) ? ADULT_DIRECT_LINKS : (DIRECT_LINKS && DIRECT_LINKS.length > 0 ? DIRECT_LINKS : null);
                 if (!pool) return null;
-                let serverLink = isAdult ? adSettings.active_adult_link : adSettings.active_link;
-                if (serverLink && pool.indexOf(serverLink) !== -1) return serverLink;
-                return pool[Math.floor(Date.now() / 1800000) % pool.length];
+                let last = isAdult ? lastOpenedAdult : lastOpenedNormal;
+                let candidates = pool.filter(function(u) { return u !== last; });
+                if (candidates.length === 0) candidates = pool;
+                let link = candidates[Math.floor(Math.random() * candidates.length)];
+                if (isAdult) lastOpenedAdult = link; else lastOpenedNormal = link;
+                return link;
             }
             
             // 🔥 স্পন্সর অ্যাড কার্ড — ডাউনলোড বাটনের মত সাইজ, এনগেজমেন্ট ক্যাপশন ("সারপ্রাইজ") যাতে মানুষ ক্লিক করতে চায়;
-            // ক্লিক করলে অ্যাক্টিভ ডাইরেক্ট লিংক খোলে (হোম ফিড + ডাউনলোড পপ-আপ)
+            // ক্লিক করলে র‍্যান্ডম ডাইরেক্ট লিংক খোলে (হোম ফিড + ডাউনলোড পপ-আপ)
             function sponsorCardHTML(isAdult) {
-                let link = getActiveLink(isAdult);
+                let link = pickRandomLink(isAdult);
                 if (!link) return '';
                 return `<div class="sponsor-card" onclick="event.stopPropagation(); tg.openLink('${link}')">
                     <div class="sponsor-emoji">🎁</div>
@@ -2129,13 +2142,13 @@ async def web_ui():
 
             function openAdLink() {
                 document.getElementById('adClickBtn').style.display = 'none';
-                let linkToOpen = getActiveLink(activeIsAdult);
+                let linkToOpen = pickRandomLink(activeIsAdult);
                 if (!linkToOpen) {
                     // কোনো অ্যাড লিংক সেট করা নেই → সরাসরি আনলক (ইউজার যেন আটকে না থাকে)
                     finishAdRounds();
                     return;
                 }
-                // 🔁 রোটেশন: এই মুহূর্তের অ্যাক্টিভ লিংক (৩০ মিনিট পর পর সার্ভার নিজে থেকে বদলায়)
+                // 🎲 র‍্যান্ডম: এই ক্লিকে পুল থেকে র‍্যান্ডম লিংক (সেইম লিংক পরপর দুইবার যায় না)
                 tg.openLink(linkToOpen);
                 adStartTime = Date.now();
                 // 🛡️ অ্যাড খুলল — এখন থেকে শুধু অ্যাড পেজে থাকার সময় গোনা হবে
@@ -2251,12 +2264,11 @@ async def web_ui():
             function gateNextStep() {
                 let btn = document.getElementById('gateWatchBtn');
                 if (gateStep === 0) {
-                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট ডাইরেক্ট লিংক, নাহলে নরমাল লিংক;
-                    // 🔁 লিংকটা সার্ভারে প্রতি ৩০ মিনিটে নিজে নিজে ঘুরে বদলায় (নরমাল ৩টা / অ্যাডাল্ট ২টার মধ্যে) —
-                    // প্রতিবার Watch Now চাপলেই তখনকার অ্যাক্টিভ স্পন্সর লিংক খুলবে (নতুন-পুরাতন সব ইউজারের জন্যই ইনকাম);
+                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট লিংক পুল, নাহলে নরমাল লিংক পুল;
+                    // 🎲 র‍্যান্ডম: প্রতিবার Watch Now চাপলেই পুল থেকে র‍্যান্ডম লিংক খুলবে (সেইম লিংক পরপর দুইবার যাবে না);
                     // অ্যাড থেকে ফিরে এসে "ফাইলটি দেখুন" চাপলে মেইন ফাইল পেজে যাবে
                     let isAdult = gateMovie && (gateMovie.is_adult || (gateMovie.title && gateMovie.title.toUpperCase().indexOf('18+') !== -1));
-                    let link = getActiveLink(isAdult);
+                    let link = pickRandomLink(isAdult);
                     if (link) tg.openLink(link);
                     gateStep = 1;
                     btn.innerText = '✅ ফাইলটি দেখুন';
@@ -2404,12 +2416,11 @@ async def get_public_settings():
         aw = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw.get("value", 10) if aw else 10
         dl_cfg = await db.settings.find_one({"id": "direct_links"}); links = dl_cfg.get("links", []) if dl_cfg else []
         adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); alinks = adl_cfg.get("links", []) if adl_cfg else []
-        # 🔁 ৩০ মিনিট রোটেশন: এই মুহূর্তের অ্যাক্টিভ লিংক সার্ভার থেকে ঠিক করে পাঠানো হয়
+        # 🎲 র‍্যান্ডম সিস্টেম: প্রতি কলে পুল থেকে র‍্যান্ডম লিংক (ওয়েব অ্যাপ ক্লায়েন্ট-সাইডেও প্রতিবার ক্লিকে র‍্যান্ডম নেয়)
         return {"ad_count": max(1, int(ad_count or 1)), "ad_wait": max(5, int(ad_wait or 10)),
-                "active_link": pick_active_link(links) or "", "active_adult_link": pick_active_link(alinks) or "",
-                "rotation_minutes": ROTATION_SECONDS // 60}
+                "active_link": pick_random_link(links) or "", "active_adult_link": pick_random_link(alinks) or ""}
     except:
-        return {"ad_count": 1, "ad_wait": 10, "active_link": "", "active_adult_link": "", "rotation_minutes": 30}
+        return {"ad_count": 1, "ad_wait": 10, "active_link": "", "active_adult_link": ""}
 
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
