@@ -791,7 +791,10 @@ async def list_ads_cmd(m: types.Message):
             f"🎯 প্রতি আনলকে অ্যাড সংখ্যা: <b>{ad_count}</b>টি\n"
             f"⏱️ প্রতি অ্যাডে অপেক্ষার সময়: <b>{ad_wait} সেকেন্ড</b>\n"
             f"📢 ব্রডকাস্ট অটো-ডিলিট: <b>{bdel_text}</b>\n\n"
-            f"<i>কমান্ড: /addlink, /dellink, /addadultlink, /setadcount, /setadwait, /setbcastdel</i>")
+            f"<i>কমান্ড: /addlink, /dellink, /addadultlink, /setadcount, /setadwait, /setbcastdel</i>\n\n"
+            f"<i>💡 টিপস: ব্যানার ইম্প্রেশন এখন শুধু ইউজারের চোখে আসা ব্যানারেরই গোনা হয় — লুকানো মোডালের "
+            f"মৃত ইম্প্রেশন আর অদেখা ফিড-ব্যানার লোড বন্ধ করা হয়েছে। ইম্প্রেশন কমে গেলেও প্রতি ইম্প্রেশনের ভ্যালু বাড়বে, "
+            f"তাই মোট CPM ওঠার কথা। আর ডাইরেক্ট লিংক র‍্যান্ডমলি ঘুরিয়ে দেওয়া ঠিকই আছে — এতে CPM পড়ে না।</i>")
     if links:
         text += "\n\n🔗 <b>সাধারণ লিংক লিস্ট:</b>\n" + "\n".join(f"{i+1}. <code>{l}</code>" for i, l in enumerate(links))
     if alinks:
@@ -2078,8 +2081,10 @@ async def web_ui():
 
         <!-- 💰 স্টিকি টপ ব্যানার (ছোট 320x50): হোমে স্ক্রল করলেও সবসময় উপরে থাকবে — নরমাল ক্যাটাগরিতে নরমাল অ্যাড, অ্যাডাল্ট ক্যাটাগরিতে অ্যাডাল্ট অ্যাড -->
         <div id="topAdBar">
+            <!-- 🧠 CPM: অ্যাডাল্ট ক্যাটাগরির ব্যানার খালি — ক্যাটাগরি সুইচে JS দিয়ে মাউন্ট হয় (loadHomeMovies)।
+                 পেজ-লোডে লুকানো অবস্থায় লোড হলে ইউজার কিছু না দেখেই মৃত ইম্প্রেশন জমত। -->
             <div id="homeBannerNormal">__BANNER_320__</div>
-            <div id="homeBannerAdult" style="display:none;">__BANNER_320_ADULT__</div>
+            <div id="homeBannerAdult" style="display:none;"></div>
         </div>
 
         <div id="tabHome" class="page-section active">
@@ -2184,13 +2189,11 @@ async def web_ui():
                     <button class="act-btn act-share" onclick="shareMovie()"><i class="fa-solid fa-share"></i> Share</button>
                 </div>
 
-                <!-- 💰 ব্যানার অ্যাড: সাধারণ মুভিতে 320x50 ছোট ব্যানার, ১৮+ মুভিতে 300x250 অ্যাডাল্ট ব্যানার -->
-                <div id="detailBannerNormal" style="display:none; text-align:center; margin: 0 auto 12px auto;">
-                    __BANNER_320__
-                </div>
-                <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;">
-                    __BANNER_320_ADULT__
-                </div>
+                <!-- 💰 ব্যানার অ্যাড: সাধারণ মুভিতে 320x50 ছোট ব্যানার, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার।
+                     🧠 CPM: যে ব্যানারটা দেখা যাবে শুধু সেটাই JS দিয়ে মাউন্ট হয় (renderDetailsPage) —
+                     লুকানো টাটা লোড করলে মৃত ইম্প্রেশন জমত। -->
+                <div id="detailBannerNormal" style="display:none; text-align:center; margin: 0 auto 12px auto;"></div>
+                <div id="detailBannerAdult" style="display:none; text-align:center; margin: 0 auto 12px auto;"></div>
                 <!-- 🗳️ রেটিং পোল (কমেন্টের বদলে): দর্শকের ভোট — এক ইউজার এক ভোট, বদলানো যায় উঠানো যায় না -->
                 <div class="poll-wrap" id="pollWrap">
                     <div class="poll-header">
@@ -2230,9 +2233,10 @@ async def web_ui():
                 <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
                 <button class="ad-back-btn" onclick="closeModal('adModal'); resetAdModal(); openDownloadModal();"><i class="fa-solid fa-arrow-left"></i> ব্যাক — ডাউনলোড লিস্টে ফিরুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:5px;">💎 VIP হলে কোনো অ্যাড দেখতে হবে না — Profile ট্যাব থেকে VIP নিন!</p>
-                <div style="display:flex; justify-content:center; margin-top:5px;">
-                    __BANNER_AD__
-                </div>
+                <!-- 🧠 CPM: অ্যাড-গেট মোডাল খোলার মুহূর্তে JS দিয়ে ব্যানার মাউন্ট হয় (handleFileClick)।
+                     পেজ-লোডে লুকানো মোডালে ব্যানার লোড হলে ইউজার কিছু না দেখেই "মৃত" ইম্প্রেশন জমে —
+                     বিজ্ঞাপনদাতা বিড কমিয়ে দেয়, CPM পড়ে যায়। -->
+                <div id="adModalAdSlot" style="display:flex; justify-content:center; margin-top:5px;"></div>
             </div>
         </div>
 
@@ -2249,8 +2253,10 @@ async def web_ui():
                 </div>
                 <div id="fileButtonsContainer"></div>
                 <div style="text-align:center; margin: 14px 0 10px 0;">
-                    <div id="dlBannerNormal">__BANNER_320__</div>
-                    <div id="dlBannerAdult" style="display:none;">__BANNER_320_ADULT__</div>
+                    <!-- 🧠 CPM: মোডাল খোলার মুহূর্তে JS দিয়ে মাউন্ট (openDownloadModal) — লুকানো মোডালে
+                         পেজ-লোডেই ব্যানার লোড হলে দেখা-না-হওয়া ইম্প্রেশন জমে CPM পড়ে যায় -->
+                    <div id="dlBannerNormal"></div>
+                    <div id="dlBannerAdult" style="display:none;"></div>
                 </div>
                 <div id="dlSquareSlot" style="display:flex; justify-content:center; margin-bottom:10px;"></div>
                 <div id="dlSponsorSlot"></div>
@@ -2308,6 +2314,7 @@ async def web_ui():
             const AD_300_CONF = __AD300_CONF__;
             const AD_320_CONF = __AD320_CONF__;
             const AD_ADULT_CONF = __ADULT_CONF__;
+            const AD_320_ADULT_CONF = __AD320_ADULT_CONF__;
             /* ✅ ডিটেইলস পেজ + এনগেজমেন্ট স্টেট */
             let activeDetailMovie = null; let pollState = {counts: {}, total: 0, percent: 0, user_vote: null};
             let detailStats = {likes:0, downloads:0, votes:0, shares:0};
@@ -2455,11 +2462,17 @@ async def web_ui():
                     let adultCat = activeCatIsAdult();
                     let hbN = document.getElementById('homeBannerNormal'); let hbA = document.getElementById('homeBannerAdult');
                     if (hbN && hbA) { hbN.style.display = adultCat ? 'none' : 'block'; hbA.style.display = adultCat ? 'block' : 'none'; }
+                    // 🧠 CPM: যে টপ-ব্যানার সত্যিই দেখা যাবে শুধু সেটাই মাউন্ট (ক্যাটাগরি বদলালে ক্যাশড iframe রিইউজ —
+                    // বারবার নতুন ইম্প্রেশন না)। লুকানো অ্যাডাল্ট ব্যানার পেজ-লোডেই লোড করলে মৃত ইম্প্রেশন জমত।
+                    if (adultCat) mountSquareSlot('homeBannerAdult', AD_320_ADULT_CONF);
+                    else mountSquareSlot('homeBannerNormal', AD_320_CONF);
                     // ফিড ইন্টারলিভ: প্রতি ৫টা মুভি কার্ডের পর 300x250 স্কয়ার ব্যানার, প্রতি ১০টার পর স্পন্সর অ্যাড কার্ড
                     let html = '';
                     currentViewMovies.forEach(function(m, index) {
                         html += createMovieCard(m, index);
-                        if ((index + 1) % 5 === 0 && index < currentViewMovies.length - 1) html += '<div class="feed-ad-wrap"></div>';
+                        // 🧠 CPM: প্রতি ৮টা কার্ডে ১টা ব্যানার (আগে ৫-তে ছিল) — কম ঘন ঘন ব্যানার মানে
+                        // কম জাঙ্ক ইম্প্রেশন + ইউজার কম বিরক্ত, প্রতি ইম্প্রেশনের ভ্যালু বাড়ে → CPM ওঠে
+                        if ((index + 1) % 8 === 0 && index < currentViewMovies.length - 1) html += '<div class="feed-ad-wrap"></div>';
                         if ((index + 1) % 10 === 0 && index < currentViewMovies.length - 1) html += sponsorCardHTML(adultCat);
                     });
                     list.innerHTML = html || '<p style="text-align:center; color:#64748b; padding:30px;">কোনো মুভি পাওয়া যায়নি!</p>';
@@ -2470,8 +2483,15 @@ async def web_ui():
 
             // 💰 ফিড ব্যানার মাউন্ট: প্রতিটা .feed-ad-wrap এ Adsterra iframe (srcdoc) বসানো —
             // প্রতি iframe-এর নিজস্ব window থাকায় atOptions একে অপরকে overwrite করে না
-            function makeAdIframe(conf) {
+            // 🧠 ইম্প্রেশন হাইজিন: একই জোনের iframe প্রতিবার নতুন করে বানালে ডুপ্লিকেট ইম্প্রেশন জমে —
+            // বিজ্ঞাপনদাতার কাছে কোয়ালিটি খারাপ দেখায়, CPM প্রতিদিন পড়ে যায়। তাই reuseKey (স্লট-আইডি)
+            // দিলে আগে বানানো iframe-টাই move করে বসানো হয় (move করলে reload হয় না → নতুন ইম্প্রেশন না)।
+            // ক্যাশ-কী = জোন + স্লট — একই জোন দুই স্লটে থাকলে এক স্লটের iframe অন্য স্লটে চলে যায় না।
+            const adIframeCache = {};
+            function makeAdIframe(conf, reuseKey) {
                 if (!conf) return null;
+                let cacheKey = reuseKey ? conf.key + '::' + reuseKey : null;
+                if (cacheKey && adIframeCache[cacheKey]) return adIframeCache[cacheKey];
                 const f = document.createElement('iframe');
                 f.setAttribute('scrolling', 'no');
                 f.setAttribute('frameborder', '0');
@@ -2479,14 +2499,39 @@ async def web_ui():
                 let inner = "<script>atOptions = { 'key' : '" + conf.key + "', 'format' : 'iframe', 'height' : " + conf.h + ", 'width' : " + conf.w + ", 'params' : {} };<\\/script>";
                 inner += "<script src='" + conf.src + "'><\\/script>";
                 f.srcdoc = "<html><body style='margin:0;padding:0;background:transparent'>" + inner + "</body></html>";
+                if (cacheKey) adIframeCache[cacheKey] = f;
                 return f;
             }
+            // 🧠 স্কয়ার/ব্যানার স্লট — এক সেশনে একই স্লট = এক ইম্প্রেশন,
+            // একই iframe আগে থেকেই বসা থাকলে ধুয়ে নতুন বসানো হয় না (CPM প্রোটেকশন)
+            function mountSquareSlot(slotId, conf) {
+                let slot = document.getElementById(slotId); if (!slot) return;
+                let f = makeAdIframe(conf, slotId);
+                if (!f) { slot.innerHTML = ''; return; }
+                if (slot.firstChild !== f) { slot.innerHTML = ''; slot.appendChild(f); }
+            }
+            // 🧠 CPM: ফিড-ব্যানার স্ক্রিনে চোখে আসার আগে লোডই হয় না (IntersectionObserver, rootMargin 150px —
+            // স্ক্রলে প্রায় চোখে আসতেই লোড হয়ে যায়)। আগে অদেখা, স্ক্রলে-পিছলে-যাওয়া ব্যানারও ইম্প্রেশন খেত —
+            // ওই সব ভিউঅ্যাবল-না-হওয়া ইম্প্রেশনের কারণেই বিজ্ঞাপনদাতার বিড পড়ে CPM নামত। এখন প্রতিটা
+            // ইম্প্রেশন সত্যিই দেখা ব্যানারের → ভিউঅ্যাবিলিটি স্কোর ভালো → CPM ওঠে।
+            const adFeedObserver = ('IntersectionObserver' in window) ? new IntersectionObserver(function(entries) {
+                entries.forEach(function(en) {
+                    let box = en.target;
+                    if (!box.isConnected) { adFeedObserver.unobserve(box); return; }
+                    if (!en.isIntersecting) return;
+                    adFeedObserver.unobserve(box);
+                    if (box.getAttribute('data-mounted')) return;
+                    box.setAttribute('data-mounted', '1');
+                    let f = makeAdIframe(box.__adConf);
+                    if (f) box.appendChild(f);
+                });
+            }, { rootMargin: '150px 0px' }) : null;
             function mountFeedAds(rootEl, conf) {
                 if (!rootEl || !rootEl.querySelectorAll) return;
                 rootEl.querySelectorAll('.feed-ad-wrap:not([data-mounted])').forEach(function(box) {
-                    box.setAttribute('data-mounted', '1');
-                    let f = makeAdIframe(conf || AD_300_CONF);
-                    if (f) box.appendChild(f);
+                    box.__adConf = conf || AD_300_CONF;
+                    if (adFeedObserver) { adFeedObserver.observe(box); }
+                    else { box.setAttribute('data-mounted', '1'); let f = makeAdIframe(box.__adConf); if (f) box.appendChild(f); }
                 });
             }
 
@@ -2597,7 +2642,15 @@ async def web_ui():
                 switchTab(detailsReturnTab || 'home', navs[idx] || null, {noReload: true, noScrollTop: true});
                 setTimeout(function(){ window.scrollTo({top: detailsReturnScroll || 0, behavior: 'auto'}); }, 60);
             }
-            function openDownloadModal() { document.getElementById('downloadModal').style.display = 'flex'; }
+            function openDownloadModal() {
+                // 🧠 CPM: মোডাল খোলার মুহূর্তেই ব্যানার মাউন্ট — আগে পেজ-লোডেই লুকানো মোডালে ব্যানার
+                // লোড হয়ে যেত, যা ইউজার দেখতই না (মৃত ইম্প্রেশন জমে CPM পড়ে যেত)।
+                // শুধু যেটা দেখা যাবে সেটাই মাউন্ট + এক সেশনে এক স্লট = এক ইম্প্রেশন (ক্যাশড iframe রিইউজ)।
+                if (activeIsAdult) mountSquareSlot('dlBannerAdult', AD_320_ADULT_CONF);
+                else mountSquareSlot('dlBannerNormal', AD_320_CONF);
+                mountSquareSlot('dlSquareSlot', activeIsAdult ? AD_ADULT_CONF : AD_300_CONF);
+                document.getElementById('downloadModal').style.display = 'flex';
+            }
             function fmtCount(n) { n = n || 0; if (n >= 1000000) return (n/1000000).toFixed(1) + 'M'; if (n >= 1000) return (n/1000).toFixed(1) + 'K'; return String(n); }
 
             function renderDetailsPage(m) {
@@ -2630,15 +2683,18 @@ async def web_ui():
 
                 document.getElementById('fileButtonsContainer').innerHTML = btnsHtml;
                 // ⬇ পপ-আপ মোডালের ভিতরে: টাইটেল + 320x50 ব্যানার + 300x250 স্কয়ার অ্যাড + স্পন্সর (১৮+ হলে সব অ্যাডাল্ট)
+                // 🧠 CPM: ব্যানারগুলো এখন openDownloadModal-এ (মোডাল খোলার মুহূর্তে) মাউন্ট হয় —
+                // ডিটেইলস খোলা-খোলা প্রতিবার লুকানো মোডালে ব্যানার লোড করা = মৃত ইম্প্রেশন, তাই না
                 document.getElementById('dlModalTitle').innerText = detailTitle(m) + ' — ' + quals.join(' • ');
                 document.getElementById('dlBannerNormal').style.display = isAdult ? 'none' : 'block';
                 document.getElementById('dlBannerAdult').style.display = isAdult ? 'block' : 'none';
-                let sq = document.getElementById('dlSquareSlot'); sq.innerHTML = '';
-                let sqf = makeAdIframe(isAdult ? AD_ADULT_CONF : AD_300_CONF); if (sqf) sq.appendChild(sqf);
                 document.getElementById('dlSponsorSlot').innerHTML = sponsorCardHTML(isAdult);
-                // 💰 ডিটেইলস পেজেও একটা ছোট ব্যানার থাকবে: সাধারণ মুভিতে 320x50, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার
+                // 💰 ডিটেইলস পেজেও একটা ছোট ব্যানার থাকবে: সাধারণ মুভিতে 320x50, ১৮+ মুভিতে অ্যাডাল্ট ব্যানার।
+                // 🧠 CPM: যেটা সত্যিই দেখা যাবে শুধু সেটাই মাউন্ট — লুকানোটা মাউন্ট করলে মৃত ইম্প্রেশন হতো
                 document.getElementById('detailBannerNormal').style.display = isAdult ? 'none' : 'block';
                 document.getElementById('detailBannerAdult').style.display = isAdult ? 'block' : 'none';
+                if (isAdult) mountSquareSlot('detailBannerAdult', AD_320_ADULT_CONF);
+                else mountSquareSlot('detailBannerNormal', AD_320_CONF);
 
                 // স্ট্যাট রিসেট (আসল অবস্থা API থেকে আসবে)
                 detailStats = {likes:0, downloads:0, votes:0, shares:0};
@@ -2837,6 +2893,8 @@ async def web_ui():
                 closeModal('downloadModal');
                 if (isUserVip) { sendFileRequest(fileId); return; }
                 resetAdModal();
+                // 🧠 CPM: অ্যাড-গেট মোডালের ব্যানার এখন মোডাল খোলার মুহূর্তেই মাউন্ট — ইউজার দেখার মতো ব্যানারই ইম্প্রেশন খাবে
+                mountSquareSlot('adModalAdSlot', AD_300_CONF);
                 document.getElementById('adModal').style.display = 'flex';
             }
             
