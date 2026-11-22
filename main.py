@@ -9,6 +9,7 @@ import hashlib
 import urllib.parse
 import secrets
 import random
+import html  # 🏷️ গ্রুপ-সার্চে ইউজারের নাম মেনশন করার সময় HTML-escape (নামে <>& থাকলেও ক্যাপশন ভাঙবে না)
 import re
 import json
 import math
@@ -769,8 +770,11 @@ async def handle_group_search(m: types.Message):
     now = time.time()
     if now - group_last_reply.get(chat_id, 0) < GROUP_SEARCH_COOLDOWN: return
 
-    # 🎁 প্রাইভেট-সার্চের হুবহু একই রেন্ডারার (নিরপেক্ষ ক্যাপশন: 'পাওয়া গেছে!')
-    caption, markup, best = build_search_reply(res, q, name=None)
+    # 🎁 প্রাইভেট-সার্চের হুবহু একই রেন্ডারার — সাথে সার্চদাতার নাম ক্লিকেবল-মেনশন:
+    # ক্যাপশনের প্রথম লাইনেই আসবে '🎉 দারুণ পছন্দ @নাম!' (ট্যাপ করলে ওই ইউজারের প্রোফাইল খোলে)
+    g_name = html.escape(m.from_user.first_name or "বন্ধু")
+    g_mention = f"<a href='tg://user?id={m.from_user.id}'>{g_name}</a>"
+    caption, markup, best = build_search_reply(res, q, name=g_mention)
     sent = None
     try:
         if best.get("photo_id"):
