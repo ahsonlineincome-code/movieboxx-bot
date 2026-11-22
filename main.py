@@ -627,8 +627,7 @@ def build_search_reply(results, q, name=None, in_group=True):
         f"📺 {q_label}: <b>{' • '.join(qd)}</b>\n"
         f"📅 Year: <b>{best.get('year') or 'N/A'}</b>\n"
         f"🔗 Download Links: <b>{best.get('parts', 1)}টি</b>\n\n"
-        f"👉 নিচের <b>মুভির নামের বাটনে</b> ট্যাপ দিলেই মিনি অ্যাপে সরাসরি এই মুভির পেজ খুলে যাবে!\n"
-        f"⏭ নিচের <b>সিমিলার বাটনে</b> চাপলে কাছাকাছি মুভি/পর্বেও সরাসরি ঢুকতে পারবেন।"
+        f"👇 নিচের বাটনে ট্যাপ দিলেই মিনি-অ্যাপে সরাসরি মুভির পেজ খুলে যাবে!"
     )
     # 🎬 প্রথম বাটনেই মুভির পুরো নাম — 'Watch on Home' লেখার বদলে সার্চ দেওয়া মুভির নামটাই (ডিপ-লিংক)
     # ⚠️ টেলিগ্রাম-নিয়ম: web_app-বাটন শুধু প্রাইভেটে বৈধ — গ্রুপে পাঠালে BUTTON_TYPE_INVALID;
@@ -674,6 +673,7 @@ group_last_reply: dict = {}        # chat_id → শেষ রিপ্লাই
 # না-পাওয়া গেলে গ্রুপে একটা সফট হিন্ট যাবে কি না (0 দিলে বন্ধ; ডিফল্ট চালু — বট যেন মৃত না দেখায়)
 GROUP_SEARCH_MISS_REPLY = os.getenv("GROUP_SEARCH_MISS_REPLY", "1") == "1"
 GROUP_SEARCH_MISS_TTL_SEC = 0      # 0 = রিকোয়েস্ট-হিন্ট থেকে যাবে চিরদিন (মালিক পরে দেখে মুভি অ্যাড করবেন); অটো-ডিলিট চাইলে সেকেন্ড বসাও
+PRIVATE_SEARCH_TTL_SEC = 60        # প্রাইভেট-বটে সার্চ-রিপ্লাই ১ মিনিট পর অটো-ডিলিট (ইউজার+অ্যাডমিন — দুজনেরই; ডেলিভারি-ফাইলের del_time আলাদা)
 
 # ── 🌐 ল্যাটিন↔বাংলা ট্রান্সলিট-ফলব্যাক: ব্যঞ্জন-কঙ্কাল ম্যাচিং ──
 # "Raghu Dakat" (ইংরেজি অক্ষরে) দিয়েও "রঘু ডাকাত"-এর মতো বাংলা টাইটেল ধরতে:
@@ -737,15 +737,28 @@ async def handle_user_messages(m: types.Message):
     if results:
         # 🔍 লেটেস্ট-ফার্স্ট + সিমিলার বাটনসহ রেন্ডার ('AP30'-স্টাইল এপিসোড ম্যাচও ধরা হয়)
         caption, markup, best = build_search_reply(results, q, name)
+        sent = None
         try:
             if best.get("photo_id"):
-                await bot.send_photo(uid, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
+                sent = await bot.send_photo(uid, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
             else:
-                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                sent = await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
         except Exception:
             try:
-                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                sent = await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
             except Exception: pass
+        # ⏱ প্রাইভেট-সার্চ-রিপ্লাই ১ মিনিটে অটো-ডিলিট (টাইমার + auto_delete-রেকর্ড — রিস্টার্ট হলেও ওয়ার্কার মুছবে)
+        if sent:
+            try:
+                await db.auto_delete.insert_one({"chat_id": uid, "message_id": sent.message_id, "delete_at": datetime.datetime.utcnow() + datetime.timedelta(seconds=PRIVATE_SEARCH_TTL_SEC)})
+            except Exception: pass
+            async def _zap_private(chat_id=uid, msg_id=sent.message_id):
+                await asyncio.sleep(PRIVATE_SEARCH_TTL_SEC)
+                try: await bot.delete_message(chat_id, msg_id)
+                except Exception: pass
+                try: await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": msg_id})
+                except Exception: pass
+            asyncio.create_task(_zap_private())
         return
     # ❌ পাওয়া যায়নি → সুন্দর গাইড মেসেজ (সঠিক নাম নিয়ে আবার লিখতে বলা) + অ্যাডমিনকে রিকোয়েস্ট
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
@@ -1118,16 +1131,30 @@ async def admin_search_movies(m: types.Message):
     results = await search_movies_smart(q)
     if results:
         # 🔍 অ্যাডমিন সার্চেও একই রেন্ডারার — লেটেস্ট-ফার্স্ট + NEXT/সিমিলার বাটন
-        caption, markup, best = build_search_reply(results, q)
+        # 🏷️ অ্যাডমিন-সার্চেও সার্চদাতার নাম দেখাবে (দারুণ পছন্দ ... — রিকোয়েস্ট-বটের মতোই)
+        caption, markup, best = build_search_reply(results, q, m.from_user.first_name or "Admin")
+        sent = None
         try:
             if best.get("photo_id"):
-                await bot.send_photo(m.from_user.id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
+                sent = await bot.send_photo(m.from_user.id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
             else:
-                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                sent = await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
         except Exception:
             try:
-                await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                sent = await m.answer(caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
             except Exception: pass
+        # ⏱ অ্যাডমিন-সার্চ-রিপ্লাইও ১ মিনিটে অটো-ডিলিট
+        if sent:
+            try:
+                await db.auto_delete.insert_one({"chat_id": m.from_user.id, "message_id": sent.message_id, "delete_at": datetime.datetime.utcnow() + datetime.timedelta(seconds=PRIVATE_SEARCH_TTL_SEC)})
+            except Exception: pass
+            async def _zap_private_admin(chat_id=m.from_user.id, msg_id=sent.message_id):
+                await asyncio.sleep(PRIVATE_SEARCH_TTL_SEC)
+                try: await bot.delete_message(chat_id, msg_id)
+                except Exception: pass
+                try: await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": msg_id})
+                except Exception: pass
+            asyncio.create_task(_zap_private_admin())
         return
     # ❌ অ্যাডমিনের জন্য আলাদা মেসেজ — রিকোয়েস্ট ফরওয়ার্ড হবে না, সরাসরি আপলোড করতে বলা হবে
     await m.answer(
@@ -2502,7 +2529,7 @@ async def web_ui():
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2>🎉 সাকসেসফুল!</h2>
                 <p style="color:#94a3b8; margin-top:10px;">আপনার ফাইল প্রস্তুত! নিচের <b>বটে যান</b> বাটনে ক্লিক করে বট চ্যাট খুলুন, তারপর <b>START</b> চাপুন — ফাইলটি সাথে সাথেই আপনাকে পাঠিয়ে দেওয়া হবে।</p>
-                <a id="newUserBotLink" href="#" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);" onclick="event.preventDefault(); try { tg.openTelegramLink(this.href); } catch(e) { window.open(this.href, '_blank'); }">🤖 বটে যান</a>
+                <a id="newUserBotLink" href="#" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);" onclick="event.preventDefault(); openBotDeep(this.href);">🤖 বটে যান</a>
                 <p style="color:#64748b; font-size:12px; margin-top:8px;">⚠️ অবশ্যই START চাপবেন — START চাপলেই ফাইল অটো চলে আসবে!</p>
             </div>
         </div>
@@ -3256,7 +3283,15 @@ async def web_ui():
             let botFileLink = 'https://t.me/' + BOT_USERNAME;
             // 🤖 "বটে গিয়ে ফাইল নিন" — ক্লিক করলেই সরাসরি বট চ্যাট খুলে যাবে (ফাইল আগেই বটে
             // ডেলিভারি হয়ে থাকে), সাথে মিনি অ্যাপ পেজটাও বন্ধ হয়ে ইউজার বটেই থাকবে
-            function openBotForFile() { try { tg.openTelegramLink(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 400); } catch(e) { window.open(botFileLink, '_blank'); } }
+            /* 🔗 বটে নেওয়ার ডিপ-লিংক: ওয়েবভিউতে t.me-লিংক খুললে টেলিগ্রাম 'START Movie Box' ওয়েব-পেজ দেখায় কিন্তু চ্যাটে ঢোকে না —
+               তাই আগে tg://resolve (সরাসরি বট-চ্যাটে ঢোকে), না হলে tg.openTelegramLink, শেষ ফলব্যাক নতুন-ট্যাব */
+            function openBotDeep(httpsUrl) {
+                let tgUrl = httpsUrl;
+                try { const u = new URL(httpsUrl); const dom = u.pathname.replace('/', ''); const st = u.searchParams.get('start') || u.searchParams.get('startapp'); tgUrl = 'tg://resolve?domain=' + dom + (st ? '&start=' + st : ''); } catch(e) {}
+                try { window.location.href = tgUrl; } catch(e) {}
+                setTimeout(function(){ try { if (tg.openTelegramLink) { tg.openTelegramLink(httpsUrl); } else { window.open(httpsUrl, '_blank'); } } catch(e) { try { window.open(httpsUrl, '_blank'); } catch(e2) {} } }, 800);
+            }
+            function openBotForFile() { openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }
 
             async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
@@ -3474,6 +3509,8 @@ def _svg_response(svg: str) -> Response:
 
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
+    # 🔁 আগের স্মুথ-পদ্ধতি: পোস্টারের bytes সার্ভার নিজেই স্ট্রিম করে (একই-অরিজিন লোড — স্লো-নেটেও ঝরঝরে;
+    # বোনাস: api.telegram.org-রিডাইরেক্টে বট-টোকেন আর ওপেন হয় না)। ভাঙা/ভিডিও-ফাইল-আইডিতে SVG-প্লেসহোল্ডার।
     try:
         cache = await db.file_cache.find_one({"photo_id": photo_id})
         now = datetime.datetime.utcnow()
@@ -3481,12 +3518,17 @@ async def get_image(photo_id: str):
         else:
             file_info = await bot.get_file(photo_id); file_path = file_info.file_path
             await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(hours=1)}}, upsert=True)
-        # ভিডিও/ডকুমেন্ট-ফাইল পোস্টার-হিসেবে এলে ব্রাউজার <img>-এ দেখাতে পারে না → প্লেসহোল্ডার
         fname = (file_path or "").rsplit("/", 1)[-1]
         ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-        if ext and ext not in ("jpg", "jpeg", "png", "webp"): return _svg_response(PLACEHOLDER_POSTER_SVG)
+        media = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}.get(ext, "")
+        if ext and not media: return _svg_response(PLACEHOLDER_POSTER_SVG)  # ভিডিও/ডকুমেন্ট-ফাইল
+        if not media: media = "image/jpeg"
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
-        return RedirectResponse(url=file_url)
+        async def stream_image():
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as resp:
+                    async for chunk in resp.content.iter_chunked(8192): yield chunk
+        return StreamingResponse(stream_image(), media_type=media, headers={"Cache-Control": "public, max-age=3600"})
     except: return _svg_response(PLACEHOLDER_POSTER_SVG)
 
 @app.get("/api/plus18.svg")
