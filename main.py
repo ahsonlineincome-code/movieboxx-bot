@@ -644,58 +644,30 @@ def build_search_reply(results, q, name=None):
     return caption, types.InlineKeyboardMarkup(inline_keyboard=kb), best
 
 # ==========================================
-# 👥 গ্রুপ-সার্চ সিস্টেম — যেকোনো গ্রুপে বটকে Admin বানালেই চালু হয়ে যায়
-# গ্রুপে কেউ মুভির নাম লিখলে বট সাথে সাথে মুভি-পোস্ট পাঠায়; GROUP_SEARCH_TTL_SEC সেকেন্ড
-# পর রিপ্লাই অটো-ডিলিট হয় (auto_delete ওয়ার্কার + ইন-প্রসেস ফলব্যাক টাইমার দুটোই আছে)।
-# নোট: বট Admin হলে Telegram গ্রুপের সব মেসেজ পায় (privacy mode বাইপাস) — তাই
-# BotFather-এ কিছু বদলাতে হয় না; অ্যাডমিন না হলে বট নীরব থাকে।
+# 👥 গ্রুপ-সার্চ সিস্টেম — বট যেকোনো গ্রুপে মুভির নাম পেলে উত্তর দেয়
+# ⚠️ জরুরি (টেলিগ্রামের নিয়ম): বট গ্রুপের সাধারণ টেক্সট তখনই পায় যখন —
+#    ① বটকে ওই গ্রুপে Admin বানানো হয় (সবচেয়ে সহজ — অ্যাডমিন বট সব মেসেজ পায়), অথবা
+#    ② BotFather → /mybots → বট → Bot Settings → Group Privacy → Turn off
+#    কোনোটা করা না থাকলে টেলিগ্রামই বটকে মেসেজ পাঠায় না — তখন কোড চিত হোক বা না হোক, কিছুই হবে না।
+#    বট নিজের পোস্ট নিজে ডিলিট করতে অ্যাডমিন-অধিকার লাগে না — মেসেজ পেলেই এই সিস্টেম চলে।
 # ==========================================
 GROUP_SEARCH_TTL_SEC = 60          # গ্রুপে সার্চ-রিপ্লাই কত সেকেন্ড থাকবে (এরপর অটো-ডিলিট)
-GROUP_SEARCH_DEL_USER_MSG = False  # True দিলে সার্চদাতার মেসেজও সাথে ডিলিট হবে (গ্রুপ আরো পরিষ্কার)
+GROUP_SEARCH_DEL_USER_MSG = False  # True দিলে সার্চদাতার মেসেজও ডিলিট হবে (এর জন্য অ্যাডমিন লাগবে)
 GROUP_SEARCH_COOLDOWN = 10         # একই গ্রুপে পরপর রিপ্লাইয়ের ন্যূনতম ফাঁক (স্প্যাম-ব্রেক)
 GROUP_SEARCH_MIN_LEN = 3           # এর চেয়ে ছোট টেক্সট এমনিতেই ইগনোর
+# 1 দিলে কনসোলে গ্রুপ-সার্চ লগ দেখা যাবে (বট মেসেজ পাচ্ছে কি না যাচাইয়ের সহজ উপায়)
+GROUP_SEARCH_DEBUG = os.getenv("GROUP_SEARCH_DEBUG", "0") == "1"
 
-# এই সাধারণ শব্দগুলো সার্চ-ম্যাচে ধরা হয় না ('রঘু ডাকাত টা দেও' → 'রঘু ডাকাত' খোঁজে)
+# এই সাধারণ চ্যাট-শব্দগুলো সার্চ-ম্যাচে ধরা হয় না ('রঘু ডাকাত টা দেও' → 'রঘু ডাকাত' খোঁজে)
 GROUP_SEARCH_FILLERS = {
     "মুভি", "মুবি", "movie", "movies", "film", "নাম", "name", "দেখাও", "দেখো",
     "দেও", "দাও", "চাই", "chai", "লিংক", "link", "please", "pls", "plx",
-    "ভাই", "bro", "কই", "এর", "টা", "টি", "দিবে", "দিও", "send", "kar", "do",
+    "ভাই", "bro", "কই", "এর", "টা", "টি", "দিবে", "দিবো", "দিও", "send", "do",
+    "নতুন", "আছে", "হবে", "দেখি", "চলো", "কি", "কী", "নাকি", "লাগবে", "খুঁজছি",
+    "খুজতেছি", "চাচ্ছি", "need", "want", "give", "old", "new", "একটা", "টার",
 }
 
-# 🛡️ গ্রুপ-অ্যাডমিন ক্যাশ: chat_id → (is_admin, checked_at); GROUP_ADMIN_TTL পরপর রিচেক
-group_admin_cache: dict = {}
-GROUP_ADMIN_TTL = 1800
 group_last_reply: dict = {}        # chat_id → শেষ রিপ্লাইয়ের ts (কুলডাউনের জন্য)
-_bot_id = 0
-
-async def _get_bot_id() -> int:
-    """বটের নিজের id — একবারই বের করে রাখে (bot.id, না পেলে get_me ফলব্যাক)।"""
-    global _bot_id
-    if not _bot_id:
-        try:
-            _bot_id = bot.id
-        except Exception:
-            try:
-                _bot_id = (await bot.get_me()).id
-            except Exception:
-                _bot_id = 0
-    return _bot_id
-
-async def bot_is_group_admin(chat_id: int) -> bool:
-    """এই গ্রুপে বট অ্যাডমিন কি না (৩০ মিনিটে একবার ক্যাশ-রিফ্রেশ — মেসেজপ্রতি API কল নয়)।"""
-    ent = group_admin_cache.get(chat_id)
-    now = time.time()
-    if ent and now - ent[1] < GROUP_ADMIN_TTL:
-        return ent[0]
-    ok = False
-    try:
-        admins = await bot.get_chat_administrators(chat_id)
-        my_id = await _get_bot_id()
-        ok = my_id != 0 and any(a.user.id == my_id for a in admins)
-    except Exception:
-        ok = False
-    group_admin_cache[chat_id] = (ok, now)
-    return ok
 
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
@@ -745,36 +717,50 @@ async def handle_user_messages(m: types.Message):
     except Exception: pass
 
 # ── 👥 গ্রুপ-সার্চ হ্যান্ডলার: গ্রুপের সাধারণ টেক্সট মেসেজ ──
-# অ্যাডমিন-বট হওয়ায় গ্রুপের সব মেসেজ পায়; স্ট্রিক্ট AND-ম্যাচ না হলে চুপ থাকে —
-# তাই গ্রুপের র্যান্ডম কথাবার্তায় বট কখনো হস্তক্ষেপ করে না।
+# বট মেসেজ পেলেই সার্চ করে (কোনো অ্যাডমিন-গেট নেই); আসল নাম-ম্যাচ না হলে চুপ থাকে —
+# তাই গ্রুপের র্যান্ডম কথাবার্তায় বট হস্তক্ষেপ করে না।
 @dp.message(lambda m: m.chat.type in ("group", "supergroup")
-            and m.from_user is not None and not m.from_user.is_bot
+            and m.from_user is not None
             and (m.text or "").strip() and not (m.text or "").strip().startswith("/"))
 async def handle_group_search(m: types.Message):
     q = (m.text or "").strip()
+    # বটের নিজের মেসেজ / লিংকড-চ্যানেলের ফরোয়ার্ড বাদ; তবে anonymous-admin (গ্রুপের নামে পোস্ট) গ্রহণ
+    if m.from_user.is_bot:
+        sc = m.sender_chat
+        if not (sc and sc.id == m.chat.id and sc.type in ("group", "supergroup")): return
+        s_name, s_id, s_linked = (sc.title or "অ্যাডমিন"), sc.id, False
+    else:
+        s_name, s_id, s_linked = m.from_user.first_name or "বন্ধু", m.from_user.id, True
     if len(q) < GROUP_SEARCH_MIN_LEN or len(q) > 60: return
     chat_id = m.chat.id
-    # এই গ্রুপে বট অ্যাডমিন না হলে কিছুই করবে না (অ্যাডমিন দিলেই কাজ শুরু)
-    if not await bot_is_group_admin(chat_id): return
+    if GROUP_SEARCH_DEBUG: print(f"👥 গ্রুপ-সার্চ [{chat_id}] {s_name}: {q!r}", flush=True)
 
-    # 🔍 ফিলার-শব্দ বাদ দিয়ে সার্চ, তারপর স্ট্রিক্ট AND-যাচাই:
-    # টাইপ করা প্রতিটা শব্দ (ফিলার বাদে) মুভির টাইটেলে থাকতেই হবে —
-    # 'আজকে কি নতুন কিছু আছে'-স্টাইল কথায় বট আর ঘুমাবে, মুভির নাম লিখলেই জেগে উঠবে।
+    # 🔍 চ্যাট-শব্দ বাদ দিয়ে আসল নামটা বের করে সেটাই সার্চ — র‍্যাঙ্কিংও তখন শুদ্ধ হয়
     words = [w for w in re.split(r"\s+", q.lower()) if w and w not in GROUP_SEARCH_FILLERS and len(w) >= 2]
-    if not words: return
-    res = await search_movies_smart(q)
-    if not res: return
-    if not any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res): return
+    if not words:
+        if GROUP_SEARCH_DEBUG: print("👥 → শুধু চ্যাট-শব্দ → চুপ", flush=True)
+        return
+    s_query = " ".join(words)
+    res = await search_movies_smart(s_query)
+    if not res:
+        if GROUP_SEARCH_DEBUG: print(f"👥 → DB-তে নেই: {s_query!r}", flush=True)
+        return
+    # এক শব্দ হলে টাইটেলে থাকলেই যথেষ্ট (আংশিক নামও ধরা পড়ে); বেশি শব্দ হলে সবগুলো এক টাইটেলে থাকতে হবে
+    if len(words) == 1:
+        ok = any(words[0] in (mm.get("title") or "").lower() for mm in res)
+    else:
+        ok = any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res)
+    if not ok:
+        if GROUP_SEARCH_DEBUG: print("👥 → স্ট্রিক্ট-ম্যাচ ফেল → চুপ", flush=True)
+        return
 
     # ⏱ কুলডাউন — একই গ্রুপে টানা টানা রিপ্লাই নয়
     now = time.time()
     if now - group_last_reply.get(chat_id, 0) < GROUP_SEARCH_COOLDOWN: return
 
-    # 🎁 প্রাইভেট-সার্চের হুবহু একই রেন্ডারার — সাথে সার্চদাতার নাম ক্লিকেবল-মেনশন:
-    # ক্যাপশনের প্রথম লাইনেই আসবে '🎉 দারুণ পছন্দ @নাম!' (ট্যাপ করলে ওই ইউজারের প্রোফাইল খোলে)
-    g_name = html.escape(m.from_user.first_name or "বন্ধু")
-    g_mention = f"<a href='tg://user?id={m.from_user.id}'>{g_name}</a>"
-    caption, markup, best = build_search_reply(res, q, name=g_mention)
+    # 🏷️ সার্চদাতার নাম মেনশন (anonymous-admin হলে সাদামাটা নাম — চ্যাট-আইডি লিংক করা যায় না)
+    g_mention = (f"<a href='tg://user?id={s_id}'>{html.escape(s_name)}</a>" if s_linked else html.escape(s_name))
+    caption, markup, best = build_search_reply(res, s_query, name=g_mention)
     sent = None
     try:
         if best.get("photo_id"):
@@ -788,6 +774,7 @@ async def handle_group_search(m: types.Message):
             return
     if sent is None: return
     group_last_reply[chat_id] = now
+    if GROUP_SEARCH_DEBUG: print(f"👥 → রিপ্লাই গেছে (msg {sent.message_id})", flush=True)
 
     # ⏲ ১ মিনিট পর অটো-ডিলিট:
     #   ① মঙ্গোর auto_delete রেকর্ড → auto_delete_worker (বট রিস্টার্ট হলেও ডিলিট হবে)
