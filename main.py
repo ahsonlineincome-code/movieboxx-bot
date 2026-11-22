@@ -602,7 +602,7 @@ def _doc_has_ep(mm, n):
         if _tok_number(tok) == n: return True
     return False
 
-def build_search_reply(results, q, name=None):
+def build_search_reply(results, q, name=None, in_group=True):
     """🔍 সার্চ রেজাল্ট রেন্ডারার — লেটেস্ট আগে; 'AP30' লিখলে ৩০ নম্বর পর্বের ডকুমেন্ট টপে;
     নিচে সিমিলার বাটন (চাপলেই ওই পর্ব/মুভির পেজে সরাসরি ঢোকে)। Returns (caption, markup, best)"""
     q_num = _query_ep(q)
@@ -631,7 +631,9 @@ def build_search_reply(results, q, name=None):
         f"⏭ নিচের <b>সিমিলার বাটনে</b> চাপলে কাছাকাছি মুভি/পর্বেও সরাসরি ঢুকতে পারবেন।"
     )
     # 🎬 প্রথম বাটনেই মুভির পুরো নাম — 'Watch on Home' লেখার বদলে সার্চ দেওয়া মুভির নামটাই (ডিপ-লিংক)
-    if APP_URL:
+    # ⚠️ টেলিগ্রাম-নিয়ম: web_app-বাটন শুধু প্রাইভেটে বৈধ — গ্রুপে পাঠালে BUTTON_TYPE_INVALID;
+    # তাই গ্রুপে (in_group=True) url-বাটন: t.me/<bot>?startapp=<doc> — ট্যাপ করলে মিনি-অ্যাপই খোলে
+    if APP_URL and not in_group:
         watch_row = [types.InlineKeyboardButton(text=f"🎬 {best['title']}", web_app=types.WebAppInfo(url=f"{APP_URL}?open={best['doc_id']}"))]
     else:
         watch_row = [types.InlineKeyboardButton(text=f"🎬 {best['title']}", url=f"https://t.me/{BOT_USERNAME}?startapp={best['doc_id']}")]
@@ -863,7 +865,7 @@ async def handle_group_search(m: types.Message):
 
     # 🏷️ সার্চদাতার নাম মেনশন (anonymous-admin হলে সাদামাটা নাম — চ্যাট-আইডি লিংক করা যায় না)
     g_mention = (f"<a href='tg://user?id={s_id}'>{html.escape(s_name)}</a>" if s_linked else html.escape(s_name))
-    caption, markup, best = build_search_reply(res, hit or s_query, name=g_mention)
+    caption, markup, best = build_search_reply(res, hit or s_query, name=g_mention, in_group=(m.chat.type != "private"))
     sent = None
     try:
         if best.get("photo_id"):
