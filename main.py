@@ -513,13 +513,15 @@ async def unban_user(m: types.Message):
 # পোস্টারসহ সুন্দর রেজাল্ট + Watch on Home বাটন। না পেলে সুন্দর গাইড মেসেজ +
 # রিকোয়েস্ট অ্যাডমিনের কাছে চলে যাবে — অ্যাডমিন ✍️ রিপ্লাই চাপলে সরাসরি ইউজারকে উত্তর যাবে।
 # ==========================================
-async def search_movies_smart(q: str, limit: int = 6):
+async def search_movies_smart(q: str, limit: int = 6, enforce_digits: bool = True):
     """🔍 স্মার্ট মুভি সার্চ — নামের যেকোনো অংশ দিয়ে খোঁজা যায়।
     ধাপ ১: সব শব্দ টাইটেলে মিলতে হবে (AND — 'রঘু ডাকাত' দিলে 'রঘু ডাকাত' পাবে);
     ধাপ ২: না পেলে যেকোনো একটা শব্দ মিললেই (OR — ভুল/আংশিক নামে কাছাকাছি সাজেশন)।
     এক্স্যাক্ট ম্যাচ সবার আগে, তারপর বেশি ভিউ পাওয়া মুভি আগে।"""
     q = (q or "").strip()
     if not q or len(q) > 60: return []
+    # 🔢 কোয়ারির সব সংখ্যা ('KGF2'→2, 'Kgf 2'→2, '2026'→2026) — শেষে ফলাফল-ফিল্টারে ব্যবহৃত হয়
+    q_digits = sorted({int(x) for x in re.findall(r"(?<!\d)(\d{1,4})(?!\d)", q.lower())})
     words = [w for w in re.split(r"\s+", q.lower()) if w]
     if not words: return []
     async def run_pipeline(match_stage):
@@ -531,9 +533,11 @@ async def search_movies_smart(q: str, limit: int = 6):
         ]
         try: return await db.movies.aggregate(pipeline).to_list(40)
         except Exception: return []
-    results = await run_pipeline({"$and": [{"title": {"$regex": re.escape(w), "$options": "i"}} for w in words]})
-    if not results and len(words) > 1:
-        results = await run_pipeline({"$or": [{"title": {"$regex": re.escape(w), "$options": "i"}} for w in words]})
+    results = await run_pipeline({"$and": [{"title": {"$regex": _title_regex(w), "$options": "i"}} for w in words]})
+    # OR-ধাপ শুধু অক্ষর-শব্দে — সংখ্যা ('kgf 2'-এর '2') একা মিলে অন্য কোনো মুভি টেনে আনতে পারে না
+    words_alpha = [w for w in words if not w.isdigit()]
+    if not results and len(words_alpha) > 1:
+        results = await run_pipeline({"$or": [{"title": {"$regex": _title_regex(w), "$options": "i"}} for w in words_alpha]})
     if not results:
         # 🩹 ধাপ ৩: বানান-ভুল ফাজি-ম্যাচ — ৪+ অক্ষরের শব্দ সাম্প্রতিক টাইটেলের শব্দের কাছে হলে সেই ভিত্তি-নামে আবার খোঁজা
         fuzzy = await _fuzzy_pick(words)
@@ -552,7 +556,11 @@ async def search_movies_smart(q: str, limit: int = 6):
         hit2 = _skeleton_hit(words, cand_titles) if cand_titles else None
         if hit2:
             base2 = _base_name_of(hit2)
-            results = await run_pipeline({"$and": [{"title": {"$regex": re.escape(w), "$options": "i"}} for w in base2.split()]})
+            results = await run_pipeline({"$and": [{"title": {"$regex": _title_regex(w), "$options": "i"}} for w in base2.split()]})
+    # 🔢 সংখ্যা-কোয়ারির ফিল্টার: 'KGF2'-এর '2' ফলাফলে না-থাকলে ওই নাম-মিল ভুয়া (সিকুয়েল/পর্বটা ডাটাবেসে নেই) —
+    # খালি ফেরত = বট ও গ্রুপ দুটোতেই মিস-রিপ্লাই যাবে, ভুল মুভি দেখাবে না; মিস-সিমিলার খোঁজায় এই ফিল্টার বন্ধ থাকে
+    if results and q_digits and enforce_digits:
+        results = [mm for mm in results if all(_doc_has_ep(mm, d) for d in q_digits)]
     if not results: return []
     ql = q.lower()
     def rank(mm):
@@ -568,6 +576,19 @@ async def search_movies_smart(q: str, limit: int = 6):
     for mm in results[:limit]:
         out.append({"title": mm["_id"], "doc_id": mm.get("doc_id"), "photo_id": mm.get("photo_id"), "quality": mm.get("quality"), "year": mm.get("year"), "parts": mm.get("parts", 1), "clicks": mm.get("clicks", 0), "qualities": _qualities_desc(mm.get("qualities"))})
     return out
+
+def _title_regex(w):
+    """ছোট ASCII-টোকেন (≤৩ অক্ষর) শব্দ-সীমায় (\b) মিলবে — 'rr'/'rrr' টুকরা-টোকেন র‍্যান্ডম টাইটেলের ভেতরে
+    ('horror'-এর 'rr') ঢুকে ভুয়া-ম্যাচ বানাতে পারে না; বাংলা/বড় টোকেন আংশিক-ম্যাচের জন্য সাবস্ট্রিং"""
+    if len(w) <= 3 and w.isascii() and any(c.isalnum() for c in w):
+        return rf"\b{re.escape(w)}\b"
+    return re.escape(w)
+
+def _tok_in_title(w, t):
+    """ok-চেকের টোকেন-ম্যাচ — ছোট ASCII-টোকেন শব্দ-সীমায়, বাকি সাবস্ট্রিং"""
+    if len(w) <= 3 and w.isascii() and any(c.isalnum() for c in w):
+        return re.search(rf"\b{re.escape(w)}\b", t) is not None
+    return w in t
 
 def _base_name_of(title):
     """টাইটেল থেকে ভিত্তি-নাম: EP/AP/রেঞ্জ, সাল, S01-জাতীয় টোকেন কেটে
@@ -658,6 +679,9 @@ def _doc_has_ep(mm, n):
         if int(a) <= n <= int(b): return True
     for tok in (mm.get("qualities") or []):
         if _tok_number(tok) == n: return True
+    # 'Bachelor Point S05'-জাতীয় টোকেনের নম্বর ('S05'→5) টাইটেল-শব্দ থেকেও মেলে
+    for tw in _title_words(t):
+        if _tok_number(tw) == n: return True
     return False
 
 def build_search_reply(results, q, name=None, in_group=True):
@@ -778,7 +802,8 @@ def _title_words(t: str):
 def _skeleton_hit(words, titles):
     """কুয়েরির সব নির্ভরযোগ্য শব্দ-কঙ্কাল যে টাইটেলে মেলে, সেই টাইটেল ফেরত; না মিললে None"""
     qsk = [(w, _word_skeleton(w)) for w in words]
-    qsk = [(w, s) for w, s in qsk if len(s) >= 2]   # ২-অক্ষরের নিচে কঙ্কাল অনির্ভরযোগ্য
+    # ২-অক্ষরের নিচে কঙ্কাল অনির্ভরযোগ্য; এক-অক্ষর-পুনরাবৃত্তি ('rrr'→"rrr") জাঙ্ক — ম্যাচে নেওয়া হয় না
+    qsk = [(w, s) for w, s in qsk if len(s) >= 2 and len(set(s)) >= 2]
     if not qsk: return None
     best, best_score = None, 0
     import difflib
@@ -791,7 +816,10 @@ def _skeleton_hit(words, titles):
             for tw, ts in zip(twords, tsk):
                 # সরাসরি সমান / অন্তর্ভুক্ত / কঙ্কাল-ফাজি ('পয়েন্ট'→'pynt'≈'pnt'=point) — বানান-ভুলও ধরা পড়ে
                 if ts and (s == ts or (len(s) >= 3 and s in ts)
-                           or (len(s) >= 3 and len(ts) >= 3 and difflib.SequenceMatcher(None, s, ts).ratio() >= 0.75)):
+                           # কঙ্কাল-ফাজি শুধু বাংলা-কুয়েরিতে (ক্রস-স্ক্রিপ্ট 'পয়েন্ট'≈'point') —
+                           # ল্যাটিন-জাঙ্ক ('rrr') এই পথে ঢুকতে পারে না
+                           or (any("\u0980" <= c <= "\u09ff" for c in w) and len(s) >= 3 and len(ts) >= 3
+                               and difflib.SequenceMatcher(None, s, ts).ratio() >= 0.75)):
                     hitw = True; break
             if hitw: score += 1
             else: score = -99; break    # একটা শব্দও না মিললে ওই টাইটেল বাতিল
@@ -805,10 +833,10 @@ async def _similar_buttons(words, limit=4):
     core = [w for w in (words or []) if not w.isdigit() and not re.match(r"(?i)^(ep|eps|episode|ap|bp|part|pt)$", w)]
     res = []
     if core:
-        res = await search_movies_smart(" ".join(core))
+        res = await search_movies_smart(" ".join(core), enforce_digits=False)
     if not res:
         for w in sorted(core, key=len, reverse=True):
-            res = await search_movies_smart(w)
+            res = await search_movies_smart(w, enforce_digits=False)
             if res: break
     if not res:
         try:
@@ -816,7 +844,7 @@ async def _similar_buttons(words, limit=4):
         except Exception: rows = []
         titles = [r.get("title") or "" for r in rows if r.get("title")]
         hit = _skeleton_hit(core or (words or []), titles) if titles else None
-        if hit: res = await search_movies_smart(_base_name_of(hit))
+        if hit: res = await search_movies_smart(_base_name_of(hit), enforce_digits=False)
     kb = []
     for mm in (res or [])[:limit]:
         kb.append([types.InlineKeyboardButton(text=f"🎬 {_short_title(mm['title'])}", url=f"https://t.me/{BOT_USERNAME}?startapp={mm.get('doc_id')}")])
@@ -910,7 +938,10 @@ async def handle_group_search(m: types.Message):
     # 🔢 এপিসোড-কোয়ারি ('EP 130'/'AP30') বটের (প্রাইভেট) মতোই রেসপন্স পাক — ম্যাচ-রায় পর্ব-নম্বর দিয়ে হবে
     m_ep = re.search(r"\b(?:ep|eps|episode|ap|bp|part|pt)\s*[._-]*\s*(\d{1,3})", q.lower())
     ep_num = int(m_ep.group(1)) if m_ep else None
-    words = [w for w in re.split(r"\s+", q.lower()) if w and w not in GROUP_SEARCH_FILLERS and len(w) >= 2]
+    # 🔢 আসল কোয়ারির সব সংখ্যা — ফলব্যাক-ম্যাচ যাচাইতেও কাজে লাগে
+    q_digits = sorted({int(x) for x in re.findall(r"(?<!\d)(\d{1,4})(?!\d)", q.lower())})
+    # 🔢 সংখ্যা-টোকেনও রাখা হয় ('Kgf 2'-এর '2') — সার্চ ও ম্যাচ-রায় দুটোতেই সংখ্যা সম্মানিত হয়
+    words = [w for w in re.split(r"\s+", q.lower()) if w and w not in GROUP_SEARCH_FILLERS and (len(w) >= 2 or w.isdigit())]
     if not words:
         if GROUP_SEARCH_DEBUG: print("👥 → শুধু চ্যাট-শব্দ → চুপ", flush=True)
         return
@@ -923,8 +954,8 @@ async def handle_group_search(m: types.Message):
     if res:
         # 🔢 ep-টোকেন-কোয়ারিতে ম্যাচ-রায় পর্ব-নম্বর দিয়ে ('EP 130' → 'EP 129-134' রেঞ্জের ডকও ম্যাচ — বটের মতো)
         ok = any(_doc_has_ep(mm, ep_num) for mm in res) if ep_num is not None else (
-            any(words[0] in (mm.get("title") or "").lower() for mm in res) if len(words) == 1
-            else any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res))
+            any(_tok_in_title(words[0], (mm.get("title") or "").lower()) for mm in res) if len(words) == 1
+            else any(all(_tok_in_title(w, (mm.get("title") or "").lower()) for w in words) for mm in res))
 
     # ── ধাপ ২: ল্যাটিন-অক্ষরে লেখা সার্চও বাংলা টাইটেল ধরুক — ব্যঞ্জন-কঙ্কাল ফলব্যাক ──
     if not ok:
@@ -947,6 +978,9 @@ async def handle_group_search(m: types.Message):
             res = await search_movies_smart(_base_name_of(hit))
             if not res:
                 res = await search_movies_smart(hit)
+            # 🔢 আসল কোয়ারির সংখ্যা ফলাফলে না-থাকলে ভুয়া-ম্যাচ ('KGF2' → KGF Chapter 1 নয়) — মিস যাবে
+            if res and q_digits:
+                res = [mm for mm in res if all(_doc_has_ep(mm, d) for d in q_digits)]
             ok = bool(res)
             if GROUP_SEARCH_DEBUG: print(f"👥 → ফলব্যাক-ম্যাচ {hit!r} → {'ফলাফল মিলেছে' if ok else 'ফলাফল খালি'}", flush=True)
 
@@ -954,8 +988,9 @@ async def handle_group_search(m: types.Message):
     if not ok:
         if GROUP_SEARCH_DEBUG: print(f"👥 → কিছুই পাওয়া যায়নি ({s_query!r}) → {'হিন্ট যাবে' if GROUP_SEARCH_MISS_REPLY else 'চুপ'}", flush=True)
         if not GROUP_SEARCH_MISS_REPLY: return
-        # অবিশ্বস্ত শব্দ-কঙ্কাল (যেমন 'Haa'→'h') হলে হিন্ট দিয়ে সুবিধা না — চুপ
-        if any(len(_word_skeleton(w)) < 2 for w in words):
+        # অবিশ্বস্ত শব্দ-কঙ্কাল (যেমন 'Haa'→'h') হলে হিন্ট দিয়ে সুবিধা না — চুপ;
+        # 🔢 সংখ্যা-টোকেন ('Kgf 2'-এর '2') কঙ্কাল খালি হয় স্বাভাবিকভাবেই — ওগুলো চুপ-রায়ে গণ্য নয়
+        if any(len(_word_skeleton(w)) < 2 for w in words if not w.isdigit()):
             if GROUP_SEARCH_DEBUG: print("👥 → শব্দ-কঙ্কাল অবিশ্বস্ত → চুপ", flush=True)
             return
         now = time.time()
@@ -970,6 +1005,14 @@ async def handle_group_search(m: types.Message):
             sent_hint = await bot.send_message(chat_id, hint, parse_mode="HTML",
                                                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=sim_kb) if sim_kb else None,
                                                disable_web_page_preview=True)
+            # ⏱ সিমিলার-বাটন-লিস্ট গ্রুপ-TTL (১ মিনিট) পর সরে যাবে — মিস-মেসেজের লেখা স্থায়ী থাকে;
+            # reply_markup বাদ দিলে শুধু বাটন-অংশটা মুছে যায় (মালিকের নির্দেশ)
+            if sim_kb and sent_hint:
+                async def _zap_miss_sim(chat_id=chat_id, msg_id=sent_hint.message_id):
+                    await asyncio.sleep(GROUP_SEARCH_TTL_SEC)
+                    try: await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id)
+                    except Exception: pass
+                asyncio.create_task(_zap_miss_sim())
         except Exception as e:
             if GROUP_SEARCH_DEBUG: print(f"👥 → হিন্ট পাঠানো গেল না: {e}", flush=True)
             return
