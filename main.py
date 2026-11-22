@@ -23,7 +23,7 @@ except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 # ==========================================
 
-from fastapi import FastAPI, Body, Request, Depends, HTTPException, status
+from fastapi import FastAPI, Body, Request, Depends, HTTPException, status, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -653,8 +653,8 @@ def build_search_reply(results, q, name=None, in_group=True):
 #    কোনোটা করা না থাকলে টেলিগ্রামই বটকে মেসেজ পাঠায় না — তখন কোড চিত হোক বা না হোক, কিছুই হবে না।
 #    বট নিজের পোস্ট নিজে ডিলিট করতে অ্যাডমিন-অধিকার লাগে না — মেসেজ পেলেই এই সিস্টেম চলে।
 # ==========================================
-GROUP_SEARCH_TTL_SEC = 60          # গ্রুপে সার্চ-রিপ্লাই কত সেকেন্ড থাকবে (এরপর অটো-ডিলিট)
-GROUP_SEARCH_DEL_USER_MSG = False  # True দিলে সার্চদাতার মেসেজও ডিলিট হবে (এর জন্য অ্যাডমিন লাগবে)
+GROUP_SEARCH_TTL_SEC = 30          # গ্রুপে সার্চ-রিপ্লাই কত সেকেন্ড থাকবে (এরপর সার্চদাতার মেসেজসহ অটো-ডিলিট)
+GROUP_SEARCH_DEL_USER_MSG = True   # ম্যাচ-হলে সার্চদাতার মেসেজও রিপ্লাইয়ের সাথে ডিলিট হয় (বট গ্রুপে অ্যাডমিন হলে চলে); মিস-হিন্টে ইউজারের মেসেজ কখনো ডিলিট হয় না
 GROUP_SEARCH_COOLDOWN = 10         # একই গ্রুপে পরপর রিপ্লাইয়ের ন্যূনতম ফাঁক (স্প্যাম-ব্রেক)
 GROUP_SEARCH_MIN_LEN = 3           # এর চেয়ে ছোট টেক্সট এমনিতেই ইগনোর
 # 1 দিলে কনসোলে গ্রুপ-সার্চ লগ দেখা যাবে (বট মেসেজ পাচ্ছে কি না যাচাইয়ের সহজ উপায়)
@@ -673,7 +673,7 @@ group_last_reply: dict = {}        # chat_id → শেষ রিপ্লাই
 
 # না-পাওয়া গেলে গ্রুপে একটা সফট হিন্ট যাবে কি না (0 দিলে বন্ধ; ডিফল্ট চালু — বট যেন মৃত না দেখায়)
 GROUP_SEARCH_MISS_REPLY = os.getenv("GROUP_SEARCH_MISS_REPLY", "1") == "1"
-GROUP_SEARCH_MISS_TTL_SEC = 60     # হিন্ট-রিপ্লাই কত সেকেন্ড থাকবে (এরপর অটো-ডিলিট)
+GROUP_SEARCH_MISS_TTL_SEC = 0      # 0 = রিকোয়েস্ট-হিন্ট থেকে যাবে চিরদিন (মালিক পরে দেখে মুভি অ্যাড করবেন); অটো-ডিলিট চাইলে সেকেন্ড বসাও
 
 # ── 🌐 ল্যাটিন↔বাংলা ট্রান্সলিট-ফলব্যাক: ব্যঞ্জন-কঙ্কাল ম্যাচিং ──
 # "Raghu Dakat" (ইংরেজি অক্ষরে) দিয়েও "রঘু ডাকাত"-এর মতো বাংলা টাইটেল ধরতে:
@@ -836,27 +836,30 @@ async def handle_group_search(m: types.Message):
             return
         now = time.time()
         if now - group_last_reply.get(chat_id, 0) < GROUP_SEARCH_COOLDOWN: return
-        hint = (f"❓ <b>{html.escape(q)}</b> নামে কিছু পাই নাই 🙏\n"
-                "বানান মিলিয়ে আবার লেখো — ইংরেজি বা বাংলা যেকোনো অক্ষরে লিখলেই খুঁজে নেব।\n"
-                f"ব্যক্তিগত সার্চের জন্য আমাকে <a href='https://t.me/{BOT_USERNAME}'>প্রাইভেটে</a> /start দাও!")
+        hint = (f"😔 <b>«{html.escape(q)}»</b> এখনো আমাদের ডাটাবেসে নেই 🙏\n"
+                "খুব শীঘ্রই অ্যাড করে দেওয়া হবে — তবে আপাতত ইংরেজি বা বাংলা যেকোনো অক্ষরে বানান মিলিয়ে\n"
+                f"আবার লেখো, অথবা আমাকে <a href='https://t.me/{BOT_USERNAME}'>প্রাইভেটে</a> /start দিয়ে সার্চ করে দেখো!")
         try:
             sent_hint = await bot.send_message(chat_id, hint, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
             if GROUP_SEARCH_DEBUG: print(f"👥 → হিন্ট পাঠানো গেল না: {e}", flush=True)
             return
         group_last_reply[chat_id] = now
-        del_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=GROUP_SEARCH_MISS_TTL_SEC)
-        try:
-            await db.auto_delete.insert_one({"chat_id": chat_id, "message_id": sent_hint.message_id, "delete_at": del_at})
-        except Exception: pass
-        async def _zap_hint():
-            await asyncio.sleep(GROUP_SEARCH_MISS_TTL_SEC)
-            try: await bot.delete_message(chat_id, sent_hint.message_id)
+        # 📌 রিকোয়েস্ট-হিন্ট: ইউজারের মেসেজ ও হিন্ট — দুটোই থেকে যায় (মালিক পরে দেখে মুভি অ্যাড করবেন)।
+        # অটো-ডিলিট চাইলে GROUP_SEARCH_MISS_TTL_SEC > 0 করুন।
+        if GROUP_SEARCH_MISS_TTL_SEC > 0:
+            del_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=GROUP_SEARCH_MISS_TTL_SEC)
+            try:
+                await db.auto_delete.insert_one({"chat_id": chat_id, "message_id": sent_hint.message_id, "delete_at": del_at})
             except Exception: pass
-            try: await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": sent_hint.message_id})
-            except Exception: pass
-        asyncio.create_task(_zap_hint())
-        if GROUP_SEARCH_DEBUG: print(f"👥 → হিন্ট গেছে (msg {sent_hint.message_id})", flush=True)
+            async def _zap_hint():
+                await asyncio.sleep(GROUP_SEARCH_MISS_TTL_SEC)
+                try: await bot.delete_message(chat_id, sent_hint.message_id)
+                except Exception: pass
+                try: await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": sent_hint.message_id})
+                except Exception: pass
+            asyncio.create_task(_zap_hint())
+        if GROUP_SEARCH_DEBUG: print(f"👥 → রিকোয়েস্ট-হিন্ট গেছে (msg {sent_hint.message_id}) — ইউজারের মেসেজ থেকে যাবে", flush=True)
         return
 
     # ⏱ কুলডাউন — একই গ্রুপে টানা টানা রিপ্লাই নয়
@@ -2786,7 +2789,7 @@ async def web_ui():
                 let isFav = userFavs.includes(m._id);
                 let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 let isVerified = localStorage.getItem('isAdult') === 'true';
-                let imgSrc = (isAdult && !isVerified) ? 'https://via.placeholder.com/300x169/1e293b/ef4444?text=18%2B+🔒' : `/api/image/${m.photo_id}`;
+                let imgSrc = (isAdult && !isVerified) ? '/api/plus18.svg' : `/api/image/${m.photo_id}`;
                 let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
                 let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
 
@@ -3461,6 +3464,14 @@ async def get_public_settings():
     except:
         return {"ad_count": 1, "ad_wait": 10, "active_link": "", "active_adult_link": ""}
 
+# 🖼️ প্লেসহোল্ডার-পোস্টার (সার্ভার নিজেই সার্ভ করে — বাইরের সার্ভিস মরলেও পোস্টার আর কখনো ভাঙবে না;
+# আগে একটা বাইরের প্লেসহোল্ডার-সার্ভিসে রিডাইরেক্ট হতো — সেটা মরে যাওয়ায় কিছু পোস্টার ব্রোকেন দেখাত)
+PLACEHOLDER_POSTER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e293b"/><stop offset="1" stop-color="#0f172a"/></linearGradient></defs><rect width="400" height="600" fill="url(#g)"/><circle cx="200" cy="235" r="80" fill="#ef4444"/><text x="200" y="265" font-size="88" text-anchor="middle">🎬</text><text x="200" y="388" font-size="36" font-weight="bold" text-anchor="middle" fill="#f8fafc" font-family="Arial">Movie Box</text><text x="200" y="435" font-size="24" text-anchor="middle" fill="#94a3b8" font-family="sans-serif">পোস্টার শীঘ্রই আসছে</text></svg>'
+PLACEHOLDER_18PLUS_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600" viewBox="0 0 400 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7f1d1d"/><stop offset="1" stop-color="#1c1917"/></linearGradient></defs><rect width="400" height="600" fill="url(#g)"/><circle cx="200" cy="250" r="86" fill="#450a0a" stroke="#ef4444" stroke-width="6"/><text x="200" y="278" font-size="80" font-weight="bold" text-anchor="middle" fill="#ef4444" font-family="Arial">18+</text><text x="200" y="400" font-size="26" text-anchor="middle" fill="#fca5a5" font-family="sans-serif">🔞 ১৮+ কনটেন্ট — নিশ্চিত করুন</text></svg>'
+
+def _svg_response(svg: str) -> Response:
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
     try:
@@ -3470,9 +3481,17 @@ async def get_image(photo_id: str):
         else:
             file_info = await bot.get_file(photo_id); file_path = file_info.file_path
             await db.file_cache.update_one({"photo_id": photo_id}, {"$set": {"file_path": file_path, "expires_at": now + datetime.timedelta(hours=1)}}, upsert=True)
+        # ভিডিও/ডকুমেন্ট-ফাইল পোস্টার-হিসেবে এলে ব্রাউজার <img>-এ দেখাতে পারে না → প্লেসহোল্ডার
+        fname = (file_path or "").rsplit("/", 1)[-1]
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        if ext and ext not in ("jpg", "jpeg", "png", "webp"): return _svg_response(PLACEHOLDER_POSTER_SVG)
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
         return RedirectResponse(url=file_url)
-    except: return RedirectResponse(url="https://via.placeholder.com/110x160")
+    except: return _svg_response(PLACEHOLDER_POSTER_SVG)
+
+@app.get("/api/plus18.svg")
+async def plus18_svg():
+    return _svg_response(PLACEHOLDER_18PLUS_SVG)
 
 # ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
