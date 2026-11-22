@@ -669,6 +669,59 @@ GROUP_SEARCH_FILLERS = {
 
 group_last_reply: dict = {}        # chat_id → শেষ রিপ্লাইয়ের ts (কুলডাউনের জন্য)
 
+# না-পাওয়া গেলে গ্রুপে একটা সফট হিন্ট যাবে কি না (0 দিলে বন্ধ; ডিফল্ট চালু — বট যেন মৃত না দেখায়)
+GROUP_SEARCH_MISS_REPLY = os.getenv("GROUP_SEARCH_MISS_REPLY", "1") == "1"
+GROUP_SEARCH_MISS_TTL_SEC = 60     # হিন্ট-রিপ্লাই কত সেকেন্ড থাকবে (এরপর অটো-ডিলিট)
+
+# ── 🌐 ল্যাটিন↔বাংলা ট্রান্সলিট-ফলব্যাক: ব্যঞ্জন-কঙ্কাল ম্যাচিং ──
+# "Raghu Dakat" (ইংরেজি অক্ষরে) দিয়েও "রঘু ডাকাত"-এর মতো বাংলা টাইটেল ধরতে:
+# স্বর/কার বাদ দিয়ে শুধু ব্যঞ্জন নিয়ে তুলনা — raghu→rgh, রঘু→rgh ✓ ; dakat→dkt, ডাকাত→dkt ✓
+_BN_CONS = {
+    "ক": "k", "খ": "kh", "গ": "g", "ঘ": "gh", "ঙ": "ng",
+    "চ": "ch", "ছ": "chh", "জ": "j", "ঝ": "jh", "ঞ": "n",
+    "ট": "t", "ঠ": "th", "ড": "d", "ঢ": "dh", "ণ": "n",
+    "ত": "t", "থ": "th", "দ": "d", "ধ": "dh", "ন": "n",
+    "প": "p", "ফ": "ph", "ব": "b", "ভ": "bh", "ম": "m",
+    "য": "j", "র": "r", "ল": "l", "শ": "sh", "ষ": "sh",
+    "স": "s", "হ": "h", "ড়": "r", "ঢ়": "rh", "য়": "y",
+    "ৎ": "t", "জ়": "z",
+}
+_BN_SKIP = set("অআইঈউঊঋএঐওঔ" + "ািীুূৃেৈোৌ" + "ংঃঁ্ৗ়")
+
+def _bn_skeleton(w: str) -> str:
+    return "".join(_BN_CONS.get(ch, "") for ch in w if ch not in _BN_SKIP)
+
+def _lat_skeleton(w: str) -> str:
+    return "".join(ch for ch in w.lower() if ch.isalpha() and ch not in "aeiou")
+
+def _word_skeleton(w: str) -> str:
+    # বাংলা-অক্ষরের শব্দ হলে বাংলা-কঙ্কাল, নাহলে ল্যাটিন-কঙ্কাল
+    if any("\u0980" <= ch <= "\u09FF" for ch in w): return _bn_skeleton(w)
+    return _lat_skeleton(w)
+
+def _title_words(t: str):
+    return [tw for tw in re.split(r"[^\w\u0980-\u09FF]+", (t or "").lower()) if tw]
+
+def _skeleton_hit(words, titles):
+    """কুয়েরির সব নির্ভরযোগ্য শব্দ-কঙ্কাল যে টাইটেলে মেলে, সেই টাইটেল ফেরত; না মিললে None"""
+    qsk = [(w, _word_skeleton(w)) for w in words]
+    qsk = [(w, s) for w, s in qsk if len(s) >= 2]   # ২-অক্ষরের নিচে কঙ্কাল অনির্ভরযোগ্য
+    if not qsk: return None
+    best, best_score = None, 0
+    for t in titles:
+        twords = _title_words(t)
+        tsk = [_word_skeleton(tw) for tw in twords]
+        score = 0
+        for w, s in qsk:
+            hitw = False
+            for tw, ts in zip(twords, tsk):
+                if ts and (s == ts or (len(s) >= 3 and s in ts)):
+                    hitw = True; break
+            if hitw: score += 1
+            else: score = -99; break    # একটা শব্দও না মিললে ওই টাইটেল বাতিল
+        if score > best_score: best, best_score = t, score
+    return best
+
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     uid = m.from_user.id
@@ -741,17 +794,67 @@ async def handle_group_search(m: types.Message):
         if GROUP_SEARCH_DEBUG: print("👥 → শুধু চ্যাট-শব্দ → চুপ", flush=True)
         return
     s_query = " ".join(words)
+
+    # ── ধাপ ১: সরাসরি সার্চ ──
     res = await search_movies_smart(s_query)
-    if not res:
-        if GROUP_SEARCH_DEBUG: print(f"👥 → DB-তে নেই: {s_query!r}", flush=True)
-        return
-    # এক শব্দ হলে টাইটেলে থাকলেই যথেষ্ট (আংশিক নামও ধরা পড়ে); বেশি শব্দ হলে সবগুলো এক টাইটেলে থাকতে হবে
-    if len(words) == 1:
-        ok = any(words[0] in (mm.get("title") or "").lower() for mm in res)
-    else:
-        ok = any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res)
+    hit = None
+    ok = False
+    if res:
+        ok = any(words[0] in (mm.get("title") or "").lower() for mm in res) if len(words) == 1 \
+            else any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res)
+
+    # ── ধাপ ২: ল্যাটিন-অক্ষরে লেখা সার্চও বাংলা টাইটেল ধরুক — ব্যঞ্জন-কঙ্কাল ফলব্যাক ──
     if not ok:
-        if GROUP_SEARCH_DEBUG: print("👥 → স্ট্রিক্ট-ম্যাচ ফেল → চুপ", flush=True)
+        try:
+            cand_rows = await db.movies.aggregate([
+                {"$sort": {"created_at": -1}}, {"$limit": 500}, {"$project": {"title": 1, "_id": 0}}
+            ]).to_list(500)
+        except Exception as e:
+            if GROUP_SEARCH_DEBUG: print(f"👥 → ফলব্যাক-লিস্ট আনতে ব্যর্থ: {e}", flush=True)
+            cand_rows = []
+        cand_titles = []
+        for r in cand_rows:
+            t = r.get("title") or (r.get("_id") if isinstance(r.get("_id"), str) else "") or ""
+            if t: cand_titles.append(t)
+        hit = _skeleton_hit(words, cand_titles) if cand_titles else None
+        if GROUP_SEARCH_DEBUG:
+            print(f"👥 → সরাসরি ম্যাচ নেই ({s_query!r}) → ট্রান্সলিট-ফলব্যাক → {hit!r}", flush=True)
+        if hit:
+            res = await search_movies_smart(hit)
+            ok = bool(res)
+            if GROUP_SEARCH_DEBUG: print(f"👥 → ফলব্যাক-ম্যাচ {hit!r} → {'ফলাফল মিলেছে' if ok else 'ফলাফল খালি'}", flush=True)
+
+    # ── ধাপ ৩: কিছুই না পেলে ফ্রেন্ডলি হিন্ট (বট যেন মৃত না দেখায়) ──
+    if not ok:
+        if GROUP_SEARCH_DEBUG: print(f"👥 → কিছুই পাওয়া যায়নি ({s_query!r}) → {'হিন্ট যাবে' if GROUP_SEARCH_MISS_REPLY else 'চুপ'}", flush=True)
+        if not GROUP_SEARCH_MISS_REPLY: return
+        # অবিশ্বস্ত শব্দ-কঙ্কাল (যেমন 'Haa'→'h') হলে হিন্ট দিয়ে সুবিধা না — চুপ
+        if any(len(_word_skeleton(w)) < 2 for w in words):
+            if GROUP_SEARCH_DEBUG: print("👥 → শব্দ-কঙ্কাল অবিশ্বস্ত → চুপ", flush=True)
+            return
+        now = time.time()
+        if now - group_last_reply.get(chat_id, 0) < GROUP_SEARCH_COOLDOWN: return
+        hint = (f"❓ <b>{html.escape(q)}</b> নামে কিছু পাই নাই 🙏\n"
+                "বানান মিলিয়ে আবার লেখো — ইংরেজি বা বাংলা যেকোনো অক্ষরে লিখলেই খুঁজে নেব।\n"
+                f"ব্যক্তিগত সার্চের জন্য আমাকে <a href='https://t.me/{BOT_USERNAME}'>প্রাইভেটে</a> /start দাও!")
+        try:
+            sent_hint = await bot.send_message(chat_id, hint, parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            if GROUP_SEARCH_DEBUG: print(f"👥 → হিন্ট পাঠানো গেল না: {e}", flush=True)
+            return
+        group_last_reply[chat_id] = now
+        del_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=GROUP_SEARCH_MISS_TTL_SEC)
+        try:
+            await db.auto_delete.insert_one({"chat_id": chat_id, "message_id": sent_hint.message_id, "delete_at": del_at})
+        except Exception: pass
+        async def _zap_hint():
+            await asyncio.sleep(GROUP_SEARCH_MISS_TTL_SEC)
+            try: await bot.delete_message(chat_id, sent_hint.message_id)
+            except Exception: pass
+            try: await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": sent_hint.message_id})
+            except Exception: pass
+        asyncio.create_task(_zap_hint())
+        if GROUP_SEARCH_DEBUG: print(f"👥 → হিন্ট গেছে (msg {sent_hint.message_id})", flush=True)
         return
 
     # ⏱ কুলডাউন — একই গ্রুপে টানা টানা রিপ্লাই নয়
@@ -760,17 +863,19 @@ async def handle_group_search(m: types.Message):
 
     # 🏷️ সার্চদাতার নাম মেনশন (anonymous-admin হলে সাদামাটা নাম — চ্যাট-আইডি লিংক করা যায় না)
     g_mention = (f"<a href='tg://user?id={s_id}'>{html.escape(s_name)}</a>" if s_linked else html.escape(s_name))
-    caption, markup, best = build_search_reply(res, s_query, name=g_mention)
+    caption, markup, best = build_search_reply(res, hit or s_query, name=g_mention)
     sent = None
     try:
         if best.get("photo_id"):
             sent = await bot.send_photo(chat_id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
         else:
             sent = await bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
-    except Exception:
+    except Exception as e:
+        if GROUP_SEARCH_DEBUG: print(f"👥 → পোস্টার-পোস্ট ব্যর্থ ({e}) → টেক্সট-ফলব্যাক", flush=True)
         try:
             sent = await bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
-        except Exception:
+        except Exception as e2:
+            if GROUP_SEARCH_DEBUG: print(f"👥 → রিপ্লাই পাঠানোই গেল না: {e2}", flush=True)
             return
     if sent is None: return
     group_last_reply[chat_id] = now
