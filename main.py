@@ -642,6 +642,60 @@ def build_search_reply(results, q, name=None):
     kb.append([types.InlineKeyboardButton(text="📥 ডাউনলোড কিভাবে করবেন", url="https://t.me/SakibMovieBox/62")])
     return caption, types.InlineKeyboardMarkup(inline_keyboard=kb), best
 
+# ==========================================
+# 👥 গ্রুপ-সার্চ সিস্টেম — যেকোনো গ্রুপে বটকে Admin বানালেই চালু হয়ে যায়
+# গ্রুপে কেউ মুভির নাম লিখলে বট সাথে সাথে মুভি-পোস্ট পাঠায়; GROUP_SEARCH_TTL_SEC সেকেন্ড
+# পর রিপ্লাই অটো-ডিলিট হয় (auto_delete ওয়ার্কার + ইন-প্রসেস ফলব্যাক টাইমার দুটোই আছে)।
+# নোট: বট Admin হলে Telegram গ্রুপের সব মেসেজ পায় (privacy mode বাইপাস) — তাই
+# BotFather-এ কিছু বদলাতে হয় না; অ্যাডমিন না হলে বট নীরব থাকে।
+# ==========================================
+GROUP_SEARCH_TTL_SEC = 60          # গ্রুপে সার্চ-রিপ্লাই কত সেকেন্ড থাকবে (এরপর অটো-ডিলিট)
+GROUP_SEARCH_DEL_USER_MSG = False  # True দিলে সার্চদাতার মেসেজও সাথে ডিলিট হবে (গ্রুপ আরো পরিষ্কার)
+GROUP_SEARCH_COOLDOWN = 10         # একই গ্রুপে পরপর রিপ্লাইয়ের ন্যূনতম ফাঁক (স্প্যাম-ব্রেক)
+GROUP_SEARCH_MIN_LEN = 3           # এর চেয়ে ছোট টেক্সট এমনিতেই ইগনোর
+
+# এই সাধারণ শব্দগুলো সার্চ-ম্যাচে ধরা হয় না ('রঘু ডাকাত টা দেও' → 'রঘু ডাকাত' খোঁজে)
+GROUP_SEARCH_FILLERS = {
+    "মুভি", "মুবি", "movie", "movies", "film", "নাম", "name", "দেখাও", "দেখো",
+    "দেও", "দাও", "চাই", "chai", "লিংক", "link", "please", "pls", "plx",
+    "ভাই", "bro", "কই", "এর", "টা", "টি", "দিবে", "দিও", "send", "kar", "do",
+}
+
+# 🛡️ গ্রুপ-অ্যাডমিন ক্যাশ: chat_id → (is_admin, checked_at); GROUP_ADMIN_TTL পরপর রিচেক
+group_admin_cache: dict = {}
+GROUP_ADMIN_TTL = 1800
+group_last_reply: dict = {}        # chat_id → শেষ রিপ্লাইয়ের ts (কুলডাউনের জন্য)
+_bot_id = 0
+
+async def _get_bot_id() -> int:
+    """বটের নিজের id — একবারই বের করে রাখে (bot.id, না পেলে get_me ফলব্যাক)।"""
+    global _bot_id
+    if not _bot_id:
+        try:
+            _bot_id = bot.id
+        except Exception:
+            try:
+                _bot_id = (await bot.get_me()).id
+            except Exception:
+                _bot_id = 0
+    return _bot_id
+
+async def bot_is_group_admin(chat_id: int) -> bool:
+    """এই গ্রুপে বট অ্যাডমিন কি না (৩০ মিনিটে একবার ক্যাশ-রিফ্রেশ — মেসেজপ্রতি API কল নয়)।"""
+    ent = group_admin_cache.get(chat_id)
+    now = time.time()
+    if ent and now - ent[1] < GROUP_ADMIN_TTL:
+        return ent[0]
+    ok = False
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        my_id = await _get_bot_id()
+        ok = my_id != 0 and any(a.user.id == my_id for a in admins)
+    except Exception:
+        ok = False
+    group_admin_cache[chat_id] = (ok, now)
+    return ok
+
 @dp.message(lambda m: m.chat.type == "private" and m.from_user.id not in admin_cache)
 async def handle_user_messages(m: types.Message):
     uid = m.from_user.id
@@ -688,6 +742,72 @@ async def handle_user_messages(m: types.Message):
         builder.button(text="✍️ রিপ্লাই", callback_data=f"reply_{uid}")
         await bot.send_message(OWNER_ID, f"🔍 <b>নতুন মুভি রিকোয়েস্ট!</b>\n\n👤 <a href='tg://user?id={uid}'>{name}</a> (<code>{uid}</code>)\n🎬 খোঁজে: <b>{q[:60]}</b>\n\n<i>রিপ্লাই বাটনে চাপলে ইউজারকে সরাসরি উত্তর পাঠাতে পারবেন (যেমন: ঠিক আছে ভাই, নেক্সটে অ্যাড করে দিবো)।</i>", parse_mode="HTML", reply_markup=builder.as_markup())
     except Exception: pass
+
+# ── 👥 গ্রুপ-সার্চ হ্যান্ডলার: গ্রুপের সাধারণ টেক্সট মেসেজ ──
+# অ্যাডমিন-বট হওয়ায় গ্রুপের সব মেসেজ পায়; স্ট্রিক্ট AND-ম্যাচ না হলে চুপ থাকে —
+# তাই গ্রুপের র্যান্ডম কথাবার্তায় বট কখনো হস্তক্ষেপ করে না।
+@dp.message(lambda m: m.chat.type in ("group", "supergroup")
+            and m.from_user is not None and not m.from_user.is_bot
+            and (m.text or "").strip() and not (m.text or "").strip().startswith("/"))
+async def handle_group_search(m: types.Message):
+    q = (m.text or "").strip()
+    if len(q) < GROUP_SEARCH_MIN_LEN or len(q) > 60: return
+    chat_id = m.chat.id
+    # এই গ্রুপে বট অ্যাডমিন না হলে কিছুই করবে না (অ্যাডমিন দিলেই কাজ শুরু)
+    if not await bot_is_group_admin(chat_id): return
+
+    # 🔍 ফিলার-শব্দ বাদ দিয়ে সার্চ, তারপর স্ট্রিক্ট AND-যাচাই:
+    # টাইপ করা প্রতিটা শব্দ (ফিলার বাদে) মুভির টাইটেলে থাকতেই হবে —
+    # 'আজকে কি নতুন কিছু আছে'-স্টাইল কথায় বট আর ঘুমাবে, মুভির নাম লিখলেই জেগে উঠবে।
+    words = [w for w in re.split(r"\s+", q.lower()) if w and w not in GROUP_SEARCH_FILLERS and len(w) >= 2]
+    if not words: return
+    res = await search_movies_smart(q)
+    if not res: return
+    if not any(all(w in (mm.get("title") or "").lower() for w in words) for mm in res): return
+
+    # ⏱ কুলডাউন — একই গ্রুপে টানা টানা রিপ্লাই নয়
+    now = time.time()
+    if now - group_last_reply.get(chat_id, 0) < GROUP_SEARCH_COOLDOWN: return
+
+    # 🎁 প্রাইভেট-সার্চের হুবহু একই রেন্ডারার (নিরপেক্ষ ক্যাপশন: 'পাওয়া গেছে!')
+    caption, markup, best = build_search_reply(res, q, name=None)
+    sent = None
+    try:
+        if best.get("photo_id"):
+            sent = await bot.send_photo(chat_id, photo=best["photo_id"], caption=caption, parse_mode="HTML", reply_markup=markup)
+        else:
+            sent = await bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+    except Exception:
+        try:
+            sent = await bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+        except Exception:
+            return
+    if sent is None: return
+    group_last_reply[chat_id] = now
+
+    # ⏲ ১ মিনিট পর অটো-ডিলিট:
+    #   ① মঙ্গোর auto_delete রেকর্ড → auto_delete_worker (বট রিস্টার্ট হলেও ডিলিট হবে)
+    #   ② সাথে সাথে একটা টাইমার-টাস্ক → ঠিক GROUP_SEARCH_TTL_SEC পরপরই ডিলিট + রেকর্ড মুছে দেয়
+    del_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=GROUP_SEARCH_TTL_SEC)
+    ids = [sent.message_id]
+    if GROUP_SEARCH_DEL_USER_MSG:
+        ids.append(m.message_id)
+        try: await db.auto_delete.insert_one({"chat_id": chat_id, "message_id": m.message_id, "delete_at": del_at})
+        except Exception: pass
+    try:
+        await db.auto_delete.insert_one({"chat_id": chat_id, "message_id": sent.message_id, "delete_at": del_at})
+    except Exception: pass
+
+    async def _zap():
+        await asyncio.sleep(GROUP_SEARCH_TTL_SEC)
+        for mid in ids:
+            try: await bot.delete_message(chat_id, mid)
+            except Exception: pass
+        try:
+            await db.auto_delete.delete_many({"chat_id": chat_id, "message_id": {"$in": ids}})
+        except Exception: pass
+
+    asyncio.create_task(_zap())
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_to_user_callback(c: types.CallbackQuery, state: FSMContext):
