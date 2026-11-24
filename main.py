@@ -224,7 +224,11 @@ async def init_db():
     # 🛡️ সার্ভার-সাইড অ্যাড গেট (PC/DevTools বাইপাস বন্ধ): গেট যাচাই + ফানেল স্ট্যাটের ইনডেক্স
     await db.ad_gates.create_index([("uid", 1), ("started_at", -1)])
     await db.ad_gates.create_index([("movie_id", 1), ("status", 1), ("verified_at", -1)])
-    await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*14)  # ১৪ দিন পুরনো গেট-লগ অটো ক্লিন
+    # 🧹 ৭ দিনের স্ট্যাটস সিস্টেম (মালিকের নির্দেশ): ৭ দিন পুরনো গেট-লগ নিজে নিজে মুছে ফ্রেশ শুরু —
+    # পুরনো ১৪-দিনের ইনডেক্স থাকলে ড্রপ করে ৭-দিনের নতুন করে দেওয়া হচ্ছে
+    try: await db.ad_gates.drop_index("started_at_1")
+    except Exception: pass
+    await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*7)  # ৭ দিন পর মঙ্গো-নিজেও অটো-ক্লিন (ব্যাকআপ)
 
 async def get_setting(key, default=None):
     """⚙️ সেটিং রিডার — ad_wait / ad_count / banners সব এক জায়গা থেকে"""
@@ -1882,7 +1886,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                     <div class="card"><div class="stat-top"><h3>লাইভ (১ মিনিট)</h3><span class="ic green"><i class="fa-solid fa-signal"></i></span></div><div class="big" id="activeUsers">0</div></div>
                 </div>
 
-                <h2 class="sec-title"><i class="fa-solid fa-filter"></i> অ্যাড গেট ফানেল — ইম্প্রেশন কোথায় হারাচ্ছে এখন ডাটা দিয়ে দেখুন</h2>
+                <h2 class="sec-title"><i class="fa-solid fa-filter"></i> অ্যাড গেট ফানেল — শেষ ৭ দিন (শুধু এই বটের কাউন্ট)</h2>
                 <div class="card" style="margin-bottom:16px;">
                     <div class="funnel">
                         <div class="f-step"><div class="num" id="fStarts">0</div><div class="lbl">🎯 গেট খুলেছে (অ্যাড লিংক গেছে)</div><div class="f-bar"><div id="fStartsBar" style="width:100%"></div></div></div>
@@ -1894,12 +1898,12 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                     <div class="row" style="margin-top:14px; gap:20px; flex-wrap:wrap;">
                         <span class="badge b-green" id="fComplete">কমপ্লিট: 0%</span>
                         <span class="badge b-red" id="fSuspect">সন্দেহজনক (বিকন ছাড়া): 0</span>
-                        <span class="badge b-blue" id="fUnique">ইউনিক ইউজার (২৪ঘ): 0</span>
+                        <span class="badge b-blue" id="fUnique">ইউনিক ইউজার (৭ দিন): 0</span>
                     </div>
-                    <div class="note">💡 <b>কীভাবে পড়বেন:</b> "গেট খুলেছে" = অ্যাড লিংক ওপেন হয়েছে (এটাই আপনার ইম্প্রেশনের সুযোগ)। "ভেরিফাই" = পুরো সময় অ্যাড পেজে ছিল (রিয়েল ইম্প্রেশন)। খুলেছে অনেক কিন্তু ভেরিফাই কম = ইউজার আগেই ফিরে আসছে (লিংক লোড ধীর বা কনটেন্ট দুর্বল)। খুলেছেই কম = গেটে পৌঁছানোর আগেই ইউজার ঝেড়ে যাচ্ছে।</div>
+                    <div class="note">💡 <b>কীভাবে পড়বেন:</b> এখানে শুধু <b>এই বটের</b> গেট-কাউন্ট দেখানো হয় (অ্যাপ/অন্য-জায়গার কাউন্ট মেশে না)। "গেট খুলেছে" = অ্যাড লিংক ওপেন হয়েছে (এটাই আপনার ইম্প্রেশনের সুযোগ)। "ভেরিফাই" = পুরো সময় অ্যাড পেজে ছিল (রিয়েল ইম্প্রেশন)। খুলেছে অনেক কিন্তু ভেরিফাই কম = ইউজার আগেই ফিরে আসছে (লিংক লোড ধীর বা কনটেন্ট দুর্বল)। খুলেছেই কম = গেটে পৌঁছানোর আগেই ইউজার ঝেড়ে যাচ্ছে। <b>🧹 ডাটা ৭ দিনের — প্রতি ৭ দিনে নিজে নিজে মুছে ফ্রেশ শুরু হয়।</b></div>
                 </div>
 
-                <h2 class="sec-title"><i class="fa-solid fa-link"></i> লিংক পারফরম্যান্স (২৪ ঘণ্টা)</h2>
+                <h2 class="sec-title"><i class="fa-solid fa-link"></i> লিংক পারফরম্যান্স (শেষ ৭ দিন)</h2>
                 <div class="tbl-wrap"><table><thead><tr><th>লিংক</th><th>টাইপ</th><th>খোলা হয়েছে</th><th>ভেরিফাই</th><th>রেট</th></tr></thead>
                 <tbody id="linkTable"><tr><td colspan="5" class="empty">লোড হচ্ছে...</td></tr></tbody></table></div>
             </section>
@@ -2014,16 +2018,16 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                 document.getElementById('activeUsers').innerText = d.active_users; } catch(e) {} }
             async function fetchFunnel() { try {
                 const res = await fetch('/api/admin/funnel'); const d = await res.json(); if (!d.ok) return;
-                const f = d.h24;
+                const f = d.d7 || d.h24;
                 document.getElementById('fStarts').innerText = f.starts; document.getElementById('fVerified').innerText = f.verified;
                 document.getElementById('fDelivered').innerText = f.delivered;
                 document.getElementById('fVerifiedBar').style.width = (f.starts ? Math.min(100, f.verified * 100 / f.starts) : 0) + '%';
                 document.getElementById('fDeliveredBar').style.width = (f.starts ? Math.min(100, f.delivered * 100 / f.starts) : 0) + '%';
                 document.getElementById('fComplete').innerText = 'কমপ্লিট: ' + f.complete_pct + '%';
                 document.getElementById('fSuspect').innerText = 'সন্দেহজনক (বিকন ছাড়া): ' + f.suspect;
-                document.getElementById('fUnique').innerText = 'ইউনিক ইউজার (২৪ঘ): ' + (d.unique_users_24h || 0);
+                document.getElementById('fUnique').innerText = 'ইউনিক ইউজার (৭ দিন): ' + ((d.unique_users_7d != null ? d.unique_users_7d : d.unique_users_24h) || 0);
                 const tb = document.getElementById('linkTable');
-                if (!d.links || !d.links.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">এখনো কোনো গেট খোলা হয়নি (২৪ ঘণ্টায়)</td></tr>'; return; }
+                if (!d.links || !d.links.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">এখনো কোনো গেট খোলা হয়নি (শেষ ৭ দিনে)</td></tr>'; return; }
                 tb.innerHTML = d.links.map(l => {
                     const rate = l.starts ? Math.round(l.verified * 100 / l.starts) : 0;
                     const host = (() => { try { return new URL(l.link).hostname; } catch(e) { return l.link; } })();
@@ -3499,15 +3503,16 @@ async def web_ui():
                 activeFileId = fileId; activeIsAdult = isAdult;
                 closeModal('downloadModal');
                 if (isUserVip) { sendFileRequest(fileId); return; }
-                resetAdModal();
-                // 🧠 CPM: অ্যাড-গেট মোডালের ব্যানার এখন মোডাল খোলার মুহূর্তেই মাউন্ট — ইউজার দেখার মতো ব্যানারই ইম্প্রেশন খাবে
-                mountSquareSlot('adModalAdSlot', AD_300_CONF);
-                document.getElementById('adModal').style.display = 'flex';
+                // 🔧 ফিক্স: আগে সরাসরি /api/send-এর চেষ্টা — সদ্য ভেরিফাই হওয়া গেট/১৫-মিনিটের আনলক থাকলে
+                // ফাইল সাথে সাথে যাবে (রিলোড/ডিপ-লিংক ফ্লোতে দ্বিতীয়বার অ্যাড দেখতে হবে না)। সার্ভার
+                // gate_required ফিরিয়ে দিলে (কোনো ভেরিফাইড গেট নেই) তখনই অ্যাড-মোডাল দেখাবে।
+                sendFileRequest(fileId);
             }
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
                 adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false;
+                clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 // 🛡️ চলমান সার্ভার-গেট বাতিল (TRY AGAIN / BACK চাপলে পুরনো গেট আর গোনা হবে না)
                 if (currentGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} currentGateId = null; }
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
@@ -3567,6 +3572,24 @@ async def web_ui():
                 try { fetch('/api/ad/beat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gid, initData: INIT_DATA, phase: phase}), keepalive: true}).catch(function(){}); } catch(e) {}
             }
 
+            // 🔧 রিলোড-রিকভারি (ফাইল-না-দেওয়ার বাগ ফিক্স): মোবাইলে অ্যাড থেকে ফিরলে কখনো কখনো মিনি-অ্যাপ
+            // রিলোড হয়ে যায় — তখন চলমান গেটের gate_id JS-স্টেটের সাথে মুছে যেত → ইউজার ১০ সেকেন্ড
+            // পুরো অ্যাড দেখে ফিরেও ফাইল পেত না। এখন gate_id localStorage-এ সেভ হয় — পেজ লোডে
+            // সার্ভারকে জিজ্ঞেস করে: ওই গেটের সময় পুরো হয়ে থাকলে অটো-ভেরিফাই করে ফাইল ডেলিভারি!
+            function saveGateLS(gid, fid) { try { localStorage.setItem('mb_pending_gate', JSON.stringify({g: gid, f: fid, t: Date.now()})); } catch(e) {} }
+            function clearGateLS() { try { localStorage.removeItem('mb_pending_gate'); } catch(e) {} }
+            async function recoverPendingGate() {
+                let rec = null; try { rec = JSON.parse(localStorage.getItem('mb_pending_gate') || 'null'); } catch(e) {}
+                if (!rec || !rec.g) return;
+                clearGateLS();  // একবার চেক করলেই রেকর্ড শেষ — না মিললে নতুন গেটই শুরু হবে
+                if (Date.now() - (rec.t || 0) > 20*60*1000) return;  // ২০ মিনিটের পুরনো গেট আর ধরব না
+                try {
+                    const res = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: rec.g, initData: INIT_DATA})});
+                    const v = await res.json();
+                    if (v && v.ok && v.done && rec.f) { sendFileRequest(rec.f, true); }  // ✅ আগের অ্যাড পুরো দেখা ছিল → ফাইল অটো-ডেলিভারি
+                } catch(e) {}
+            }
+
             async function openAdLink() {
                 if (gateOpening) return; gateOpening = true;
                 // 📳 টেপ দিলেই ফোন ভাইব্রেট করবে (Telegram হ্যাপটিক ইঞ্জিন + ব্রাউজার ফলব্যাক)
@@ -3582,6 +3605,7 @@ async def web_ui():
                         gateOpening = false; finishAdRounds(); return;
                     }
                     currentGateId = g.gate_id; lastGateLink = g.link;
+                    saveGateLS(g.gate_id, String(activeFileId || ''));  // 🔧 রিলোড-রিকভারি: gate_id সেভ
                     if (g.wait) adSettings.ad_wait = g.wait;
                     if (g.count) adSettings.ad_count = Math.max(1, g.count);
                     tg.openLink(g.link);
@@ -3646,9 +3670,10 @@ async def web_ui():
 
             function finishAdRounds() {
                 adStartTime = 0; adAwayMs = 0; adAwayStart = null; gateOpening = false;
+                clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও (ডুপ্লিকেট যোগাযোগ বন্ধ)
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 closeModal('adModal');
-                sendFileRequest(activeFileId);
+                sendFileRequest(activeFileId, true);
             }
 
             // 🛡️ অ্যান্টি-বাইপাস মূল চেক: ইউজার অ্যাড থেকে অ্যাপে ফিরে এলেই চেক হয় (visibility + focus — দুই সংকেতেই) —
@@ -3709,7 +3734,7 @@ async def web_ui():
             }
             function openBotForFile() { openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ সার্ভার বলছে ভেরিফাইড গেট নেই — আবার গেট দেখাও */ tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
             async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
@@ -3726,6 +3751,7 @@ async def web_ui():
             function dlResetGate() {
                 if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
                 gateGateId = null; gateStep = 0;
+                clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                 if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
                 let btn = document.getElementById('gateWatchBtn');
@@ -3774,6 +3800,7 @@ async def web_ui():
                             return;
                         }
                         gateGateId = g.gate_id;
+                        saveGateLS(g.gate_id, String(fid || ''));  // 🔧 রিলোড-রিকভারি: gate_id সেভ
                         if (g.wait) adSettings.ad_wait = g.wait;
                         tg.openLink(g.link);
                         gateStep = 1;
@@ -3799,6 +3826,7 @@ async def web_ui():
                         if (v.ok && v.done) {
                             if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
                             gateGateId = null;
+                            clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও
                             adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                             closeModal('fileGateModal');
                             // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
@@ -3837,7 +3865,7 @@ async def web_ui():
             }
             
             // বুটস্ট্র্যাপ অর্ডার: আগে ডিপ-লিংক চেক (is_new ঠিক করার জন্য), তারপর ইউজার রেজিস্ট্রেশন ও লিস্ট লোড
-            (async function(){ updateTopAdBar(); await openFromDeepLink(); loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
+            (async function(){ updateTopAdBar(); await openFromDeepLink(); loadAdSettings(); recoverPendingGate(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
         </script>
     </body></html>'''
     
@@ -3980,7 +4008,7 @@ async def get_single_movie(movie_id: str, uid: int = 0):
 @app.get("/api/settings/public")
 async def get_public_settings():
     try:
-        aw, ac, ttl = await gate_get_settings()
+        aw, ac = await gate_get_settings()
         dl_cfg = await db.settings.find_one({"id": "direct_links"}); links = dl_cfg.get("links", []) if dl_cfg else []
         adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); alinks = adl_cfg.get("links", []) if adl_cfg else []
         banners = bool(await get_setting("banners_enabled", False))
@@ -4205,13 +4233,28 @@ async def gate_consume(uid: int, movie_id: str):
 
 # 📊 অ্যাডমিন ফানেল API — ইম্প্রেশন কম হচ্ছে কেন এখন ডাটা দিয়ে দেখা যাবে:
 # গেট খুলেছে (start) → পুরো সময় দেখে ফিরেছে (verified) → ফাইল নিয়েছে (delivered)
+# 🧹 ৭-দিনের স্ট্যাটস সিস্টেম (মালিকের নির্দেশ): শুধু এই বটের গেট-কাউন্টই এখানে জমা হয়,
+# ৭ দিনের ডাটা দেখানো হয়, আর ৭ দিন পার হলে পুরনো রেকর্ড নিজে নিজে মুছে ফ্রেশ শুরু হয়।
+_last_gate_cleanup = 0.0  # ঘণ্টায় একবারই ক্লিন-আপ চালানোর থ্রটল
+async def cleanup_old_gates():
+    """🧹 ৭ দিনের পুরনো গেট-স্ট্যাট ডিলিট (মঙ্গো-TTL-এর সাথে ডাবল-নিরাপত্তা; TTL ব্যাকগ্রাউন্ডে
+    একটু দেরি করলেও প্যানেল খুললেই এই ফাংশন ফ্রেশ করে দেয়)"""
+    global _last_gate_cleanup
+    now_ts = datetime.datetime.utcnow().timestamp()
+    if now_ts - _last_gate_cleanup < 3600: return  # ঘণ্টায় একবারই যথেষ্ট
+    _last_gate_cleanup = now_ts
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+    try: await db.ad_gates.delete_many({"started_at": {"$lt": cutoff}})
+    except Exception as e: print(f"cleanup_old_gates error: {e}")
+
 @app.get("/api/admin/funnel")
 async def admin_funnel(auth: bool = Depends(verify_admin)):
     try:
+        await cleanup_old_gates()  # 🧹 ৭ দিন পার হলে পুরনো রেকর্ড নিজেই মুছে ফেলো
         now = datetime.datetime.utcnow()
-        h24 = now - datetime.timedelta(hours=24)
+        d7 = now - datetime.timedelta(days=7)
         out = {}
-        for name, since in (("h24", h24), ("all", None)):
+        for name, since in (("d7", d7), ("all", None)):
             # 🛡️ গেট consume হলেও verified_at থেকে যায় — তাই ভেরিফাই/ডেলিভারি গোনা হয়
             # টাইমস্ট্যাম্প দিয়ে (স্ট্যাটাস দিয়ে নয়), ফানেলে কেউ হারায় না
             starts = await db.ad_gates.count_documents({"started_at": {"$gte": since}} if since else {})
@@ -4221,19 +4264,21 @@ async def admin_funnel(auth: bool = Depends(verify_admin)):
             out[name] = {"starts": starts, "verified": verified, "delivered": delivered,
                          "suspect": suspect,
                          "complete_pct": round(delivered * 100.0 / starts, 1) if starts else 0.0}
-        # 🔗 লিংক-ভিত্তিক পারফরম্যান্স (২৪ ঘণ্টা): কোন লিংক কতবার খুলেছে, কতটায় পুরো দেখা হয়েছে
+        # 🔗 লিংক-ভিত্তিক পারফরম্যান্স (৭ দিন): কোন লিংক কতবার খুলেছে, কতটায় পুরো দেখা হয়েছে —
+        # শুধু এই বটের মিনি-অ্যাপ থেকে খোলা গেটই এখানে আসে (অ্যাপ/অন্য-জায়গার কাউন্ট মেশে না)
         per_link = await db.ad_gates.aggregate([
-            {"$match": {"started_at": {"$gte": h24}}},
+            {"$match": {"started_at": {"$gte": d7}}},
             {"$group": {"_id": {"link": "$link", "adult": "$adult"},
                         "starts": {"$sum": 1},
                         "verified": {"$sum": {"$cond": [{"$in": ["$status", ["verified", "consumed"]]}, 1, 0]}}}},
             {"$sort": {"starts": -1}}, {"$limit": 25}]).to_list(25)
         links_out = [{"link": r["_id"]["link"], "adult": r["_id"]["adult"],
                       "starts": r["starts"], "verified": r["verified"]} for r in per_link]
-        # 👥 ইউজার-স্প্লিট: কত ইউজার আজ গেটে ডাকা খেয়েছে
-        uniq_users = len(await db.ad_gates.distinct("uid", {"started_at": {"$gte": h24}}))
-        return {"ok": True, "h24": out.get("h24"), "all": out.get("all"),
-                "links": links_out, "unique_users_24h": uniq_users}
+        # 👥 ইউজার-স্প্লিট: ৭ দিনে কত ইউনিক ইউজার গেটে ডাকা খেয়েছে
+        uniq_users = len(await db.ad_gates.distinct("uid", {"started_at": {"$gte": d7}}))
+        # ℹ️ পুরনো প্যানেল-ক্যাশ যেন না ভাঙে — আগের h24/unique_users_24h কী-গুলোও একই ৭-দিনের ভ্যালুসহ পাঠানো হচ্ছে
+        return {"ok": True, "d7": out.get("d7"), "h24": out.get("d7"), "all": out.get("all"),
+                "links": links_out, "unique_users_7d": uniq_users, "unique_users_24h": uniq_users}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
