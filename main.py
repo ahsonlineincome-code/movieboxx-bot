@@ -227,7 +227,7 @@ async def init_db():
     await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*14)  # ১৪ দিন পুরনো গেট-লগ অটো ক্লিন
 
 async def get_setting(key, default=None):
-    """⚙️ সেটিং রিডার — ad_wait / ad_count / banners / gate_ttl সব এক জায়গা থেকে"""
+    """⚙️ সেটিং রিডার — ad_wait / ad_count / banners সব এক জায়গা থেকে"""
     try:
         cfg = await db.settings.find_one({"id": key})
         if not cfg: return default
@@ -256,7 +256,7 @@ async def seed_default_ads():
             await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": {"$each": DEFAULT_ADULT_DIRECT_LINKS}}}, upsert=True)
             await db.settings.update_one({"id": "random_links_migrated"}, {"$set": {"done": True}}, upsert=True)
             print("🎲 Random ad system: new direct links added to pools (normal+adult).")
-        defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72, "gate_ttl_min": 10, "banners_enabled": False}
+        defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72, "banners_enabled": False}
         for key, val in defaults.items():
             cfg = await db.settings.find_one({"id": key})
             if not cfg:
@@ -1773,19 +1773,19 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
         <title>Movie Box — Admin Panel v2</title>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
         <style>
-            :root { --bg:#0b1220; --card:#141d31; --card2:#1a2540; --line:#243252; --txt:#dbe4f5; --mut:#8494b5;
-                    --acc:#ff416c; --acc2:#ff4b2b; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --sky:#38bdf8; }
+            :root { --bg:#0B0F1F; --card:#151B33; --card2:#10142A; --line:#232B4A; --txt:#C9D2F5; --mut:#8494b5;
+                    --acc:#00E5A0; --acc2:#7C6CFF; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --sky:#38bdf8; }
             * { margin:0; padding:0; box-sizing:border-box; }
             body { font-family:'Segoe UI',Tahoma,sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; }
-            .topbar { position:sticky; top:0; z-index:100; background:rgba(11,18,32,.92); backdrop-filter:blur(10px);
+            .topbar { position:sticky; top:0; z-index:100; background:rgba(11,15,31,.92); backdrop-filter:blur(10px);
                       border-bottom:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
-            .brand { font-size:20px; font-weight:900; background:linear-gradient(45deg,#ff416c,#ff4b2b); -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:flex; align-items:center; gap:8px; }
+            .brand { font-size:20px; font-weight:900; background:linear-gradient(90deg,#00E5A0,#7C6CFF); -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:flex; align-items:center; gap:8px; }
             .brand small { font-size:11px; color:var(--mut); -webkit-text-fill-color:var(--mut); font-weight:600; }
             .tabs { display:flex; gap:6px; flex-wrap:wrap; }
             .tab-btn { border:1px solid var(--line); background:var(--card); color:var(--mut); padding:9px 16px; border-radius:10px;
                        cursor:pointer; font-weight:700; font-size:13px; transition:.2s; }
             .tab-btn:hover { color:#fff; border-color:#33456e; }
-            .tab-btn.active { background:linear-gradient(45deg,#ff416c,#ff4b2b); color:#fff; border-color:transparent; box-shadow:0 4px 14px rgba(255,65,108,.35); }
+            .tab-btn.active { background:linear-gradient(90deg,#00E5A0,#7C6CFF); color:#04121B; border-color:transparent; box-shadow:0 4px 14px rgba(0,229,160,.35); }
             main { max-width:1180px; margin:0 auto; padding:22px 16px 60px; }
             .sec { display:none; } .sec.active { display:block; animation:fadeIn .25s ease; }
             @keyframes fadeIn { from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
@@ -1794,6 +1794,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .grid { display:grid; gap:14px; }
             .g5 { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
             .g3 { grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+            .g2 { grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
             .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
             .card h3 { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
             .card .big { font-size:30px; font-weight:900; color:#fff; }
@@ -1801,7 +1802,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .ic { width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; }
             .ic.blue { background:rgba(56,189,248,.15); color:var(--sky); } .ic.green { background:rgba(16,185,129,.15); color:var(--ok); }
             .ic.orange { background:rgba(245,158,11,.15); color:var(--warn); } .ic.red { background:rgba(239,68,68,.15); color:var(--bad); }
-            .ic.pink { background:rgba(255,65,108,.15); color:var(--acc); }
+            .ic.pink { background:rgba(255,93,122,.15); color:#ff5d7a; }
             .stat-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
             /* Funnel */
             .funnel { display:flex; align-items:stretch; gap:10px; flex-wrap:wrap; }
@@ -1810,7 +1811,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .f-step .lbl { font-size:12px; color:var(--mut); margin-top:4px; }
             .f-arrow { align-self:center; color:var(--mut); font-size:18px; }
             .f-bar { height:8px; border-radius:6px; background:#0e1729; overflow:hidden; margin-top:8px; }
-            .f-bar > div { height:100%; border-radius:6px; background:linear-gradient(90deg,#ff416c,#ff4b2b); transition:width .5s; }
+            .f-bar > div { height:100%; border-radius:6px; background:linear-gradient(90deg,#00E5A0,#7C6CFF); transition:width .5s; }
             /* Tables */
             .tbl-wrap { background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:auto; }
             table { width:100%; border-collapse:collapse; min-width:620px; }
@@ -1818,16 +1819,17 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             td { padding:12px 15px; font-size:13px; border-bottom:1px solid rgba(36,50,82,.5); color:var(--txt); }
             tr:last-child td { border-bottom:none; } tr:hover td { background:rgba(255,255,255,.02); }
             .badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
-            .b-blue { background:rgba(56,189,248,.15); color:var(--sky); } .b-pink { background:rgba(255,65,108,.15); color:var(--acc); }
+            .b-blue { background:rgba(56,189,248,.15); color:var(--sky); } .b-pink { background:rgba(255,93,122,.15); color:#ff5d7a; }
             .b-green { background:rgba(16,185,129,.15); color:var(--ok); } .b-red { background:rgba(239,68,68,.15); color:var(--bad); }
             .link-cell { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--sky); font-size:12px; }
+            .tail-badge { display:inline-block; background:var(--card2); border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:10px; color:var(--acc2); font-family:Consolas,monospace; margin-left:6px; }
             /* Forms */
             .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
             input[type=text], input[type=number], select {
                 background:#0e1729; border:1px solid var(--line); color:#fff; padding:10px 13px; border-radius:10px; font-size:13px; outline:none; }
             input:focus, select:focus { border-color:var(--acc); }
             .btn { border:none; cursor:pointer; font-weight:800; font-size:13px; padding:10px 16px; border-radius:10px; transition:.2s; color:#fff; }
-            .btn-grad { background:linear-gradient(45deg,#ff416c,#ff4b2b); box-shadow:0 4px 14px rgba(255,65,108,.3); }
+            .btn-grad { background:linear-gradient(135deg,#7C6CFF,#5A3FE0); box-shadow:0 4px 14px rgba(124,108,255,.3); }
             .btn-grad:hover { transform:translateY(-1px); }
             .btn-ghost { background:var(--card2); border:1px solid var(--line); color:var(--txt); }
             .btn-ghost:hover { border-color:#33456e; }
@@ -1845,10 +1847,10 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             .switch input { opacity:0; width:0; height:0; }
             .slider { position:absolute; cursor:pointer; inset:0; background:#243252; border-radius:28px; transition:.3s; }
             .slider:before { content:""; position:absolute; height:20px; width:20px; left:4px; top:4px; background:#8494b5; border-radius:50%; transition:.3s; }
-            .switch input:checked + .slider { background:linear-gradient(45deg,#ff416c,#ff4b2b); }
+            .switch input:checked + .slider { background:linear-gradient(90deg,#00E5A0,#7C6CFF); }
             .switch input:checked + .slider:before { transform:translateX(24px); background:#fff; }
             /* Range slider */
-            input[type=range] { width:100%; accent-color:#ff416c; }
+            input[type=range] { width:100%; accent-color:#7C6CFF; }
             .range-val { font-size:26px; font-weight:900; color:#fff; min-width:70px; text-align:center; background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:6px 10px; }
             .note { font-size:12px; color:var(--mut); background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-top:12px; line-height:1.7; }
             .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px); background:#1a2540; color:#fff;
@@ -1915,7 +1917,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                         <div id="normalPool"><div class="empty">লোড হচ্ছে...</div></div>
                     </div>
                     <div class="card">
-                        <h3><i class="fa-solid fa-fire" style="color:var(--acc)"></i> অ্যাডাল্ট ডাইরেক্ট লিংক পুল (<span id="adultCount">0</span>)</h3>
+                        <h3><i class="fa-solid fa-fire" style="color:#ff5d7a"></i> অ্যাডাল্ট ডাইরেক্ট লিংক পুল (<span id="adultCount">0</span>)</h3>
                         <div class="row" style="margin-bottom:12px;">
                             <input type="text" id="adultUrl" placeholder="https://... (১৮+ মুভির জন্য)" style="flex:1; min-width:180px;">
                             <button class="btn btn-grad" onclick="addLink('adult')"><i class="fa-solid fa-plus"></i> যোগ</button>
@@ -1936,7 +1938,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             <!-- ═══════════════ 🛡️ GATE SETTINGS ═══════════════ -->
             <section id="sec-gate" class="sec">
                 <h2 class="sec-title"><i class="fa-solid fa-shield-halved"></i> গেট সেটিংস — অ্যাপের v5.3 সিস্টেমের বট-ভার্সন</h2>
-                <div class="grid g3">
+                <div class="grid g2">
                     <div class="card">
                         <h3><i class="fa-solid fa-hourglass-half" style="color:var(--sky)"></i> অ্যাড ওয়াচ টাইম</h3>
                         <div class="row" style="margin-top:6px;">
@@ -1953,20 +1955,12 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                         </div>
                         <div class="sub" style="margin-top:8px;">একটা ফাইল পেতে কতটা অ্যাড দেখতে হবে (১–৫)। প্রতিটি রাউন্ডে fresh র‍্যান্ডম লিংক (একই লিংক পরপর দুইবার যায় না)।</div>
                     </div>
-                    <div class="card">
-                        <h3><i class="fa-solid fa-clock-rotate-left" style="color:var(--warn)"></i> গেট টিটিএল</h3>
-                        <div class="row" style="margin-top:6px;">
-                            <input type="range" id="ttlRange" min="2" max="30" step="1" value="10" oninput="document.getElementById('ttlVal').innerText=this.value+' মিনিট'">
-                            <div class="range-val" id="ttlVal" style="font-size:18px;">10 মিনিট</div>
-                        </div>
-                        <div class="sub" style="margin-top:8px;">অ্যাড খুলে এই সময়ের মধ্যে ফিরে ভেরিফাই করতে হবে, নাহলে গেট এক্সপায়ার (আবার অ্যাড দেখতে হবে)।</div>
-                    </div>
                 </div>
                 <div class="row" style="margin-top:16px;">
                     <button class="btn btn-grad" onclick="saveGate()"><i class="fa-solid fa-floppy-disk"></i> সেটিংস সেভ করুন</button>
                     <span class="sub" style="font-size:12px; color:var(--mut);">বট কমান্ড /setadwait, /setadcount-এর সাথে সিঙ্ক করা — যেকোনো জায়গা থেকে বদলান</span>
                 </div>
-                <div class="note">🛡️ <b>সিস্টেমটা যেভাবে চলে (অ্যাপের মতো):</b> প্রতিটি ডাউনলোড ক্লিকে fresh গেট → সার্ভার র‍্যান্ডম লিংক দেয় → ইউজার অ্যাড পেজে থাকার সময় সার্ভারে জমা হয় (away-beacon) → ফিরে এসে সার্ভার যাচাই করে → ভেরিফাইড গেট ছাড়া /api/send ফাইল দেয় না। VIP ইউজার গেট-ফ্রি। আনলক ১৫ মিনিট valid — একবার ডেলিভারির পর গেট খরচ হয়ে যায় (রিপ্লে বন্ধ)।</div>
+                <div class="note">🛡️ <b>সিস্টেমটা যেভাবে চলে (অ্যাপের মতো):</b> প্রতিটি ডাউনলোড ক্লিকে fresh গেট → সার্ভার র‍্যান্ডম লিংক দেয় → ইউজার অ্যাড পেজে থাকার সময় সার্ভারে জমা হয় (visibility + blur-বিকন, PC-তেও কাজ করে) → ফিরে এসে সার্ভার যাচাই করে → ভেরিফাইড গেট ছাড়া /api/send ফাইল দেয় না। গেটে কোনো টাইম-লিমিট নেই — যখন ভেরিফাই করবে তখনই। VIP ইউজার গেট-ফ্রি। আনলক ১৫ মিনিট valid — একবার ডেলিভারির পর গেট খরচ হয়ে যায় (রিপ্লে বন্ধ)।</div>
             </section>
 
             <!-- ═══════════════ 🎬 MOVIES ═══════════════ -->
@@ -2033,7 +2027,9 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                 tb.innerHTML = d.links.map(l => {
                     const rate = l.starts ? Math.round(l.verified * 100 / l.starts) : 0;
                     const host = (() => { try { return new URL(l.link).hostname; } catch(e) { return l.link; } })();
-                    return '<tr><td class="link-cell" title="' + l.link + '">' + host + '</td>' +
+                    // 🔖 লিংকের শেষ ৮ অক্ষর — একই ডোমেইনের একাধিক লিংক আলাদা করে চেনার জন্য
+                    const tail = (l.link || '').slice(-8);
+                    return '<tr><td class="link-cell" title="' + l.link + '"><a href="' + l.link + '" target="_blank" rel="noreferrer" style="color:var(--sky);text-decoration:none;">' + host + '</a><span class="tail-badge">#' + tail + '</span></td>' +
                         '<td>' + (l.adult ? '<span class="badge b-pink">অ্যাডাল্ট</span>' : '<span class="badge b-blue">নরমাল</span>') + '</td>' +
                         '<td><b>' + l.starts + '</b></td><td><b style="color:var(--ok)">' + l.verified + '</b></td>' +
                         '<td><span class="badge ' + (rate >= 60 ? 'b-green' : (rate >= 30 ? 'b-blue' : 'b-red')) + '">' + rate + '%</span></td></tr>';
@@ -2052,14 +2048,14 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
                 document.getElementById('bannersToggle').checked = !!d.banners_enabled;
                 document.getElementById('adWaitRange').value = d.ad_wait; document.getElementById('adWaitVal').innerText = d.ad_wait + 's';
                 document.getElementById('adCountRange').value = d.ad_count; document.getElementById('adCountVal').innerText = d.ad_count + 'টি';
-                document.getElementById('ttlRange').value = d.gate_ttl_min; document.getElementById('ttlVal').innerText = d.gate_ttl_min + ' মিনিট';
             } catch(e) {} }
             function renderPool(elId, links, pool) {
                 const el = document.getElementById(elId);
                 if (!links.length) { el.innerHTML = '<div class="empty">পুল খালি — উপরে লিংক যোগ করুন</div>'; return; }
                 el.innerHTML = links.map(u => {
                     let host = u; try { host = new URL(u).hostname; } catch(e) {}
-                    return '<div class="pool-item"><div><div class="url">' + u + '</div><div class="meta">' + host + '</div></div>' +
+                    // 🔖 শেষ ৮ অক্ষরের ব্যাজ — পারফরম্যান্স টেবিলের #ব্যাজের সাথে মিলিয়ে চেনার জন্য
+                    return '<div class="pool-item"><div><div class="url">' + u + '</div><div class="meta">' + host + ' <span class="tail-badge">#' + u.slice(-8) + '</span></div></div>' +
                         '<button class="btn btn-del btn-mini" onclick="delLink(\'' + pool + '\', this)" data-url="' + u.replace(/"/g, '&quot;') + '"><i class="fa-solid fa-trash"></i></button></div>';
                 }).join('');
             }
@@ -2084,8 +2080,7 @@ async def admin_panel_ui(auth: bool = Depends(verify_admin)):
             /* ═══ 🛡️ GATE SETTINGS ═══ */
             async function saveGate() {
                 const body = { ad_wait: parseInt(document.getElementById('adWaitRange').value),
-                               ad_count: parseInt(document.getElementById('adCountRange').value),
-                               gate_ttl_min: parseInt(document.getElementById('ttlRange').value) };
+                               ad_count: parseInt(document.getElementById('adCountRange').value) };
                 try { const res = await fetch('/api/admin/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
                     const d = await res.json(); if (d.ok) showToast('✅ গেট সেটিংস সেভ হয়েছে — এখনই সব ইউজারের জন্য চালু', true); else showToast('❌ ব্যর্থ', false);
                 } catch(e) { showToast('❌ এরর', false); } }
@@ -3560,15 +3555,16 @@ async def web_ui():
             function adTotalAway() { return adAwayMs + (adAwayStart !== null ? (Date.now() - adAwayStart) : 0); }
             function adRemainSec() { return Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000)); }
 
-            // 📡 সার্ভার-বিকন: মিনি অ্যাপ লুকালে (অ্যাড খুলল) 'away', ফিরলে 'back' — সার্ভার আসল অ্যাড-দেখার
+            // 📡 সার্ভার-বিকন: মিনি অ্যাপ লুকালে/ফোকাস হারালে (অ্যাড খুলল) 'away', ফিরলে 'back' — সার্ভার আসল অ্যাড-দেখার
             // সময় নিজে জমা রাখে। কনসোল থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না (PC বাইপাস বন্ধ)।
             function sendGateBeat(phase) {
-                if (!currentGateId) return;
+                const gid = currentGateId || gateGateId;  // adModal আর ডিপ-লিংক গেট — দুটোতেই বিকন কাজ করবে
+                if (!gid) return;
                 try {
-                    const blob = new Blob([JSON.stringify({gateId: currentGateId, initData: INIT_DATA, phase: phase})], {type: 'application/json'});
+                    const blob = new Blob([JSON.stringify({gateId: gid, initData: INIT_DATA, phase: phase})], {type: 'application/json'});
                     if (navigator.sendBeacon && navigator.sendBeacon('/api/ad/beat', blob)) return;
                 } catch(e) {}
-                try { fetch('/api/ad/beat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA, phase: phase}), keepalive: true}).catch(function(){}); } catch(e) {}
+                try { fetch('/api/ad/beat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gid, initData: INIT_DATA, phase: phase}), keepalive: true}).catch(function(){}); } catch(e) {}
             }
 
             async function openAdLink() {
@@ -3590,8 +3586,8 @@ async def web_ui():
                     if (g.count) adSettings.ad_count = Math.max(1, g.count);
                     tg.openLink(g.link);
                     adStartTime = Date.now();
-                    // 🛡️ অ্যাড খুলল — এখন থেকে শুধু অ্যাড পেজে থাকার সময় গোনা হবে (ক্লায়েন্ট প্রিভিউ);
-                    //    চূড়ান্ত হিসাব সার্ভার বিকন + verify দিয়ে করবে
+                    // 🛡️ অ্যাড খুলল — থাকার সময় visibility/blur বিকনে সার্ভারে জমা হবে;
+                    //    বাটনের কাউন্টডাউন এখন ওয়াল-ক্লক — PC-তে এক্সটার্নাল ব্রাউজারে অ্যাড খুললেও আর আটকে থাকবে না
                     adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                     let vBtn = document.getElementById('adVerifyBtn');
                     vBtn.style.display = 'block';
@@ -3599,14 +3595,11 @@ async def web_ui():
                     vBtn.innerText = `⏳ অপেক্ষা করুন ${adSettings.ad_wait}s`;
                     if (adCountdownTimer) clearInterval(adCountdownTimer);
                     adCountdownTimer = setInterval(() => {
-                        // 🛡️ ওয়াচডগ: অ্যাপ দৃশ্যমান কিন্তু ট্র্যাকিং এখনো "অ্যাডে আছে" — visibilitychange মিস হলেও ফিরে-আসা ধরা পড়বে
-                        if (!document.hidden && adWasHidden && adAwayStart !== null) { adUserReturned(); return; }
-                        let remain = adRemainSec();
-                        if (remain <= 0) {
-                            if (!document.hidden) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
-                        }
-                        else if (!document.hidden) { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
-                    }, 1000);
+                        // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
+                        const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
+                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                        else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
+                    }, 250);
                 } catch(e) {
                     gateOpening = false;
                     document.getElementById('adClickBtn').style.display = 'block';
@@ -3635,8 +3628,14 @@ async def web_ui():
                             oBtn.innerText = `বিজ্ঞাপন ${adRound + 1}/${adSettings.ad_count} খুলুন`;
                         }
                     } else {
-                        let remaining = (v && typeof v.remain === 'number') ? v.remain : adRemainSec();
-                        tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল)`);
+                        let remaining = (v && typeof v.remain === 'number') ? v.remain : adSettings.ad_wait;
+                        if (v.ok === false) {
+                            // auth/error/bad_gate — যাচাই-ই হয়নি, স্পষ্ট মেসেজ
+                            tg.showAlert('⚠️ যাচাই করা গেল না — TRY AGAIN চেপে আবার চেষ্টা করুন।');
+                        } else {
+                            // ⏱️ সার্ভার বলল সময় বাকি — স্পষ্ট "আবার চেষ্টা করুন" মেসেজ (আগের নিয়ম ফিরিয়ে আনা হলো)
+                            tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল) — TRY AGAIN চেপে আবার অ্যাড খুলুন।`);
+                        }
                         document.getElementById('adVerifyBtn').style.display = 'none';
                         document.getElementById('adTryAgainBtn').style.display = 'block';
                     }
@@ -3652,20 +3651,30 @@ async def web_ui():
                 sendFileRequest(activeFileId);
             }
 
-            // 🛡️ অ্যান্টি-বাইপাস মূল চেক: ইউজার অ্যাড থেকে অ্যাপে ফিরে এলেই চেক হয় —
-            // পুরো wait সেকেন্ড অ্যাডে থাকলে ভেরিফাই চালু হয়, আগে ফিরলে এলার্ট + আবার শুরু থেকে অ্যাড দেখতে হবে
+            // 🛡️ অ্যান্টি-বাইপাস মূল চেক: ইউজার অ্যাড থেকে অ্যাপে ফিরে এলেই চেক হয় (visibility + focus — দুই সংকেতেই) —
+            // পুরো wait সেকেন্ড অ্যাডে থাকলে ভেরিফাই চালু হয়, আগে ফিরলে স্পষ্ট এলার্ট + আবার শুরু থেকে অ্যাড দেখতে হবে
             function adUserReturned() {
                 if (adStartTime === 0) return;
                 if (adAwayStart !== null) { adAwayMs += Date.now() - adAwayStart; adAwayStart = null; }
                 sendGateBeat('back');  // 📡 সার্ভারকে "ফিরে এসেছি" জানানো — আসল অ্যাড-টাইম জমা হলো
-                let remain = adRemainSec();
-                let vBtn = document.getElementById('adVerifyBtn');
+                const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000));
                 if (remain <= 0) {
-                    if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
-                    vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
+                    // ✅ পুরো সময় অ্যাডে ছিল — ভেরিফাই বাটন চালু
+                    if (gateGateId) {  // ডিপ-লিংক গেট
+                        if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+                        let gBtn = document.getElementById('gateWatchBtn');
+                        gBtn.disabled = false; gBtn.innerText = '✅ ফাইলটি দেখুন';
+                    } else {
+                        if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
+                        let vBtn = document.getElementById('adVerifyBtn');
+                        vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
+                    }
                 } else {
-                    resetAdModal();
-                    tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল)`);
+                    // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
+                    const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
+                    if (gateGateId) { dlResetGate(); }
+                    else { resetAdModal(); }
+                    tg.showAlert(msg);
                 }
             }
 
@@ -3673,6 +3682,16 @@ async def web_ui():
                 if (adStartTime === 0) return;  // অ্যাড ফেজ চলছে না
                 if (document.hidden) { adAwayStart = Date.now(); adWasHidden = true; sendGateBeat('away'); }
                 else { adUserReturned(); }
+            });
+            // 🖥️ PC-ফিক্স: এক্সটার্নাল ব্রাউজারে অ্যাড খুললে টেলিগ্রাম উইন্ডো hidden হয় না — blur/focus-ই আসল সংকেত।
+            // এই দুটো লিসেনারের কারণে PC-তেও সময় সার্ভারে জমা হয় আর আগে-ফিরলে "আবার চেষ্টা করুন" মেসেজ দেখায়।
+            window.addEventListener('blur', function() {
+                if (adStartTime === 0) return;
+                if (adAwayStart === null) { adAwayStart = Date.now(); adWasHidden = true; sendGateBeat('away'); }
+            });
+            window.addEventListener('focus', function() {
+                if (adStartTime === 0) return;
+                if (adAwayStart !== null) { adUserReturned(); }
             });
 
             // 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" — ফাইল সার্ভার থেকেই ইউজারের বট চ্যাটে
@@ -3703,6 +3722,15 @@ async def web_ui():
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
             let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null;
+            // 🧹 ডিপ-লিংক গেট রিসেট: চলমান গেট বাতিল + সব স্টেট শুরুর অবস্থায় (TRY AGAIN/আগে ফিরলে)
+            function dlResetGate() {
+                if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
+                gateGateId = null; gateStep = 0;
+                adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
+                if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+                let btn = document.getElementById('gateWatchBtn');
+                if (btn) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
+            }
             async function openFromDeepLink() {
                 try {
                     let openId = new URLSearchParams(window.location.search).get('open') || (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
@@ -3749,14 +3777,18 @@ async def web_ui():
                         if (g.wait) adSettings.ad_wait = g.wait;
                         tg.openLink(g.link);
                         gateStep = 1;
+                        // 🛡️ ডিপ-লিংক গেটেও বিকন ট্র্যাকিং চালু (visibility + blur) — সার্ভার আসল অ্যাড-টাইম পাবে
+                        adStartTime = Date.now(); adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                         let left = g.wait || adSettings.ad_wait;
                         btn.innerText = `⏳ অপেক্ষা করুন ${left}s`;
                         if (gateTimer) clearInterval(gateTimer);
+                        const dlT0 = Date.now();
+                        // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
-                            left--;
-                            if (left <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
-                            else { btn.innerText = `⏳ অপেক্ষা করুন ${left}s`; }
-                        }, 1000);
+                            const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
+                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
+                            else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
+                        }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
                 } else {
                     // 🛡️ সার্ভার-ভেরিফাই: পুরো সময় পার হলেই ফাইল পেজ খুলবে
@@ -3767,6 +3799,7 @@ async def web_ui():
                         if (v.ok && v.done) {
                             if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
                             gateGateId = null;
+                            adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                             closeModal('fileGateModal');
                             // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
                             // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
@@ -3775,9 +3808,13 @@ async def web_ui():
                             return;
                         }
                         let rem = (v && typeof v.remain === 'number') ? v.remain : adSettings.ad_wait;
-                        tg.showAlert(`⚠️ পুরো ${adSettings.ad_wait} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল)`);
-                    } catch(e) { tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।'); }
-                    btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন';
+                        // ⚠️ সময় বাকি ছিল — স্পষ্ট মেসেজ + গেট রিসেট (আবার Watch Now থেকে শুরু)
+                        dlResetGate();
+                        tg.showAlert(`⚠️ পুরো ${adSettings.ad_wait} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল) — আবার Watch Now চেপে অ্যাড দেখুন।`);
+                    } catch(e) {
+                        dlResetGate();
+                        tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।');
+                    }
                 }
             }
             
@@ -4012,18 +4049,16 @@ class GateVerifyModel(BaseModel):
     gateId: str; initData: str
 
 def gate_settings():
-    """⚙️ গেট সেটিংস (অ্যাডমিন প্যানেল/কমান্ড থেকে বদলানো যায়): অপেক্ষা-সেকেন্ড, রাউন্ড, TTL"""
+    """⚙️ গেট সেটিংস (অ্যাডমিন প্যানেল/কমান্ড থেকে বদলানো যায়): অপেক্ষা-সেকেন্ড, রাউন্ড
+    (TTL বাদ — ইউজার-ফ্রেন্ডলি: ১০ সেকেন্ড পার করলেই গেট ভেরিফাইড, আর কোনো এক্সপায়ার নেই)"""
     async def _inner():
         aw = await get_setting("ad_wait", 10)
         ac = await get_setting("ad_count", 1)
-        ttl = await get_setting("gate_ttl_min", 10)
         try: aw = max(5, min(120, int(aw or 10)))
         except Exception: aw = 10
         try: ac = max(1, min(5, int(ac or 1)))
         except Exception: ac = 1
-        try: ttl = max(2, min(30, int(ttl or 10)))
-        except Exception: ttl = 10
-        return aw, ac, ttl
+        return aw, ac
     return _inner
 
 async def gate_get_settings():
@@ -4055,7 +4090,7 @@ async def _gate_uid_guard(init_data: str):
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
     """🎬 গেট শুরু: সার্ভার র‍্যান্ডম লিংক ঠিক করে gate_id দেয় — ক্লায়েন্ট শুধু খুলবে,
-    লিংক বদলানো/টাইমার চালানোর সুযোগ নেই। রিটার্ন: {gate_id, link, wait, count, ttl}"""
+    লিংক বদলানো/টাইমার চালানোর সুযোগ নেই। রিটার্ন: {gate_id, link, wait, count, pool}"""
     try:
         uid = await _gate_uid_guard(d.initData)
         if uid == 0 or uid in banned_cache: return {"ok": False, "msg": "auth"}
@@ -4063,7 +4098,7 @@ async def ad_gate_start(d: GateStartModel):
         hour_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
         started_cnt = await db.ad_gates.count_documents({"uid": uid, "started_at": {"$gte": hour_ago}})
         if started_cnt >= 60: return {"ok": False, "msg": "rate"}
-        aw, ac, ttl = await gate_get_settings()
+        aw, ac = await gate_get_settings()
         link, pool_size = await pick_link_for_user(uid, d.adult)
         if not link: return {"ok": False, "msg": "no_link"}
         now = datetime.datetime.utcnow()
@@ -4072,7 +4107,7 @@ async def ad_gate_start(d: GateStartModel):
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
         return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
-                "wait": aw, "count": ac, "ttl": ttl, "pool": pool_size}
+                "wait": aw, "count": ac, "pool": pool_size}
     except Exception as e:
         print(f"ad_gate_start error: {e}")
         return {"ok": False, "msg": "error"}
@@ -4105,9 +4140,9 @@ async def ad_gate_beat(d: GateBeatModel):
 
 @app.post("/api/ad/verify")
 async def ad_gate_verify(d: GateVerifyModel):
-    """✅ গেট যাচাই — সার্ভারের হিসাবই চূড়ান্ত:
+    """✅ গেট যাচাই — সার্ভারের হিসাবই চূড়ান্ত (TTL এক্সপায়ার নেই — ইউজার-ফ্রেন্ডলি):
     • beacon এলে: সত্যিকারের অ্যাডে-থাকার সময় (away_ms) ≥ wait হতে হবে
-    • beacon না এলে (কিছু ডিভাইসে বিকন ব্লক হয়): আসল সময় (start→verify) ≥ wait হতে হবে
+    • beacon না এলে (PC-তে blur/focus দিয়ে বিকন আসে; তবুও না এলে): আসল সময় (start→verify) ≥ wait
     → কনসোল দিয়ে চেষ্টা করলেও অন্তত wait সেকেন্ড আসল সময় না গেলে ভেরিফাই হবে না।"""
     try:
         uid = await _gate_uid_guard(d.initData)
@@ -4116,14 +4151,11 @@ async def ad_gate_verify(d: GateVerifyModel):
         except Exception: return {"ok": False, "msg": "bad_gate"}
         gate = await db.ad_gates.find_one({"_id": gid, "uid": uid})
         if not gate: return {"ok": False, "msg": "bad_gate"}
-        aw, ac, ttl = await gate_get_settings()
+        aw, _ac = await gate_get_settings()
         now = datetime.datetime.utcnow()
         if gate["status"] == "verified": return {"ok": True, "done": True, "remain": 0}
         if gate["status"] != "running": return {"ok": False, "msg": "expired"}
         started = gate["started_at"]
-        if (now - started).total_seconds() > ttl * 60:
-            await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "expired"}})
-            return {"ok": False, "msg": "expired"}
         elapsed_ms = int((now - started).total_seconds() * 1000)
         away_start = gate.get("away_start")
         away_ms = int(gate.get("away_ms") or 0) + (int((now - away_start).total_seconds() * 1000) if away_start else 0)
@@ -4156,7 +4188,7 @@ async def gate_check_and_consume(uid: int, movie_id: str, is_vip: bool):
     """🔐 /api/send-এর গেট-প্রহরী: VIP ছাড়া ভেরিফাইড গেট সংখ্যা < ad_count হলে ফাইল না।
     রিটার্ন: (চলবে কি না, ভেরিফাইড গেট, দরকার) — খরচ (consume) আলাদা ফাংশনে"""
     if is_vip: return True, 0, 0
-    aw, ac, ttl = await gate_get_settings()
+    _, ac = await gate_get_settings()
     since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
     cnt = await db.ad_gates.count_documents({"uid": uid, "movie_id": movie_id,
                                             "status": "verified", "verified_at": {"$gte": since}})
@@ -4164,7 +4196,7 @@ async def gate_check_and_consume(uid: int, movie_id: str, is_vip: bool):
 
 async def gate_consume(uid: int, movie_id: str):
     """🧾 ডেলিভারি হয়ে গেলে ভেরিফাইড গেটগুলো consumed মার্ক — একবারের গেট = একবারের ফাইল (রিপ্লে আটকায়)"""
-    aw, ac, ttl = await gate_get_settings()
+    _, ac = await gate_get_settings()
     since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
     gates = await db.ad_gates.find({"uid": uid, "movie_id": movie_id, "status": "verified",
                                     "verified_at": {"$gte": since}}).sort("verified_at", -1).to_list(ac)
@@ -4205,20 +4237,19 @@ async def admin_funnel(auth: bool = Depends(verify_admin)):
     except Exception as e:
         return {"ok": False, "msg": str(e)}
 
-# ⚙️ অ্যাডমিন কনফিগ API — প্যানেল থেকে সব নিয়ন্ত্রণ (লিংক পুল, টাইমিং, ব্যানার, TTL)
+# ⚙️ অ্যাডমিন কনফিগ API — প্যানেল থেকে সব নিয়ন্ত্রণ (লিংক পুল, টাইমিং, ব্যানার)
 @app.get("/api/admin/config")
 async def admin_get_config(auth: bool = Depends(verify_admin)):
     dl = await db.settings.find_one({"id": "direct_links"}); links = (dl or {}).get("links", []) or []
     adl = await db.settings.find_one({"id": "adult_direct_links"}); alinks = (adl or {}).get("links", []) or []
-    aw, ac, ttl = await gate_get_settings()
+    aw, ac = await gate_get_settings()
     banners = await get_setting("banners_enabled", False)
     return {"ok": True, "links": links, "adult_links": alinks,
-            "ad_wait": aw, "ad_count": ac, "gate_ttl_min": ttl, "banners_enabled": bool(banners)}
+            "ad_wait": aw, "ad_count": ac, "banners_enabled": bool(banners)}
 
 class AdminConfigModel(BaseModel):
     ad_wait: int | None = None
     ad_count: int | None = None
-    gate_ttl_min: int | None = None
     banners_enabled: bool | None = None
 
 @app.post("/api/admin/config")
@@ -4230,9 +4261,6 @@ async def admin_set_config(d: AdminConfigModel, auth: bool = Depends(verify_admi
         if d.ad_count is not None:
             v = max(1, min(5, int(d.ad_count)))
             await db.settings.update_one({"id": "ad_count"}, {"$set": {"value": v}}, upsert=True)
-        if d.gate_ttl_min is not None:
-            v = max(2, min(30, int(d.gate_ttl_min)))
-            await db.settings.update_one({"id": "gate_ttl_min"}, {"$set": {"value": v}}, upsert=True)
         if d.banners_enabled is not None:
             await db.settings.update_one({"id": "banners_enabled"}, {"$set": {"value": bool(d.banners_enabled)}}, upsert=True)
         return {"ok": True}
