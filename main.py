@@ -221,6 +221,20 @@ async def init_db():
     # 🗳️ রেটিং পোল (মুভির টাইটেল অনুযায়ী সব পার্ট শেয়ার করে) — ইউনিক ইনডেক্স: এক ইউজার এক ভোট
     await db.votes.create_index([("title", 1), ("uid", 1)], unique=True)
     await db.votes.create_index("title")
+    # 🛡️ সার্ভার-সাইড অ্যাড গেট (PC/DevTools বাইপাস বন্ধ): গেট যাচাই + ফানেল স্ট্যাটের ইনডেক্স
+    await db.ad_gates.create_index([("uid", 1), ("started_at", -1)])
+    await db.ad_gates.create_index([("movie_id", 1), ("status", 1), ("verified_at", -1)])
+    await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*14)  # ১৪ দিন পুরনো গেট-লগ অটো ক্লিন
+
+async def get_setting(key, default=None):
+    """⚙️ সেটিং রিডার — ad_wait / ad_count / banners / gate_ttl সব এক জায়গা থেকে"""
+    try:
+        cfg = await db.settings.find_one({"id": key})
+        if not cfg: return default
+        if "value" in cfg: return cfg["value"]
+        return cfg
+    except Exception:
+        return default
 
 # 💰 অ্যাড সেটিং সিড: DB খালি থাকলে ডিফল্ট Adsterra/Monetag লিংক + সেটিং বসিয়ে দেয়
 # (অ্যাডমিন নিজে লিংক বসালে তার লিংকই থাকবে, ওভাররাইট করবে না)
@@ -242,7 +256,7 @@ async def seed_default_ads():
             await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": {"$each": DEFAULT_ADULT_DIRECT_LINKS}}}, upsert=True)
             await db.settings.update_one({"id": "random_links_migrated"}, {"$set": {"done": True}}, upsert=True)
             print("🎲 Random ad system: new direct links added to pools (normal+adult).")
-        defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72}
+        defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72, "gate_ttl_min": 10, "banners_enabled": False}
         for key, val in defaults.items():
             cfg = await db.settings.find_one({"id": key})
             if not cfg:
@@ -390,6 +404,9 @@ async def start_cmd(message: types.Message, state: FSMContext):
                     delivered = True
                     await db.movies.update_one({"_id": ObjectId(payload)}, {"$inc": {"clicks": 1}})
                     await db.user_unlocks.update_one({"user_id": uid, "movie_id": payload}, {"$set": {"unlocked_at": now}}, upsert=True)
+                    # 🛡️ গেট-ফানেল: ওয়েব অ্যাপে ভেরিফাই হওয়া গেটগুলো এখানে খরচ হিসেবে ধরা হলো
+                    try: await gate_consume(uid, payload)
+                    except Exception: pass
                     await db.pending_files.delete_one({"_id": pending["_id"]})
             else:
                 # মুভিটি আর DB-তে নেই → পেন্ডিং রেকর্ড মুছে ফেলা হলো
@@ -1747,189 +1764,369 @@ async def handle_trx_approval(c: types.CallbackQuery):
 # ==========================================
 @app.get("/panel", response_class=HTMLResponse)
 async def admin_panel_ui(auth: bool = Depends(verify_admin)):
-    html_code = '''
+    html_code = r'''
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="bn">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Admin Panel - Movie Box</title>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <title>Movie Box — Admin Panel v2</title>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #cbd5e1; margin: 0; padding: 20px; }
-            .header { text-align: center; margin-bottom: 30px; color: #fff; }
-            .header h1 { margin: 0; font-size: 28px; background: linear-gradient(45deg, #ff416c, #ff4b2b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }
-            .stat-card { background: #1e293b; padding: 20px; border-radius: 16px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-            .stat-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; }
-            .stat-card .value { font-size: 32px; font-weight: 800; color: #fff; }
-            .stat-card.users .value i { color: #3b82f6; } .stat-card.today-users .value i { color: #10b981; } .stat-card.clicks .value i { color: #f59e0b; } .stat-card.today-clicks .value i { color: #ef4444; }
-            .stat-card.live-users { border-color: #10b981; } .stat-card.live-users .value { color: #10b981; }
-            .table-container { background: #1e293b; border-radius: 16px; border: 1px solid #334155; overflow-x: auto; }
-            .table-header { padding: 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-            .table-header h2 { margin: 0; color: #fff; font-size: 20px; }
-            table { width: 100%; border-collapse: collapse; min-width: 600px; } th { text-align: left; padding: 15px; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #334155; } td { padding: 15px; border-bottom: 1px solid #334155; font-size: 14px; color: #e2e8f0; } tr:last-child td { border-bottom: none; } tr:hover { background: rgba(255,255,255,0.03); }
-            .view-badge { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 12px; font-weight: 600; font-size: 12px; }
-            .delete-btn { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; transition: 0.2s; } .delete-btn:hover { background: #ef4444; color: white; }
-            .empty-state { text-align: center; padding: 40px; color: #64748b; }
-            
-            /* Edit Modal Styles */
-            .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 2000; align-items: center; justify-content: center; }
-            .modal-content { background: #1e293b; padding: 25px; border-radius: 12px; width: 90%; max-width: 400px; color: #fff; }
-            .modal-content h3 { margin-top: 0; color: #ef4444; }
-            .form-group { margin-bottom: 15px; }
-            .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
-            .form-group input { width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; box-sizing: border-box; }
-            .modal-buttons { display: flex; gap: 10px; margin-top: 20px; }
-            .btn-save { background: #22B8FF; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; flex: 1; }
-            .btn-cancel { background: #334155; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; flex: 1; }
+            :root { --bg:#0b1220; --card:#141d31; --card2:#1a2540; --line:#243252; --txt:#dbe4f5; --mut:#8494b5;
+                    --acc:#ff416c; --acc2:#ff4b2b; --ok:#10b981; --warn:#f59e0b; --bad:#ef4444; --sky:#38bdf8; }
+            * { margin:0; padding:0; box-sizing:border-box; }
+            body { font-family:'Segoe UI',Tahoma,sans-serif; background:var(--bg); color:var(--txt); min-height:100vh; }
+            .topbar { position:sticky; top:0; z-index:100; background:rgba(11,18,32,.92); backdrop-filter:blur(10px);
+                      border-bottom:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+            .brand { font-size:20px; font-weight:900; background:linear-gradient(45deg,#ff416c,#ff4b2b); -webkit-background-clip:text; -webkit-text-fill-color:transparent; display:flex; align-items:center; gap:8px; }
+            .brand small { font-size:11px; color:var(--mut); -webkit-text-fill-color:var(--mut); font-weight:600; }
+            .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+            .tab-btn { border:1px solid var(--line); background:var(--card); color:var(--mut); padding:9px 16px; border-radius:10px;
+                       cursor:pointer; font-weight:700; font-size:13px; transition:.2s; }
+            .tab-btn:hover { color:#fff; border-color:#33456e; }
+            .tab-btn.active { background:linear-gradient(45deg,#ff416c,#ff4b2b); color:#fff; border-color:transparent; box-shadow:0 4px 14px rgba(255,65,108,.35); }
+            main { max-width:1180px; margin:0 auto; padding:22px 16px 60px; }
+            .sec { display:none; } .sec.active { display:block; animation:fadeIn .25s ease; }
+            @keyframes fadeIn { from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+            h2.sec-title { font-size:17px; font-weight:800; color:#fff; margin:4px 0 14px; display:flex; align-items:center; gap:8px; }
+            h2.sec-title i { color:var(--acc); }
+            .grid { display:grid; gap:14px; }
+            .g5 { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); }
+            .g3 { grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+            .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px; }
+            .card h3 { font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+            .card .big { font-size:30px; font-weight:900; color:#fff; }
+            .card .sub { font-size:12px; color:var(--mut); margin-top:6px; }
+            .ic { width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:15px; }
+            .ic.blue { background:rgba(56,189,248,.15); color:var(--sky); } .ic.green { background:rgba(16,185,129,.15); color:var(--ok); }
+            .ic.orange { background:rgba(245,158,11,.15); color:var(--warn); } .ic.red { background:rgba(239,68,68,.15); color:var(--bad); }
+            .ic.pink { background:rgba(255,65,108,.15); color:var(--acc); }
+            .stat-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+            /* Funnel */
+            .funnel { display:flex; align-items:stretch; gap:10px; flex-wrap:wrap; }
+            .f-step { flex:1; min-width:150px; background:var(--card2); border:1px solid var(--line); border-radius:14px; padding:14px; text-align:center; position:relative; }
+            .f-step .num { font-size:26px; font-weight:900; color:#fff; }
+            .f-step .lbl { font-size:12px; color:var(--mut); margin-top:4px; }
+            .f-arrow { align-self:center; color:var(--mut); font-size:18px; }
+            .f-bar { height:8px; border-radius:6px; background:#0e1729; overflow:hidden; margin-top:8px; }
+            .f-bar > div { height:100%; border-radius:6px; background:linear-gradient(90deg,#ff416c,#ff4b2b); transition:width .5s; }
+            /* Tables */
+            .tbl-wrap { background:var(--card); border:1px solid var(--line); border-radius:16px; overflow:auto; }
+            table { width:100%; border-collapse:collapse; min-width:620px; }
+            th { text-align:left; padding:13px 15px; font-size:11px; color:var(--mut); text-transform:uppercase; letter-spacing:1px; border-bottom:1px solid var(--line); }
+            td { padding:12px 15px; font-size:13px; border-bottom:1px solid rgba(36,50,82,.5); color:var(--txt); }
+            tr:last-child td { border-bottom:none; } tr:hover td { background:rgba(255,255,255,.02); }
+            .badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+            .b-blue { background:rgba(56,189,248,.15); color:var(--sky); } .b-pink { background:rgba(255,65,108,.15); color:var(--acc); }
+            .b-green { background:rgba(16,185,129,.15); color:var(--ok); } .b-red { background:rgba(239,68,68,.15); color:var(--bad); }
+            .link-cell { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--sky); font-size:12px; }
+            /* Forms */
+            .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+            input[type=text], input[type=number], select {
+                background:#0e1729; border:1px solid var(--line); color:#fff; padding:10px 13px; border-radius:10px; font-size:13px; outline:none; }
+            input:focus, select:focus { border-color:var(--acc); }
+            .btn { border:none; cursor:pointer; font-weight:800; font-size:13px; padding:10px 16px; border-radius:10px; transition:.2s; color:#fff; }
+            .btn-grad { background:linear-gradient(45deg,#ff416c,#ff4b2b); box-shadow:0 4px 14px rgba(255,65,108,.3); }
+            .btn-grad:hover { transform:translateY(-1px); }
+            .btn-ghost { background:var(--card2); border:1px solid var(--line); color:var(--txt); }
+            .btn-ghost:hover { border-color:#33456e; }
+            .btn-mini { padding:6px 11px; font-size:12px; border-radius:8px; }
+            .btn-del { background:rgba(239,68,68,.15); color:var(--bad); border:1px solid rgba(239,68,68,.3); }
+            .btn-del:hover { background:var(--bad); color:#fff; }
+            /* Link pool items */
+            .pool-item { display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--card2);
+                         border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+            .pool-item .url { font-size:12px; color:var(--sky); word-break:break-all; }
+            .pool-item .meta { font-size:11px; color:var(--mut); margin-top:3px; }
+            .empty { text-align:center; padding:26px; color:var(--mut); font-size:13px; }
+            /* Toggle switch */
+            .switch { position:relative; display:inline-block; width:52px; height:28px; }
+            .switch input { opacity:0; width:0; height:0; }
+            .slider { position:absolute; cursor:pointer; inset:0; background:#243252; border-radius:28px; transition:.3s; }
+            .slider:before { content:""; position:absolute; height:20px; width:20px; left:4px; top:4px; background:#8494b5; border-radius:50%; transition:.3s; }
+            .switch input:checked + .slider { background:linear-gradient(45deg,#ff416c,#ff4b2b); }
+            .switch input:checked + .slider:before { transform:translateX(24px); background:#fff; }
+            /* Range slider */
+            input[type=range] { width:100%; accent-color:#ff416c; }
+            .range-val { font-size:26px; font-weight:900; color:#fff; min-width:70px; text-align:center; background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:6px 10px; }
+            .note { font-size:12px; color:var(--mut); background:var(--card2); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-top:12px; line-height:1.7; }
+            .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px); background:#1a2540; color:#fff;
+                     border:1px solid var(--line); padding:12px 20px; border-radius:12px; font-size:13px; font-weight:700; opacity:0; transition:.3s; z-index:999; box-shadow:0 8px 24px rgba(0,0,0,.4); }
+            .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+            .toast.ok { border-color:rgba(16,185,129,.5); } .toast.err { border-color:rgba(239,68,68,.5); }
+            @media (max-width:640px) { .tab-btn { padding:8px 12px; font-size:12px; } .card .big { font-size:24px; } }
         </style>
     </head>
     <body>
-        <div class="header"><h1><i class="fa-solid fa-shield-halved"></i> Admin Panel</h1><p>Movie Box Control Center</p></div>
-        <div class="stats-grid">
-            <div class="stat-card users"><h3>Total Users</h3><div class="value"><i class="fa-solid fa-users"></i> <span id="totalUsers">0</span></div></div>
-            <div class="stat-card today-users"><h3>Today's New Users</h3><div class="value"><i class="fa-solid fa-user-plus"></i> <span id="todayUsers">0</span></div></div>
-            <div class="stat-card clicks"><h3>Total Clicks</h3><div class="value"><i class="fa-solid fa-eye"></i> <span id="totalClicks">0</span></div></div>
-            <div class="stat-card today-clicks"><h3>Today's Clicks</h3><div class="value"><i class="fa-solid fa-chart-line"></i> <span id="todayClicks">0</span></div></div>
-            <div class="stat-card live-users"><h3>Live Active (1m)</h3><div class="value"><i class="fa-solid fa-signal"></i> <span id="activeUsers">0</span></div></div>
+        <div class="topbar">
+            <div class="brand"><i class="fa-solid fa-clapperboard"></i> Movie Box <small>ADMIN v2</small></div>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="overview" onclick="showTab('overview', this)"><i class="fa-solid fa-chart-pie"></i> ওভারভিউ</button>
+                <button class="tab-btn" data-tab="ads" onclick="showTab('ads', this)"><i class="fa-solid fa-bullhorn"></i> অ্যাডস ম্যানেজার</button>
+                <button class="tab-btn" data-tab="gate" onclick="showTab('gate', this)"><i class="fa-solid fa-shield-halved"></i> গেট সেটিংস</button>
+                <button class="tab-btn" data-tab="movies" onclick="showTab('movies', this)"><i class="fa-solid fa-film"></i> মুভি</button>
+            </div>
         </div>
-        <div class="table-container"><div class="table-header">
-    <h2><i class="fa-solid fa-film"></i> Uploaded Movies</h2>
-    <input type="text" id="movieSearchInput" placeholder="🔍 Search movie..." style="padding: 8px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; outline: none; width: 150px;">
-</div><table><thead><tr><th>Title</th><th>Quality</th><th>Category</th><th>Views</th><th>Action</th></tr></thead><tbody id="movieTableBody"><tr><td colspan="5" class="empty-state">Loading data...</td></tr></tbody></table></div>
+        <main>
+            <!-- ═══════════════ 📊 OVERVIEW ═══════════════ -->
+            <section id="sec-overview" class="sec active">
+                <h2 class="sec-title"><i class="fa-solid fa-chart-pie"></i> লাইভ ওভারভিউ</h2>
+                <div class="grid g5" style="margin-bottom:16px;">
+                    <div class="card"><div class="stat-top"><h3>Total Users</h3><span class="ic blue"><i class="fa-solid fa-users"></i></span></div><div class="big" id="totalUsers">0</div></div>
+                    <div class="card"><div class="stat-top"><h3>আজকের নতুন</h3><span class="ic green"><i class="fa-solid fa-user-plus"></i></span></div><div class="big" id="todayUsers">0</div></div>
+                    <div class="card"><div class="stat-top"><h3>Total Views</h3><span class="ic orange"><i class="fa-solid fa-eye"></i></span></div><div class="big" id="totalClicks">0</div></div>
+                    <div class="card"><div class="stat-top"><h3>আজকের Views</h3><span class="ic red"><i class="fa-solid fa-chart-line"></i></span></div><div class="big" id="todayClicks">0</div></div>
+                    <div class="card"><div class="stat-top"><h3>লাইভ (১ মিনিট)</h3><span class="ic green"><i class="fa-solid fa-signal"></i></span></div><div class="big" id="activeUsers">0</div></div>
+                </div>
 
-        <!-- Edit Modal HTML -->
-        <div id="editModal" class="modal">
-            <div class="modal-content">
-                <h3>✏️ Edit Movie</h3>
+                <h2 class="sec-title"><i class="fa-solid fa-filter"></i> অ্যাড গেট ফানেল — ইম্প্রেশন কোথায় হারাচ্ছে এখন ডাটা দিয়ে দেখুন</h2>
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="funnel">
+                        <div class="f-step"><div class="num" id="fStarts">0</div><div class="lbl">🎯 গেট খুলেছে (অ্যাড লিংক গেছে)</div><div class="f-bar"><div id="fStartsBar" style="width:100%"></div></div></div>
+                        <div class="f-arrow"><i class="fa-solid fa-angles-right"></i></div>
+                        <div class="f-step"><div class="num" id="fVerified">0</div><div class="lbl">✅ পুরো সময় দেখে ভেরিফাই</div><div class="f-bar"><div id="fVerifiedBar" style="width:0%"></div></div></div>
+                        <div class="f-arrow"><i class="fa-solid fa-angles-right"></i></div>
+                        <div class="f-step"><div class="num" id="fDelivered">0</div><div class="lbl">📥 ফাইল ডেলিভারি</div><div class="f-bar"><div id="fDeliveredBar" style="width:0%"></div></div></div>
+                    </div>
+                    <div class="row" style="margin-top:14px; gap:20px; flex-wrap:wrap;">
+                        <span class="badge b-green" id="fComplete">কমপ্লিট: 0%</span>
+                        <span class="badge b-red" id="fSuspect">সন্দেহজনক (বিকন ছাড়া): 0</span>
+                        <span class="badge b-blue" id="fUnique">ইউনিক ইউজার (২৪ঘ): 0</span>
+                    </div>
+                    <div class="note">💡 <b>কীভাবে পড়বেন:</b> "গেট খুলেছে" = অ্যাড লিংক ওপেন হয়েছে (এটাই আপনার ইম্প্রেশনের সুযোগ)। "ভেরিফাই" = পুরো সময় অ্যাড পেজে ছিল (রিয়েল ইম্প্রেশন)। খুলেছে অনেক কিন্তু ভেরিফাই কম = ইউজার আগেই ফিরে আসছে (লিংক লোড ধীর বা কনটেন্ট দুর্বল)। খুলেছেই কম = গেটে পৌঁছানোর আগেই ইউজার ঝেড়ে যাচ্ছে।</div>
+                </div>
+
+                <h2 class="sec-title"><i class="fa-solid fa-link"></i> লিংক পারফরম্যান্স (২৪ ঘণ্টা)</h2>
+                <div class="tbl-wrap"><table><thead><tr><th>লিংক</th><th>টাইপ</th><th>খোলা হয়েছে</th><th>ভেরিফাই</th><th>রেট</th></tr></thead>
+                <tbody id="linkTable"><tr><td colspan="5" class="empty">লোড হচ্ছে...</td></tr></tbody></table></div>
+            </section>
+
+            <!-- ═══════════════ 📢 ADS MANAGER ═══════════════ -->
+            <section id="sec-ads" class="sec">
+                <h2 class="sec-title"><i class="fa-solid fa-bullhorn"></i> অ্যাডস ম্যানেজার — নরমাল/অ্যাডাল্ট আলাদা পুল, প্যানেল থেকেই ফুল কন্ট্রোল</h2>
+                <div class="grid g3">
+                    <div class="card">
+                        <h3><i class="fa-solid fa-tv" style="color:var(--sky)"></i> নরমাল ডাইরেক্ট লিংক পুল (<span id="normalCount">0</span>)</h3>
+                        <div class="row" style="margin-bottom:12px;">
+                            <input type="text" id="normalUrl" placeholder="https://... (Adsterra/Monetag direct link)" style="flex:1; min-width:180px;">
+                            <button class="btn btn-grad" onclick="addLink('normal')"><i class="fa-solid fa-plus"></i> যোগ</button>
+                        </div>
+                        <div id="normalPool"><div class="empty">লোড হচ্ছে...</div></div>
+                    </div>
+                    <div class="card">
+                        <h3><i class="fa-solid fa-fire" style="color:var(--acc)"></i> অ্যাডাল্ট ডাইরেক্ট লিংক পুল (<span id="adultCount">0</span>)</h3>
+                        <div class="row" style="margin-bottom:12px;">
+                            <input type="text" id="adultUrl" placeholder="https://... (১৮+ মুভির জন্য)" style="flex:1; min-width:180px;">
+                            <button class="btn btn-grad" onclick="addLink('adult')"><i class="fa-solid fa-plus"></i> যোগ</button>
+                        </div>
+                        <div id="adultPool"><div class="empty">লোড হচ্ছে...</div></div>
+                    </div>
+                    <div class="card">
+                        <h3><i class="fa-solid fa-rectangle-ad" style="color:var(--warn)"></i> ব্যানার অ্যাড</h3>
+                        <div class="row" style="justify-content:space-between;">
+                            <div><b style="font-size:14px;">সব ব্যানার (টপ-বার/ফিড/পপ-আপ)</b><div class="sub">মিনি অ্যাপের 300x250 + 320x50 ব্যানার</div></div>
+                            <label class="switch"><input type="checkbox" id="bannersToggle" onchange="saveBanners(this.checked)"><span class="slider"></span></label>
+                        </div>
+                        <div class="note" style="margin-top:14px;">⚠️ টেলিগ্রামের ইন-অ্যাপ ব্রাউজারে ব্যানার প্রায়ই ব্লক হয় — অনেক সময় লোডই হয় না (ডেড রিকোয়েস্ট → CPM পড়ে যায়)। ব্যানারের বদলে গেটের ডাইরেক্ট লিংকই আসল ইনকাম। <b>সাজেস্টেড: OFF</b> রেখে ২-৩ দিন ফানেল দেখুন — কমপ্লিট রেট বাড়লে প্যানেল থেকেই ফিরে ON করতে পারবেন।</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══════════════ 🛡️ GATE SETTINGS ═══════════════ -->
+            <section id="sec-gate" class="sec">
+                <h2 class="sec-title"><i class="fa-solid fa-shield-halved"></i> গেট সেটিংস — অ্যাপের v5.3 সিস্টেমের বট-ভার্সন</h2>
+                <div class="grid g3">
+                    <div class="card">
+                        <h3><i class="fa-solid fa-hourglass-half" style="color:var(--sky)"></i> অ্যাড ওয়াচ টাইম</h3>
+                        <div class="row" style="margin-top:6px;">
+                            <input type="range" id="adWaitRange" min="5" max="60" step="1" value="10" oninput="document.getElementById('adWaitVal').innerText=this.value+'s'">
+                            <div class="range-val" id="adWaitVal">10s</div>
+                        </div>
+                        <div class="sub" style="margin-top:8px;">প্রতি গেটে ইউজার কত সেকেন্ড অ্যাড পেজে থাকবে (৫–৬০ সেকেন্ড)। সার্ভার নিজেই টাইম যাচাই করে — PC/DevTools দিয়ে ফাঁকি অসম্ভব।</div>
+                    </div>
+                    <div class="card">
+                        <h3><i class="fa-solid fa-layer-group" style="color:var(--ok)"></i> অ্যাড রাউন্ড (প্রতি ফাইলে)</h3>
+                        <div class="row" style="margin-top:6px;">
+                            <input type="range" id="adCountRange" min="1" max="5" step="1" value="1" oninput="document.getElementById('adCountVal').innerText=this.value+'টি'">
+                            <div class="range-val" id="adCountVal">1টি</div>
+                        </div>
+                        <div class="sub" style="margin-top:8px;">একটা ফাইল পেতে কতটা অ্যাড দেখতে হবে (১–৫)। প্রতিটি রাউন্ডে fresh র‍্যান্ডম লিংক (একই লিংক পরপর দুইবার যায় না)।</div>
+                    </div>
+                    <div class="card">
+                        <h3><i class="fa-solid fa-clock-rotate-left" style="color:var(--warn)"></i> গেট টিটিএল</h3>
+                        <div class="row" style="margin-top:6px;">
+                            <input type="range" id="ttlRange" min="2" max="30" step="1" value="10" oninput="document.getElementById('ttlVal').innerText=this.value+' মিনিট'">
+                            <div class="range-val" id="ttlVal" style="font-size:18px;">10 মিনিট</div>
+                        </div>
+                        <div class="sub" style="margin-top:8px;">অ্যাড খুলে এই সময়ের মধ্যে ফিরে ভেরিফাই করতে হবে, নাহলে গেট এক্সপায়ার (আবার অ্যাড দেখতে হবে)।</div>
+                    </div>
+                </div>
+                <div class="row" style="margin-top:16px;">
+                    <button class="btn btn-grad" onclick="saveGate()"><i class="fa-solid fa-floppy-disk"></i> সেটিংস সেভ করুন</button>
+                    <span class="sub" style="font-size:12px; color:var(--mut);">বট কমান্ড /setadwait, /setadcount-এর সাথে সিঙ্ক করা — যেকোনো জায়গা থেকে বদলান</span>
+                </div>
+                <div class="note">🛡️ <b>সিস্টেমটা যেভাবে চলে (অ্যাপের মতো):</b> প্রতিটি ডাউনলোড ক্লিকে fresh গেট → সার্ভার র‍্যান্ডম লিংক দেয় → ইউজার অ্যাড পেজে থাকার সময় সার্ভারে জমা হয় (away-beacon) → ফিরে এসে সার্ভার যাচাই করে → ভেরিফাইড গেট ছাড়া /api/send ফাইল দেয় না। VIP ইউজার গেট-ফ্রি। আনলক ১৫ মিনিট valid — একবার ডেলিভারির পর গেট খরচ হয়ে যায় (রিপ্লে বন্ধ)।</div>
+            </section>
+
+            <!-- ═══════════════ 🎬 MOVIES ═══════════════ -->
+            <section id="sec-movies" class="sec">
+                <h2 class="sec-title"><i class="fa-solid fa-film"></i> আপলোড করা মুভি</h2>
+                <div class="tbl-wrap">
+                    <div style="padding:14px 15px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <b style="color:#fff;"><i class="fa-solid fa-film" style="color:var(--acc)"></i> সব মুভি (<span id="movieTotal">0</span>)</b>
+                        <input type="text" id="movieSearchInput" placeholder="🔍 মুভি সার্চ..." style="min-width:170px;">
+                    </div>
+                    <table><thead><tr><th>টাইটেল</th><th>কোয়ালিটি</th><th>ক্যাটাগরি</th><th>Views</th><th>অ্যাকশন</th></tr></thead>
+                    <tbody id="movieTableBody"><tr><td colspan="5" class="empty">লোড হচ্ছে...</td></tr></tbody></table>
+                </div>
+            </section>
+        </main>
+
+        <!-- Edit Modal -->
+        <div id="editModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:2000; align-items:center; justify-content:center;">
+            <div style="background:var(--card); padding:24px; border-radius:16px; width:92%; max-width:420px; border:1px solid var(--line);">
+                <h3 style="color:var(--acc); margin-bottom:16px;"><i class="fa-solid fa-pen"></i> মুভি এডিট</h3>
                 <input type="hidden" id="editId">
-                
-                <div class="form-group">
-                    <label>Title</label>
-                    <input type="text" id="editTitle">
-                </div>
-                
-                <div class="form-group">
-                    <label>Poster Photo ID (File ID)</label>
-                    <input type="text" id="editPhoto" placeholder="Paste new Telegram File ID here">
-                </div>
-
-                <div class="form-group">
-                    <label>Quality</label>
-                    <input type="text" id="editQuality">
-                </div>
-
-                <div class="form-group">
-                    <label>Year</label>
-                    <input type="text" id="editYear">
-                </div>
-
-                <div class="form-group">
-                    <label>Categories (Comma separated)</label>
-                    <input type="text" id="editCategories" placeholder="e.g. Action, Thriller">
-                </div>
-
-                <div class="modal-buttons">
-                    <button class="btn-save" onclick="saveMovieEdit()">💾 Save Changes</button>
-                    <button class="btn-cancel" onclick="closeEditModal()">❌ Cancel</button>
+                <div style="margin-bottom:12px;"><label style="display:block; font-size:12px; color:var(--mut); margin-bottom:5px;">টাইটেল</label><input type="text" id="editTitle" style="width:100%;"></div>
+                <div style="margin-bottom:12px;"><label style="display:block; font-size:12px; color:var(--mut); margin-bottom:5px;">পোস্টার File ID</label><input type="text" id="editPhoto" style="width:100%;" placeholder="নতুন Telegram File ID"></div>
+                <div style="margin-bottom:12px;"><label style="display:block; font-size:12px; color:var(--mut); margin-bottom:5px;">কোয়ালিটি</label><input type="text" id="editQuality" style="width:100%;"></div>
+                <div style="margin-bottom:12px;"><label style="display:block; font-size:12px; color:var(--mut); margin-bottom:5px;">সাল</label><input type="text" id="editYear" style="width:100%;"></div>
+                <div style="margin-bottom:16px;"><label style="display:block; font-size:12px; color:var(--mut); margin-bottom:5px;">ক্যাটাগরি (কমা দিয়ে)</label><input type="text" id="editCategories" style="width:100%;" placeholder="Action, Thriller"></div>
+                <div class="row">
+                    <button class="btn btn-grad" style="flex:1;" onclick="saveMovieEdit()"><i class="fa-solid fa-floppy-disk"></i> সেভ</button>
+                    <button class="btn btn-ghost" style="flex:1;" onclick="document.getElementById('editModal').style.display='none'">বাতিল</button>
                 </div>
             </div>
         </div>
+        <div class="toast" id="toast"></div>
 
         <script>
-            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const data = await res.json(); document.getElementById('totalUsers').innerText = data.total_users; document.getElementById('todayUsers').innerText = data.today_users; document.getElementById('totalClicks').innerText = data.total_clicks; document.getElementById('todayClicks').innerText = data.today_clicks; document.getElementById('activeUsers').innerText = data.active_users; } catch(e) {} }
+            function showToast(msg, ok) { const t = document.getElementById('toast'); t.innerText = msg; t.className = 'toast show ' + (ok ? 'ok' : 'err'); setTimeout(() => t.classList.remove('show'), 2600); }
+            function showTab(name, btn) {
+                document.querySelectorAll('.sec').forEach(s => s.classList.remove('active'));
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.getElementById('sec-' + name).classList.add('active');
+                btn.classList.add('active');
+                if (name === 'overview') { fetchStats(); fetchFunnel(); }
+                if (name === 'ads') fetchConfig();
+                if (name === 'gate') fetchConfig();
+            }
+
+            /* ═══ 📊 STATS + FUNNEL ═══ */
+            async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const d = await res.json();
+                document.getElementById('totalUsers').innerText = d.total_users; document.getElementById('todayUsers').innerText = d.today_users;
+                document.getElementById('totalClicks').innerText = d.total_clicks; document.getElementById('todayClicks').innerText = d.today_clicks;
+                document.getElementById('activeUsers').innerText = d.active_users; } catch(e) {} }
+            async function fetchFunnel() { try {
+                const res = await fetch('/api/admin/funnel'); const d = await res.json(); if (!d.ok) return;
+                const f = d.h24;
+                document.getElementById('fStarts').innerText = f.starts; document.getElementById('fVerified').innerText = f.verified;
+                document.getElementById('fDelivered').innerText = f.delivered;
+                document.getElementById('fVerifiedBar').style.width = (f.starts ? Math.min(100, f.verified * 100 / f.starts) : 0) + '%';
+                document.getElementById('fDeliveredBar').style.width = (f.starts ? Math.min(100, f.delivered * 100 / f.starts) : 0) + '%';
+                document.getElementById('fComplete').innerText = 'কমপ্লিট: ' + f.complete_pct + '%';
+                document.getElementById('fSuspect').innerText = 'সন্দেহজনক (বিকন ছাড়া): ' + f.suspect;
+                document.getElementById('fUnique').innerText = 'ইউনিক ইউজার (২৪ঘ): ' + (d.unique_users_24h || 0);
+                const tb = document.getElementById('linkTable');
+                if (!d.links || !d.links.length) { tb.innerHTML = '<tr><td colspan="5" class="empty">এখনো কোনো গেট খোলা হয়নি (২৪ ঘণ্টায়)</td></tr>'; return; }
+                tb.innerHTML = d.links.map(l => {
+                    const rate = l.starts ? Math.round(l.verified * 100 / l.starts) : 0;
+                    const host = (() => { try { return new URL(l.link).hostname; } catch(e) { return l.link; } })();
+                    return '<tr><td class="link-cell" title="' + l.link + '">' + host + '</td>' +
+                        '<td>' + (l.adult ? '<span class="badge b-pink">অ্যাডাল্ট</span>' : '<span class="badge b-blue">নরমাল</span>') + '</td>' +
+                        '<td><b>' + l.starts + '</b></td><td><b style="color:var(--ok)">' + l.verified + '</b></td>' +
+                        '<td><span class="badge ' + (rate >= 60 ? 'b-green' : (rate >= 30 ? 'b-blue' : 'b-red')) + '">' + rate + '%</span></td></tr>';
+                }).join('');
+            } catch(e) {} }
+
+            /* ═══ 📢 ADS CONFIG ═══ */
+            let cfg = { links: [], adult_links: [] };
+            async function fetchConfig() { try {
+                const res = await fetch('/api/admin/config'); const d = await res.json(); if (!d.ok) return;
+                cfg = d;
+                document.getElementById('normalCount').innerText = d.links.length;
+                document.getElementById('adultCount').innerText = d.adult_links.length;
+                renderPool('normalPool', d.links, 'normal');
+                renderPool('adultPool', d.adult_links, 'adult');
+                document.getElementById('bannersToggle').checked = !!d.banners_enabled;
+                document.getElementById('adWaitRange').value = d.ad_wait; document.getElementById('adWaitVal').innerText = d.ad_wait + 's';
+                document.getElementById('adCountRange').value = d.ad_count; document.getElementById('adCountVal').innerText = d.ad_count + 'টি';
+                document.getElementById('ttlRange').value = d.gate_ttl_min; document.getElementById('ttlVal').innerText = d.gate_ttl_min + ' মিনিট';
+            } catch(e) {} }
+            function renderPool(elId, links, pool) {
+                const el = document.getElementById(elId);
+                if (!links.length) { el.innerHTML = '<div class="empty">পুল খালি — উপরে লিংক যোগ করুন</div>'; return; }
+                el.innerHTML = links.map(u => {
+                    let host = u; try { host = new URL(u).hostname; } catch(e) {}
+                    return '<div class="pool-item"><div><div class="url">' + u + '</div><div class="meta">' + host + '</div></div>' +
+                        '<button class="btn btn-del btn-mini" onclick="delLink(\'' + pool + '\', this)" data-url="' + u.replace(/"/g, '&quot;') + '"><i class="fa-solid fa-trash"></i></button></div>';
+                }).join('');
+            }
+            async function addLink(pool) {
+                const input = document.getElementById(pool === 'normal' ? 'normalUrl' : 'adultUrl');
+                const url = (input.value || '').trim();
+                if (!url) { showToast('লিংক লিখুন', false); return; }
+                try { const res = await fetch('/api/admin/links', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pool: pool, action: 'add', url: url}) });
+                    const d = await res.json(); if (d.ok) { input.value = ''; fetchConfig(); showToast('✅ লিংক যোগ হয়েছে', true); } else showToast('❌ ' + (d.msg || 'ব্যর্থ'), false);
+                } catch(e) { showToast('❌ এরর', false); } }
+            async function delLink(pool, btn) {
+                const url = btn.getAttribute('data-url');
+                if (!confirm('এই লিংক মুছে ফেলবেন?')) return;
+                try { const res = await fetch('/api/admin/links', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pool: pool, action: 'del', url: url}) });
+                    const d = await res.json(); if (d.ok) { fetchConfig(); showToast('🗑️ মুছে ফেলা হয়েছে', true); } else showToast('❌ ব্যর্থ', false);
+                } catch(e) { showToast('❌ এরর', false); } }
+            async function saveBanners(on) {
+                try { const res = await fetch('/api/admin/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({banners_enabled: on}) });
+                    const d = await res.json(); if (d.ok) showToast(on ? '📢 ব্যানার চালু হয়েছে' : '🚫 ব্যানার বন্ধ হয়েছে', true); else showToast('❌ ব্যর্থ', false);
+                } catch(e) { showToast('❌ এরর', false); } }
+
+            /* ═══ 🛡️ GATE SETTINGS ═══ */
+            async function saveGate() {
+                const body = { ad_wait: parseInt(document.getElementById('adWaitRange').value),
+                               ad_count: parseInt(document.getElementById('adCountRange').value),
+                               gate_ttl_min: parseInt(document.getElementById('ttlRange').value) };
+                try { const res = await fetch('/api/admin/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+                    const d = await res.json(); if (d.ok) showToast('✅ গেট সেটিংস সেভ হয়েছে — এখনই সব ইউজারের জন্য চালু', true); else showToast('❌ ব্যর্থ', false);
+                } catch(e) { showToast('❌ এরর', false); } }
+
+            /* ═══ 🎬 MOVIES ═══ */
             let allMovies = [];
-            async function fetchMovies() { 
-                try { 
-                    const res = await fetch('/api/admin/movies'); 
-                    allMovies = await res.json(); 
-                    renderMovies(allMovies); 
-                } catch(e) {} 
-            }
-
-            function renderMovies(moviesToRender) {
-                const tbody = document.getElementById('movieTableBody'); 
-                if(moviesToRender.length === 0) { 
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No movies found.</td></tr>'; 
-                    return; 
-                } 
-                tbody.innerHTML = moviesToRender.map(m => `
-                    <tr id="row-${m._id}">
-                        <td><strong>${m.title}</strong><br><small>ID: ${m._id}</small></td>
-                        <td>${m.quality || 'N/A'}</td>
-                        <td>${(m.categories || []).join(', ')}</td>
-                        <td><span class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</span></td>
-                        <td>
-                            <button class="delete-btn" onclick="deleteMovie('${m._id}')" style="margin-right:5px;"><i class="fa-solid fa-trash"></i> Delete</button>
-                            <button class="btn-save" onclick="openEditModal('${m._id}')" style="padding: 6px 12px; font-size: 12px; background: #22B8FF; border:none; color:white; border-radius:4px; cursor:pointer;">✏️ Edit</button>
-                        </td>
-                    </tr>`).join(''); 
-            }
-
+            async function fetchMovies() { try { const res = await fetch('/api/admin/movies'); allMovies = await res.json();
+                document.getElementById('movieTotal').innerText = allMovies.length; renderMovies(allMovies); } catch(e) {} }
+            function renderMovies(list) {
+                const tbody = document.getElementById('movieTableBody');
+                if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">কোনো মুভি নেই</td></tr>'; return; }
+                tbody.innerHTML = list.map(m => '<tr id="row-' + m._id + '">' +
+                    '<td><strong>' + (m.title || '') + '</strong><br><small style="color:var(--mut)">ID: ' + m._id + '</small></td>' +
+                    '<td>' + (m.quality || 'N/A') + '</td><td>' + (m.categories || []).join(', ') + '</td>' +
+                    '<td><span class="badge b-blue"><i class="fa-solid fa-eye"></i> ' + (m.clicks || 0) + '</span></td>' +
+                    '<td><button class="btn btn-ghost btn-mini" onclick="openEditModal(\'' + m._id + '\')" style="margin-right:6px;"><i class="fa-solid fa-pen"></i> এডিট</button>' +
+                    '<button class="btn btn-del btn-mini" onclick="deleteMovie(\'' + m._id + '\')"><i class="fa-solid fa-trash"></i></button></td></tr>').join(''); }
             document.getElementById('movieSearchInput').addEventListener('input', function(e) {
-                const searchTerm = e.target.value.toLowerCase();
-                const filteredMovies = allMovies.filter(m => 
-                    (m.title || '').toLowerCase().includes(searchTerm) || 
-                    (m.quality || '').toLowerCase().includes(searchTerm) ||
-                    (m.categories || []).join(' ').toLowerCase().includes(searchTerm)
-                );
-                renderMovies(filteredMovies);
-            });
-            
-            async function deleteMovie(id) { if(!confirm("Delete this file?")) return; try { const res = await fetch(`/api/admin/movie/${id}`, { method: 'DELETE' }); const data = await res.json(); if(data.ok) { document.getElementById(`row-${id}`).remove(); fetchStats(); } } catch(e) {} }
-            
-            // Edit Modal Functions
-            function openEditModal(id) {
-                const movie = allMovies.find(m => m._id === id);
-                if (!movie) return;
-
-                document.getElementById('editId').value = movie._id;
-                document.getElementById('editTitle').value = movie.title || '';
-                document.getElementById('editPhoto').value = movie.photo_id || '';
-                document.getElementById('editQuality').value = movie.quality || '';
-                document.getElementById('editYear').value = movie.year || '';
-                document.getElementById('editCategories').value = (movie.categories || []).join(', ');
-
-                document.getElementById('editModal').style.display = 'flex';
-            }
-
-            function closeEditModal() {
-                document.getElementById('editModal').style.display = 'none';
-            }
-
+                const q = e.target.value.toLowerCase();
+                renderMovies(allMovies.filter(m => (m.title||'').toLowerCase().includes(q) || (m.quality||'').toLowerCase().includes(q) || (m.categories||[]).join(' ').toLowerCase().includes(q))); });
+            async function deleteMovie(id) { if (!confirm('এই ফাইল মুছবেন?')) return;
+                try { const res = await fetch('/api/admin/movie/' + id, { method: 'DELETE' }); const d = await res.json();
+                    if (d.ok) { const r = document.getElementById('row-' + id); if (r) r.remove(); allMovies = allMovies.filter(m => m._id !== id); document.getElementById('movieTotal').innerText = allMovies.length; fetchStats(); showToast('🗑️ মুছে ফেলা হয়েছে', true); } } catch(e) {} }
+            function openEditModal(id) { const m = allMovies.find(x => x._id === id); if (!m) return;
+                document.getElementById('editId').value = m._id; document.getElementById('editTitle').value = m.title || '';
+                document.getElementById('editPhoto').value = m.photo_id || ''; document.getElementById('editQuality').value = m.quality || '';
+                document.getElementById('editYear').value = m.year || ''; document.getElementById('editCategories').value = (m.categories || []).join(', ');
+                document.getElementById('editModal').style.display = 'flex'; }
             async function saveMovieEdit() {
                 const id = document.getElementById('editId').value;
-                const data = {
-                    title: document.getElementById('editTitle').value,
-                    photo_id: document.getElementById('editPhoto').value,
-                    quality: document.getElementById('editQuality').value,
-                    year: document.getElementById('editYear').value,
-                    categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(s => s !== '')
-                };
+                const data = { title: document.getElementById('editTitle').value, photo_id: document.getElementById('editPhoto').value,
+                    quality: document.getElementById('editQuality').value, year: document.getElementById('editYear').value,
+                    categories: document.getElementById('editCategories').value.split(',').map(s => s.trim()).filter(Boolean) };
+                try { const res = await fetch('/api/admin/movie/' + id, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
+                    const r = await res.json();
+                    if (r.ok) { showToast('✅ মুভি আপডেট হয়েছে', true); document.getElementById('editModal').style.display = 'none'; fetchMovies(); }
+                    else showToast('❌ ' + (r.detail || 'এরর'), false); } catch(e) { showToast('❌ এরর', false); } }
 
-                try {
-                    const res = await fetch(`/api/admin/movie/${id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(data)
-                    });
-                    
-                    const result = await res.json();
-                    if (result.ok) {
-                        alert('✅ Movie Updated Successfully!');
-                        closeEditModal();
-                        fetchMovies(); // টেবিল রিফ্রেশ করার জন্য
-                    } else {
-                        alert('❌ Error updating movie: ' + (result.detail || 'Unknown error'));
-                    }
-                } catch (error) {
-                    console.error(error);
-                    alert('❌ An error occurred');
-                }
-            }
-
-            fetchStats(); fetchMovies(); setInterval(fetchStats, 60000);
+            /* ═══ BOOT ═══ */
+            fetchStats(); fetchFunnel(); fetchConfig(); fetchMovies();
+            setInterval(fetchStats, 60000); setInterval(fetchFunnel, 120000);
         </script>
     </body></html>'''
     return HTMLResponse(html_code)
@@ -2733,6 +2930,11 @@ async def web_ui():
             // 🔙 ডিটেইলস খোলার আগের ট্যাব + স্ক্রল পজিশন — ব্যাক করলে সেখানেই ফেরা যাবে
             let detailsReturnTab = 'home'; let detailsReturnScroll = 0;
             let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
+            // 🛡️ সার্ভার-সাইড গেট স্টেট: লিংক সার্ভার দেয় (/api/ad/start), সময় সার্ভারই যাচাই করে (/api/ad/verify)
+            // — PC/DevTools থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না
+            let currentGateId = null; let gateOpening = false; let lastGateLink = '';
+            // 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল (ডিফল্ট ON — প্যানেল থেকে OFF করলে সব ব্যানার স্লট বন্ধ)
+            let AD_BANNERS_ON = __BANNERS_ON__;
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
             let trendingMovies = []; 
@@ -2897,6 +3099,9 @@ async def web_ui():
             const adIframeCache = {};
             function makeAdIframe(conf, reuseKey) {
                 if (!conf) return null;
+                // 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল OFF থাকলে কোনো ব্যানার-আইফ্রেমই বানানো হবে না
+                // (টগল সার্ভার থেকেই আসে — ব্যানার পুরোপুরি প্যানেল-কন্ট্রোলড)
+                if (AD_BANNERS_ON === false) return null;
                 let cacheKey = reuseKey ? conf.key + '::' + reuseKey : null;
                 if (cacheKey && adIframeCache[cacheKey]) return adIframeCache[cacheKey];
                 const f = document.createElement('iframe');
@@ -3307,7 +3512,9 @@ async def web_ui():
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
-                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
+                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false;
+                // 🛡️ চলমান সার্ভার-গেট বাতিল (TRY AGAIN / BACK চাপলে পুরনো গেট আর গোনা হবে না)
+                if (currentGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} currentGateId = null; }
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 let stepEl = document.getElementById('adStepText');
                 let warn = ' ⚠️ সময়ের আগে ফিরে এলে আবার শুরু থেকে দেখতে হবে!';
@@ -3353,63 +3560,93 @@ async def web_ui():
             function adTotalAway() { return adAwayMs + (adAwayStart !== null ? (Date.now() - adAwayStart) : 0); }
             function adRemainSec() { return Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000)); }
 
-            function openAdLink() {
+            // 📡 সার্ভার-বিকন: মিনি অ্যাপ লুকালে (অ্যাড খুলল) 'away', ফিরলে 'back' — সার্ভার আসল অ্যাড-দেখার
+            // সময় নিজে জমা রাখে। কনসোল থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না (PC বাইপাস বন্ধ)।
+            function sendGateBeat(phase) {
+                if (!currentGateId) return;
+                try {
+                    const blob = new Blob([JSON.stringify({gateId: currentGateId, initData: INIT_DATA, phase: phase})], {type: 'application/json'});
+                    if (navigator.sendBeacon && navigator.sendBeacon('/api/ad/beat', blob)) return;
+                } catch(e) {}
+                try { fetch('/api/ad/beat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA, phase: phase}), keepalive: true}).catch(function(){}); } catch(e) {}
+            }
+
+            async function openAdLink() {
+                if (gateOpening) return; gateOpening = true;
                 // 📳 টেপ দিলেই ফোন ভাইব্রেট করবে (Telegram হ্যাপটিক ইঞ্জিন + ব্রাউজার ফলব্যাক)
                 try { tg.HapticFeedback.impactOccurred('medium'); } catch (e) {}
                 try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
                 document.getElementById('adClickBtn').style.display = 'none';
-                let linkToOpen = pickRandomLink(activeIsAdult);
-                if (!linkToOpen) {
-                    // কোনো অ্যাড লিংক সেট করা নেই → সরাসরি আনলক (ইউজার যেন আটকে না থাকে)
-                    finishAdRounds();
-                    return;
+                try {
+                    // 🛡️ লিংক + gate_id সার্ভার থেকেই আসে (র‍্যান্ডম, no-repeat) — ক্লায়েন্টে লিংক বদলানোর সুযোগ নেই
+                    const res = await fetch('/api/ad/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({initData: INIT_DATA, movieId: String(activeFileId || ''), adult: !!activeIsAdult})});
+                    const g = await res.json();
+                    if (!g.ok || !g.link) {
+                        // লিংক পুল খালি/সমস্যা → ইউজার যেন আটকে না থাকে
+                        gateOpening = false; finishAdRounds(); return;
+                    }
+                    currentGateId = g.gate_id; lastGateLink = g.link;
+                    if (g.wait) adSettings.ad_wait = g.wait;
+                    if (g.count) adSettings.ad_count = Math.max(1, g.count);
+                    tg.openLink(g.link);
+                    adStartTime = Date.now();
+                    // 🛡️ অ্যাড খুলল — এখন থেকে শুধু অ্যাড পেজে থাকার সময় গোনা হবে (ক্লায়েন্ট প্রিভিউ);
+                    //    চূড়ান্ত হিসাব সার্ভার বিকন + verify দিয়ে করবে
+                    adAwayMs = 0; adAwayStart = null; adWasHidden = false;
+                    let vBtn = document.getElementById('adVerifyBtn');
+                    vBtn.style.display = 'block';
+                    vBtn.disabled = true;
+                    vBtn.innerText = `⏳ অপেক্ষা করুন ${adSettings.ad_wait}s`;
+                    if (adCountdownTimer) clearInterval(adCountdownTimer);
+                    adCountdownTimer = setInterval(() => {
+                        // 🛡️ ওয়াচডগ: অ্যাপ দৃশ্যমান কিন্তু ট্র্যাকিং এখনো "অ্যাডে আছে" — visibilitychange মিস হলেও ফিরে-আসা ধরা পড়বে
+                        if (!document.hidden && adWasHidden && adAwayStart !== null) { adUserReturned(); return; }
+                        let remain = adRemainSec();
+                        if (remain <= 0) {
+                            if (!document.hidden) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                        }
+                        else if (!document.hidden) { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
+                    }, 1000);
+                } catch(e) {
+                    gateOpening = false;
+                    document.getElementById('adClickBtn').style.display = 'block';
                 }
-                // 🎲 র‍্যান্ডম: এই ক্লিকে পুল থেকে র‍্যান্ডম লিংক (সেইম লিংক পরপর দুইবার যায় না)
-                tg.openLink(linkToOpen);
-                adStartTime = Date.now();
-                // 🛡️ অ্যাড খুলল — এখন থেকে শুধু অ্যাড পেজে থাকার সময় গোনা হবে
-                adAwayMs = 0; adAwayStart = Date.now(); adWasHidden = false;
-                let vBtn = document.getElementById('adVerifyBtn');
-                vBtn.style.display = 'block';
-                vBtn.disabled = true;
-                vBtn.innerText = `⏳ অপেক্ষা করুন ${adSettings.ad_wait}s`;
-                if (adCountdownTimer) clearInterval(adCountdownTimer);
-                adCountdownTimer = setInterval(() => {
-                    // 🛡️ ওয়াচডগ: অ্যাপ দৃশ্যমান কিন্তু ট্র্যাকিং এখনো "অ্যাডে আছে" — visibilitychange মিস হলেও ফিরে-আসা ধরা পড়বে
-                    if (!document.hidden && adWasHidden && adAwayStart !== null) { adUserReturned(); return; }
-                    let remain = adRemainSec();
-                    if (remain <= 0) {
-                        if (!document.hidden) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
-                    }
-                    else if (!document.hidden) { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
-                }, 1000);
             }
-            
-            function checkAdWatched() {
-                if (adStartTime === 0) return;
-                let elapsed = adTotalAway();  // 🛡️ শুধু অ্যাড পেজে কাটানো সময়
-                if (elapsed >= adSettings.ad_wait * 1000) {
-                    adRound++;
-                    if (adRound >= adSettings.ad_count) {
-                        finishAdRounds();
+
+            async function checkAdWatched() {
+                if (adStartTime === 0 || !currentGateId) return;
+                let vBtn = document.getElementById('adVerifyBtn');
+                vBtn.disabled = true; vBtn.innerText = '🔍 সার্ভারে যাচাই হচ্ছে...';
+                try {
+                    // 🛡️ সার্ভার-ভেরিফাই: আসল সময় সার্ভারের হিসাব — ক্লায়েন্ট শুধু ফল দেখায়
+                    const res = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA})});
+                    const v = await res.json();
+                    if (v.ok && v.done) {
+                        currentGateId = null; gateOpening = false;
+                        adRound++;
+                        if (adRound >= adSettings.ad_count) {
+                            finishAdRounds();
+                        } else {
+                            // পরের অ্যাড রাউন্ড
+                            tg.showAlert(`✅ দারুণ! এবার পরের বিজ্ঞাপনটি দেখুন (${adRound + 1}/${adSettings.ad_count})`);
+                            document.getElementById('adVerifyBtn').style.display = 'none';
+                            let oBtn = document.getElementById('adClickBtn');
+                            oBtn.style.display = 'block';
+                            oBtn.innerText = `বিজ্ঞাপন ${adRound + 1}/${adSettings.ad_count} খুলুন`;
+                        }
                     } else {
-                        // পরের অ্যাড রাউন্ড
-                        tg.showAlert(`✅ দারুণ! এবার পরের বিজ্ঞাপনটি দেখুন (${adRound + 1}/${adSettings.ad_count})`);
+                        let remaining = (v && typeof v.remain === 'number') ? v.remain : adRemainSec();
+                        tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল)`);
                         document.getElementById('adVerifyBtn').style.display = 'none';
-                        let oBtn = document.getElementById('adClickBtn');
-                        oBtn.style.display = 'block';
-                        oBtn.innerText = `বিজ্ঞাপন ${adRound + 1}/${adSettings.ad_count} খুলুন`;
+                        document.getElementById('adTryAgainBtn').style.display = 'block';
                     }
-                } else {
-                    let remaining = adRemainSec();
-                    tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল)`);
-                    document.getElementById('adVerifyBtn').style.display = 'none';
-                    document.getElementById('adTryAgainBtn').style.display = 'block';
+                } catch(e) {
+                    vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
                 }
             }
 
             function finishAdRounds() {
-                adStartTime = 0; adAwayMs = 0; adAwayStart = null;
+                adStartTime = 0; adAwayMs = 0; adAwayStart = null; gateOpening = false;
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 closeModal('adModal');
                 sendFileRequest(activeFileId);
@@ -3420,6 +3657,7 @@ async def web_ui():
             function adUserReturned() {
                 if (adStartTime === 0) return;
                 if (adAwayStart !== null) { adAwayMs += Date.now() - adAwayStart; adAwayStart = null; }
+                sendGateBeat('back');  // 📡 সার্ভারকে "ফিরে এসেছি" জানানো — আসল অ্যাড-টাইম জমা হলো
                 let remain = adRemainSec();
                 let vBtn = document.getElementById('adVerifyBtn');
                 if (remain <= 0) {
@@ -3433,7 +3671,7 @@ async def web_ui():
 
             document.addEventListener('visibilitychange', function() {
                 if (adStartTime === 0) return;  // অ্যাড ফেজ চলছে না
-                if (document.hidden) { adAwayStart = Date.now(); adWasHidden = true; }
+                if (document.hidden) { adAwayStart = Date.now(); adWasHidden = true; sendGateBeat('away'); }
                 else { adUserReturned(); }
             });
 
@@ -3452,7 +3690,7 @@ async def web_ui():
             }
             function openBotForFile() { openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }
 
-            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
+            async function sendFileRequest(fileId) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ সার্ভার বলছে ভেরিফাইড গেট নেই — আবার গেট দেখাও */ tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) {} }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
             async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
@@ -3460,13 +3698,11 @@ async def web_ui():
             async function loadSurprise() { try { const res = await fetch('/api/random'); const data = await res.json(); if(data.movie) { currentViewMovies = [data.movie]; openDetail(0); } else { tg.showAlert("⚠️ ডাটাবেসে কোনো মুভি নেই!"); } } catch(e) {} }
             document.getElementById('searchInput').addEventListener('focus', function() { document.querySelector('.nav-item:nth-child(2)').click(); setTimeout(function() { document.getElementById('searchInputMain').focus(); }, 100); });
             
-            // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait অ্যাডমিন /setadcount ও /setadwait দিয়ে বদলাতে পারে)
-            async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); } catch(e) {} }
-            
+
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
-            let gateMovie = null; let gateStep = 0;
+            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null;
             async function openFromDeepLink() {
                 try {
                     let openId = new URLSearchParams(window.location.search).get('open') || (tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
@@ -3482,34 +3718,86 @@ async def web_ui():
             
             function showFileGate(m) {
                 gateMovie = m; gateStep = 0;
+                if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+                gateGateId = null;
                 let q = (m.files && m.files[0] && m.files[0].quality) ? ' [' + m.files[0].quality + ']' : '';
                 document.getElementById('gateMovieTitle').innerText = (m.title || 'Movie') + q;
                 document.getElementById('gateWatchBtn').innerText = '🎬 Watch Now';
+                document.getElementById('gateWatchBtn').disabled = false;
                 document.getElementById('fileGateModal').style.display = 'flex';
             }
             
-            function gateNextStep() {
+            async function gateNextStep() {
                 let btn = document.getElementById('gateWatchBtn');
                 if (gateStep === 0) {
-                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট লিংক পুল, নাহলে নরমাল লিংক পুল;
-                    // 🎲 র‍্যান্ডম: প্রতিবার Watch Now চাপলেই পুল থেকে র‍্যান্ডম লিংক খুলবে (সেইম লিংক পরপর দুইবার যাবে না);
-                    // অ্যাড থেকে ফিরে এসে "ফাইলটি দেখুন" চাপলে মেইন ফাইল পেজে যাবে
+                    // 🎯 টাইটেলে "18+" থাকলে অ্যাডাল্ট লিংক পুল, নাহলে নরমাল লিংক পুল
+                    // 🛡️ লিংক + gate_id সার্ভার থেকে — এবং এখন wait সেকেন্ড সার্ভার-ভেরিফাইড:
+                    // পুরো সময় অ্যাডে না থাকলে "ফাইলটি দেখুন" চাপলেও সার্ভার আটকে দেবে (আগে এখানে কোনো চেকই ছিল না!)
                     let isAdult = gateMovie && (gateMovie.is_adult || (gateMovie.title && gateMovie.title.toUpperCase().indexOf('18+') !== -1));
-                    let link = pickRandomLink(isAdult);
-                    if (link) tg.openLink(link);
-                    gateStep = 1;
-                    btn.innerText = '✅ ফাইলটি দেখুন';
+                    btn.disabled = true; btn.innerText = '⏳ প্রস্তুত হচ্ছে...';
+                    try {
+                        const fid = (gateMovie.files && gateMovie.files[0] && gateMovie.files[0].id) ? gateMovie.files[0].id : (gateMovie._id || '');
+                        const res = await fetch('/api/ad/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({initData: INIT_DATA, movieId: String(fid || ''), adult: !!isAdult})});
+                        const g = await res.json();
+                        if (!g.ok || !g.link) {
+                            // লিংক পুল খালি → আটকে রাখব না, ফাইল পেজে পাঠিয়ে দিই
+                            closeModal('fileGateModal');
+                            if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
+                            return;
+                        }
+                        gateGateId = g.gate_id;
+                        if (g.wait) adSettings.ad_wait = g.wait;
+                        tg.openLink(g.link);
+                        gateStep = 1;
+                        let left = g.wait || adSettings.ad_wait;
+                        btn.innerText = `⏳ অপেক্ষা করুন ${left}s`;
+                        if (gateTimer) clearInterval(gateTimer);
+                        gateTimer = setInterval(function() {
+                            left--;
+                            if (left <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
+                            else { btn.innerText = `⏳ অপেক্ষা করুন ${left}s`; }
+                        }, 1000);
+                    } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
                 } else {
-                    closeModal('fileGateModal');
-                    // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
-                    // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
-                    // এখন গেটে যে মুভিটা দেখানো হয়েছিল (gateMovie) — সেটাই খুলবে
-                    if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
+                    // 🛡️ সার্ভার-ভেরিফাই: পুরো সময় পার হলেই ফাইল পেজ খুলবে
+                    btn.disabled = true; btn.innerText = '🔍 যাচাই হচ্ছে...';
+                    try {
+                        const vres = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA})});
+                        const v = await vres.json();
+                        if (v.ok && v.done) {
+                            if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+                            gateGateId = null;
+                            closeModal('fileGateModal');
+                            // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
+                            // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
+                            // এখন গেটে যে মুভিটা দেখানো হয়েছিল (gateMovie) — সেটাই খুলবে
+                            if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
+                            return;
+                        }
+                        let rem = (v && typeof v.remain === 'number') ? v.remain : adSettings.ad_wait;
+                        tg.showAlert(`⚠️ পুরো ${adSettings.ad_wait} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল)`);
+                    } catch(e) { tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।'); }
+                    btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন';
                 }
             }
             
-            // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait / অ্যাক্টিভ লিংক — অ্যাডমিন কমান্ডে বদলালে ৫ মিনিটে ধরা পড়ে)
-            async function loadAdSettings() { try { const res = await fetch('/api/settings/public'); const s = await res.json(); adSettings.ad_count = Math.max(1, s.ad_count || 1); adSettings.ad_wait = Math.max(5, s.ad_wait || 10); adSettings.active_link = s.active_link || ''; adSettings.active_adult_link = s.active_adult_link || ''; } catch(e) {} }
+            // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait / ব্যানার-টগল — অ্যাডমিন প্যানেলে বদলালে ৫ মিনিটে ধরা পড়ে)
+            async function loadAdSettings() {
+                try {
+                    const res = await fetch('/api/settings/public');
+                    const s = await res.json();
+                    adSettings.ad_count = Math.max(1, s.ad_count || 1);
+                    adSettings.ad_wait = Math.max(5, s.ad_wait || 10);
+                    adSettings.active_link = s.active_link || '';
+                    adSettings.active_adult_link = s.active_adult_link || '';
+                    // 🎛️ ব্যানার-টগল: OFF হলে সব ব্যানার স্লট বন্ধ + টপ-অ্যাড-বার লুকাও
+                    AD_BANNERS_ON = (s.banners !== false);
+                    if (!AD_BANNERS_ON) {
+                        let bar = document.getElementById('topAdBar'); if (bar) bar.style.display = 'none';
+                        document.querySelectorAll('.feed-ad-wrap').forEach(function(b) { b.innerHTML = ''; });
+                    } else { updateTopAdBar(); }
+                } catch(e) {}
+            }
             
             // বুটস্ট্র্যাপ অর্ডার: আগে ডিপ-লিংক চেক (is_new ঠিক করার জন্য), তারপর ইউজার রেজিস্ট্রেশন ও লিস্ট লোড
             (async function(){ updateTopAdBar(); await openFromDeepLink(); loadAdSettings(); fetchUserInfo(); loadHomeMovies(1); loadFavorites(); loadTrending(); setInterval(loadAdSettings, 5*60*1000); })();
@@ -3520,10 +3808,17 @@ async def web_ui():
     html_code = html_code.replace("__ADL_JSON__", adl_json)
     html_code = html_code.replace("__BOT_TOKEN__", TOKEN)
     html_code = html_code.replace("__BOT_USERNAME__", BOT_USERNAME)
-    html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS)
-    html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320)
-    html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT)
-    html_code = html_code.replace("__BANNER_320_ADULT__", BANNER_AD_JS_320_ADULT)
+    # 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল: OFF থাকলে সব স্ট্যাটিক ব্যানার-স্লট খালি পাঠানো হয়
+    # (টপ-বার, ফিড, ডাউনলোড পপ-আপ, ডিটেইলস — সব JS-মাউন্টেড স্লটও makeAdIframe দিয়ে বন্ধ হয়ে যায়)
+    try:
+        _banners_on = bool(await get_setting("banners_enabled", False))
+    except Exception:
+        _banners_on = True
+    html_code = html_code.replace("__BANNERS_ON__", "true" if _banners_on else "false")
+    html_code = html_code.replace("__BANNER_AD__", BANNER_AD_JS if _banners_on else "")
+    html_code = html_code.replace("__BANNER_320__", BANNER_AD_JS_320 if _banners_on else "")
+    html_code = html_code.replace("__BANNER_ADULT__", BANNER_AD_JS_ADULT if _banners_on else "")
+    html_code = html_code.replace("__BANNER_320_ADULT__", BANNER_AD_JS_320_ADULT if _banners_on else "")
     # 💰 ফিড ব্যানার কনফিগ (JS দিয়ে iframe বানাতে)
     html_code = html_code.replace("__AD300_CONF__", json.dumps(BANNER_300_CONF))
     html_code = html_code.replace("__AD320_CONF__", json.dumps(BANNER_320_CONF))
@@ -3648,15 +3943,16 @@ async def get_single_movie(movie_id: str, uid: int = 0):
 @app.get("/api/settings/public")
 async def get_public_settings():
     try:
-        ac = await db.settings.find_one({"id": "ad_count"}); ad_count = ac.get("value", 1) if ac else 1
-        aw = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw.get("value", 10) if aw else 10
+        aw, ac, ttl = await gate_get_settings()
         dl_cfg = await db.settings.find_one({"id": "direct_links"}); links = dl_cfg.get("links", []) if dl_cfg else []
         adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); alinks = adl_cfg.get("links", []) if adl_cfg else []
-        # 🎲 র‍্যান্ডম সিস্টেম: প্রতি কলে পুল থেকে র‍্যান্ডম লিংক (ওয়েব অ্যাপ ক্লায়েন্ট-সাইডেও প্রতিবার ক্লিকে র‍্যান্ডম নেয়)
-        return {"ad_count": max(1, int(ad_count or 1)), "ad_wait": max(5, int(ad_wait or 10)),
-                "active_link": pick_random_link(links) or "", "active_adult_link": pick_random_link(alinks) or ""}
+        banners = bool(await get_setting("banners_enabled", False))
+        # 🎲 র‍্যান্ডম সিস্টেম: গেট-লিংক এখন /api/ad/start সার্ভার-সাইডেই দেয়; এখানে শুধু পুল খালি কি না জানা যথেষ্ট
+        return {"ad_count": ac, "ad_wait": aw, "banners": banners,
+                "active_link": (links[0] if links else ""), "active_adult_link": (alinks[0] if alinks else ""),
+                "has_normal": bool(links), "has_adult": bool(alinks)}
     except:
-        return {"ad_count": 1, "ad_wait": 10, "active_link": "", "active_adult_link": ""}
+        return {"ad_count": 1, "ad_wait": 10, "banners": False, "active_link": "", "active_adult_link": "", "has_normal": False, "has_adult": False}
 
 # 🖼️ প্লেসহোল্ডার-পোস্টার (সার্ভার নিজেই সার্ভ করে — বাইরের সার্ভিস মরলেও পোস্টার আর কখনো ভাঙবে না;
 # আগে একটা বাইরের প্লেসহোল্ডার-সার্ভিসে রিডাইরেক্ট হতো — সেটা মরে যাওয়ায় কিছু পোস্টার ব্রোকেন দেখাত)
@@ -3693,6 +3989,276 @@ async def get_image(photo_id: str):
 @app.get("/api/plus18.svg")
 async def plus18_svg():
     return _svg_response(PLACEHOLDER_18PLUS_SVG)
+
+# ==========================================
+# 10.2 🛡️ সার্ভার-সাইড অ্যাড গেট সিস্টেম (Sector Gate — অ্যাপের v5.3 সিস্টেমের বট-ভার্সন)
+# ==========================================
+# ❌ আগের সমস্যা: পুরো গেট ছিল শুধু ক্লায়েন্ট-সাইড JS। সার্ভার (/api/send) কখনো চেকই করত না
+#    ইউজার সত্যিই অ্যাড দেখেছে কি না — তাই PC/DevTools (কনসোলে এক লাইনের fetch) দিয়ে যেকোনো
+#    ডিভাইস থেকে অ্যাড না দেখেই ফাইল নেওয়া যেত → ইম্প্রেশন হারাত, ইনকাম পড়ে যেত।
+# ✅ এখন: প্রতিটি গেট সার্ভারে রেকর্ড হয় — লিংক সার্ভারই র‍্যান্ডম বেছে দেয় (no-repeat),
+#    আসল সময় (away-time) সার্ভারে জমা হয় (beacon), verify-এ সার্ভারই সিদ্ধান্ত নেয়,
+#    আর /api/send ভেরিফাইড গেট ছাড়া ফাইল দেয় না। VIP গেট-ফ্রি।
+# ফ্লো: /api/ad/start (লিংক+gate_id) → ইউজার অ্যাডে যায় → beacon(away/back) → /api/ad/verify
+#      → সব রাউন্ড শেষে /api/send (ভেরিফাইড গেট গুনে দেখে)
+
+class GateStartModel(BaseModel):
+    initData: str; movieId: str; adult: bool = False
+
+class GateBeatModel(BaseModel):
+    gateId: str; initData: str; phase: str  # 'away' | 'back'
+
+class GateVerifyModel(BaseModel):
+    gateId: str; initData: str
+
+def gate_settings():
+    """⚙️ গেট সেটিংস (অ্যাডমিন প্যানেল/কমান্ড থেকে বদলানো যায়): অপেক্ষা-সেকেন্ড, রাউন্ড, TTL"""
+    async def _inner():
+        aw = await get_setting("ad_wait", 10)
+        ac = await get_setting("ad_count", 1)
+        ttl = await get_setting("gate_ttl_min", 10)
+        try: aw = max(5, min(120, int(aw or 10)))
+        except Exception: aw = 10
+        try: ac = max(1, min(5, int(ac or 1)))
+        except Exception: ac = 1
+        try: ttl = max(2, min(30, int(ttl or 10)))
+        except Exception: ttl = 10
+        return aw, ac, ttl
+    return _inner
+
+async def gate_get_settings():
+    return await gate_settings()()
+
+async def pick_link_for_user(uid: int, adult: bool):
+    """🎲 সার্ভার-সাইড র‍্যান্ডম লিংক পিক — অ্যাপের directLinkNow-এর মতো: পুল থেকে র‍্যান্ডম,
+    কিন্তু এই ইউজারের সর্বশেষ সার্ভ করা লিংকটা পরপর দুইবার যাবে না। রিটার্ন: (লিংক, পুল-সাইজ)"""
+    key = "adult_direct_links" if adult else "direct_links"
+    cfg = await db.settings.find_one({"id": key})
+    links = (cfg or {}).get("links", []) or []
+    if not links: return None, 0
+    last = None
+    try:
+        prev = await db.ad_gates.find_one({"uid": uid, "adult": adult, "link": {"$exists": True}},
+                                          sort=[("started_at", -1)])
+        if prev: last = prev.get("link")
+    except Exception:
+        pass
+    pool = [u for u in links if u != last] or list(links)
+    return random.choice(pool), len(links)
+
+async def _gate_uid_guard(init_data: str):
+    """🪪 initData যাচাই — আসল টেলিগ্রাম ইউজার আইডি বের করে দেয়; ভুয়া হলে 0"""
+    if not validate_tg_data(init_data): return 0
+    uid, _name = tg_user_from_init(init_data)
+    return uid or 0
+
+@app.post("/api/ad/start")
+async def ad_gate_start(d: GateStartModel):
+    """🎬 গেট শুরু: সার্ভার র‍্যান্ডম লিংক ঠিক করে gate_id দেয় — ক্লায়েন্ট শুধু খুলবে,
+    লিংক বদলানো/টাইমার চালানোর সুযোগ নেই। রিটার্ন: {gate_id, link, wait, count, ttl}"""
+    try:
+        uid = await _gate_uid_guard(d.initData)
+        if uid == 0 or uid in banned_cache: return {"ok": False, "msg": "auth"}
+        # 🚦 রেট-লিমিট: ঘণ্টায় সর্বোচ্চ ৬০টা গেট শুরু (স্প্যাম/ফার্মিং আটকাতে)
+        hour_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
+        started_cnt = await db.ad_gates.count_documents({"uid": uid, "started_at": {"$gte": hour_ago}})
+        if started_cnt >= 60: return {"ok": False, "msg": "rate"}
+        aw, ac, ttl = await gate_get_settings()
+        link, pool_size = await pick_link_for_user(uid, d.adult)
+        if not link: return {"ok": False, "msg": "no_link"}
+        now = datetime.datetime.utcnow()
+        res = await db.ad_gates.insert_one({
+            "uid": uid, "movie_id": d.movieId, "adult": bool(d.adult), "link": link,
+            "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
+            "status": "running", "verified_at": None, "consumed_at": None})
+        return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
+                "wait": aw, "count": ac, "ttl": ttl, "pool": pool_size}
+    except Exception as e:
+        print(f"ad_gate_start error: {e}")
+        return {"ok": False, "msg": "error"}
+
+@app.post("/api/ad/beat")
+async def ad_gate_beat(d: GateBeatModel):
+    """📡 অ্যাওয়ে-বিকন: মিনি অ্যাপ লুকালে (অ্যাড খুলল) 'away', ফিরলে 'back' — সার্ভার আসল
+    অ্যাড-দেখার সময় হিসাব করে। ক্লায়েন্ট টাইমার বদলেও এই হিসাব বদলানো যায় না।"""
+    try:
+        uid = await _gate_uid_guard(d.initData)
+        if uid == 0: return {"ok": False}
+        try: gid = ObjectId(d.gateId)
+        except Exception: return {"ok": False}
+        gate = await db.ad_gates.find_one({"_id": gid, "uid": uid, "status": "running"})
+        if not gate: return {"ok": False}
+        now = datetime.datetime.utcnow()
+        if d.phase == "away":
+            if gate.get("away_start") is None:
+                await db.ad_gates.update_one({"_id": gid}, {"$set": {"away_start": now}, "$inc": {"beats": 1}})
+        elif d.phase == "back":
+            a_start = gate.get("away_start")
+            if a_start is not None:
+                away_add = int((now - a_start).total_seconds() * 1000)
+                await db.ad_gates.update_one({"_id": gid}, {"$inc": {"away_ms": max(0, away_add), "beats": 1},
+                                                           "$set": {"away_start": None}})
+        return {"ok": True}
+    except Exception as e:
+        print(f"ad_gate_beat error: {e}")
+        return {"ok": False}
+
+@app.post("/api/ad/verify")
+async def ad_gate_verify(d: GateVerifyModel):
+    """✅ গেট যাচাই — সার্ভারের হিসাবই চূড়ান্ত:
+    • beacon এলে: সত্যিকারের অ্যাডে-থাকার সময় (away_ms) ≥ wait হতে হবে
+    • beacon না এলে (কিছু ডিভাইসে বিকন ব্লক হয়): আসল সময় (start→verify) ≥ wait হতে হবে
+    → কনসোল দিয়ে চেষ্টা করলেও অন্তত wait সেকেন্ড আসল সময় না গেলে ভেরিফাই হবে না।"""
+    try:
+        uid = await _gate_uid_guard(d.initData)
+        if uid == 0: return {"ok": False, "msg": "auth"}
+        try: gid = ObjectId(d.gateId)
+        except Exception: return {"ok": False, "msg": "bad_gate"}
+        gate = await db.ad_gates.find_one({"_id": gid, "uid": uid})
+        if not gate: return {"ok": False, "msg": "bad_gate"}
+        aw, ac, ttl = await gate_get_settings()
+        now = datetime.datetime.utcnow()
+        if gate["status"] == "verified": return {"ok": True, "done": True, "remain": 0}
+        if gate["status"] != "running": return {"ok": False, "msg": "expired"}
+        started = gate["started_at"]
+        if (now - started).total_seconds() > ttl * 60:
+            await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "expired"}})
+            return {"ok": False, "msg": "expired"}
+        elapsed_ms = int((now - started).total_seconds() * 1000)
+        away_start = gate.get("away_start")
+        away_ms = int(gate.get("away_ms") or 0) + (int((now - away_start).total_seconds() * 1000) if away_start else 0)
+        beats = int(gate.get("beats") or 0)
+        # বিকন-ভিত্তিক হিসাব প্রাধান্য পায়; বিকন না থাকলে আসল elapsed (ফলব্যাক)
+        effective_ms = away_ms if beats > 0 else elapsed_ms
+        remain_ms = max(0, aw * 1000 - effective_ms)
+        if remain_ms <= 1200:  # ১.২ সেকেন্ড নেটওয়ার্ক-গ্রেস
+            await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "verified", "verified_at": now, "suspect": beats == 0}})
+            return {"ok": True, "done": True, "remain": 0}
+        return {"ok": True, "done": False, "remain": int(remain_ms / 1000) + 1}
+    except Exception as e:
+        print(f"ad_gate_verify error: {e}")
+        return {"ok": False, "msg": "error"}
+
+@app.post("/api/ad/abort")
+async def ad_gate_abort(d: GateVerifyModel):
+    """🚪 ইউজার গেট বন্ধ করে দিলে (BACK বাটন/মোডাল ক্লোজ) — চলমান গেট বাতিল"""
+    try:
+        uid = await _gate_uid_guard(d.initData)
+        if uid == 0: return {"ok": False}
+        try: gid = ObjectId(d.gateId)
+        except Exception: return {"ok": False}
+        await db.ad_gates.update_one({"_id": gid, "uid": uid, "status": "running"}, {"$set": {"status": "aborted"}})
+        return {"ok": True}
+    except Exception:
+        return {"ok": False}
+
+async def gate_check_and_consume(uid: int, movie_id: str, is_vip: bool):
+    """🔐 /api/send-এর গেট-প্রহরী: VIP ছাড়া ভেরিফাইড গেট সংখ্যা < ad_count হলে ফাইল না।
+    রিটার্ন: (চলবে কি না, ভেরিফাইড গেট, দরকার) — খরচ (consume) আলাদা ফাংশনে"""
+    if is_vip: return True, 0, 0
+    aw, ac, ttl = await gate_get_settings()
+    since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
+    cnt = await db.ad_gates.count_documents({"uid": uid, "movie_id": movie_id,
+                                            "status": "verified", "verified_at": {"$gte": since}})
+    return cnt >= ac, cnt, ac
+
+async def gate_consume(uid: int, movie_id: str):
+    """🧾 ডেলিভারি হয়ে গেলে ভেরিফাইড গেটগুলো consumed মার্ক — একবারের গেট = একবারের ফাইল (রিপ্লে আটকায়)"""
+    aw, ac, ttl = await gate_get_settings()
+    since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
+    gates = await db.ad_gates.find({"uid": uid, "movie_id": movie_id, "status": "verified",
+                                    "verified_at": {"$gte": since}}).sort("verified_at", -1).to_list(ac)
+    for g in gates:
+        await db.ad_gates.update_one({"_id": g["_id"]}, {"$set": {"status": "consumed", "consumed_at": datetime.datetime.utcnow()}})
+
+# 📊 অ্যাডমিন ফানেল API — ইম্প্রেশন কম হচ্ছে কেন এখন ডাটা দিয়ে দেখা যাবে:
+# গেট খুলেছে (start) → পুরো সময় দেখে ফিরেছে (verified) → ফাইল নিয়েছে (delivered)
+@app.get("/api/admin/funnel")
+async def admin_funnel(auth: bool = Depends(verify_admin)):
+    try:
+        now = datetime.datetime.utcnow()
+        h24 = now - datetime.timedelta(hours=24)
+        out = {}
+        for name, since in (("h24", h24), ("all", None)):
+            # 🛡️ গেট consume হলেও verified_at থেকে যায় — তাই ভেরিফাই/ডেলিভারি গোনা হয়
+            # টাইমস্ট্যাম্প দিয়ে (স্ট্যাটাস দিয়ে নয়), ফানেলে কেউ হারায় না
+            starts = await db.ad_gates.count_documents({"started_at": {"$gte": since}} if since else {})
+            verified = await db.ad_gates.count_documents({"verified_at": {"$gte": since}} if since else {"verified_at": {"$exists": True}})
+            delivered = await db.ad_gates.count_documents({"consumed_at": {"$gte": since}} if since else {"status": "consumed"})
+            suspect = await db.ad_gates.count_documents({"suspect": True, "verified_at": {"$gte": since}} if since else {"suspect": True})
+            out[name] = {"starts": starts, "verified": verified, "delivered": delivered,
+                         "suspect": suspect,
+                         "complete_pct": round(delivered * 100.0 / starts, 1) if starts else 0.0}
+        # 🔗 লিংক-ভিত্তিক পারফরম্যান্স (২৪ ঘণ্টা): কোন লিংক কতবার খুলেছে, কতটায় পুরো দেখা হয়েছে
+        per_link = await db.ad_gates.aggregate([
+            {"$match": {"started_at": {"$gte": h24}}},
+            {"$group": {"_id": {"link": "$link", "adult": "$adult"},
+                        "starts": {"$sum": 1},
+                        "verified": {"$sum": {"$cond": [{"$in": ["$status", ["verified", "consumed"]]}, 1, 0]}}}},
+            {"$sort": {"starts": -1}}, {"$limit": 25}]).to_list(25)
+        links_out = [{"link": r["_id"]["link"], "adult": r["_id"]["adult"],
+                      "starts": r["starts"], "verified": r["verified"]} for r in per_link]
+        # 👥 ইউজার-স্প্লিট: কত ইউজার আজ গেটে ডাকা খেয়েছে
+        uniq_users = len(await db.ad_gates.distinct("uid", {"started_at": {"$gte": h24}}))
+        return {"ok": True, "h24": out.get("h24"), "all": out.get("all"),
+                "links": links_out, "unique_users_24h": uniq_users}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+# ⚙️ অ্যাডমিন কনফিগ API — প্যানেল থেকে সব নিয়ন্ত্রণ (লিংক পুল, টাইমিং, ব্যানার, TTL)
+@app.get("/api/admin/config")
+async def admin_get_config(auth: bool = Depends(verify_admin)):
+    dl = await db.settings.find_one({"id": "direct_links"}); links = (dl or {}).get("links", []) or []
+    adl = await db.settings.find_one({"id": "adult_direct_links"}); alinks = (adl or {}).get("links", []) or []
+    aw, ac, ttl = await gate_get_settings()
+    banners = await get_setting("banners_enabled", False)
+    return {"ok": True, "links": links, "adult_links": alinks,
+            "ad_wait": aw, "ad_count": ac, "gate_ttl_min": ttl, "banners_enabled": bool(banners)}
+
+class AdminConfigModel(BaseModel):
+    ad_wait: int | None = None
+    ad_count: int | None = None
+    gate_ttl_min: int | None = None
+    banners_enabled: bool | None = None
+
+@app.post("/api/admin/config")
+async def admin_set_config(d: AdminConfigModel, auth: bool = Depends(verify_admin)):
+    try:
+        if d.ad_wait is not None:
+            v = max(5, min(120, int(d.ad_wait)))
+            await db.settings.update_one({"id": "ad_wait"}, {"$set": {"value": v}}, upsert=True)
+        if d.ad_count is not None:
+            v = max(1, min(5, int(d.ad_count)))
+            await db.settings.update_one({"id": "ad_count"}, {"$set": {"value": v}}, upsert=True)
+        if d.gate_ttl_min is not None:
+            v = max(2, min(30, int(d.gate_ttl_min)))
+            await db.settings.update_one({"id": "gate_ttl_min"}, {"$set": {"value": v}}, upsert=True)
+        if d.banners_enabled is not None:
+            await db.settings.update_one({"id": "banners_enabled"}, {"$set": {"value": bool(d.banners_enabled)}}, upsert=True)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+class AdminLinkModel(BaseModel):
+    pool: str  # 'normal' | 'adult'
+    action: str  # 'add' | 'del'
+    url: str
+
+@app.post("/api/admin/links")
+async def admin_links(d: AdminLinkModel, auth: bool = Depends(verify_admin)):
+    try:
+        key = "adult_direct_links" if d.pool == "adult" else "direct_links"
+        url = (d.url or "").strip()
+        if not url.startswith(("http://", "https://")): return {"ok": False, "msg": "bad_url"}
+        if d.action == "add":
+            await db.settings.update_one({"id": key}, {"$addToSet": {"links": url}}, upsert=True)
+        elif d.action == "del":
+            await db.settings.update_one({"id": key}, {"$pull": {"links": url}})
+        else: return {"ok": False, "msg": "bad_action"}
+        cfg = await db.settings.find_one({"id": key})
+        return {"ok": True, "links": (cfg or {}).get("links", []) or []}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
 
 # ✅ Rate Limiter / Queue System added to prevent Telegram Ban
 send_semaphore = asyncio.Semaphore(20)
@@ -3748,6 +4314,10 @@ async def deliver_movie_file(uid: int, m: dict):
 @app.post("/api/send")
 async def send_file(d: SendRequestModel):
     if d.userId == 0 or d.userId in banned_cache or not validate_tg_data(d.initData): return {"ok": False}
+    # 🛡️ আইডি-ম্যাচ: initData-র আসল ইউজার আইডি আর পাঠানো userId আলাদা হলে রিজেক্ট
+    # (আগে initData শুধু লগইন প্রমাণ হতো — এখন uid মিলতে হবে, ভুয়া/ধার-করা আইডি চলবে না)
+    real_uid, _ = tg_user_from_init(d.initData)
+    if not real_uid or real_uid != d.userId: return {"ok": False, "gate_required": True}
 
     async with send_semaphore:
         try:
@@ -3756,14 +4326,25 @@ async def send_file(d: SendRequestModel):
                 return {"ok": False, "msg": "Movie not found"}
 
             now = datetime.datetime.utcnow()
+            user_data = await db.users.find_one({"user_id": d.userId})
+            is_vip = bool(user_data and user_data.get("vip_until", now) > now)
+            # 🛡️ সার্ভার-সাইড গেট-প্রহরী: ভেরিফাইড অ্যাড-গেট না থাকলে ফাইল নয় (PC/DevTools বাইপাস বন্ধ)
+            gate_ok, have, need = await gate_check_and_consume(d.userId, d.movieId, is_vip)
+            if not gate_ok:
+                return {"ok": False, "gate_required": True, "have": have, "need": need}
+
             ok, reason = await deliver_movie_file(d.userId, m)
             if ok:
                 await db.movies.update_one({"_id": ObjectId(d.movieId)}, {"$inc": {"clicks": 1}})
                 await db.user_unlocks.update_one({"user_id": d.userId, "movie_id": d.movieId}, {"$set": {"unlocked_at": now}}, upsert=True)
+                # 🧾 ডেলিভারি সফল → গেট খরচ (একবারের গেট = একবারের ফাইল)
+                if not is_vip: await gate_consume(d.userId, d.movieId)
                 return {"ok": True}
             if reason == "forbidden":
                 # 🎯 নতুন ইউজার: অ্যাড দেখা শেষ করেছে কিন্তু বটকে START করেনি →
                 # ফাইলটি পেন্ডিং সেভ হলো। "বটে যান" চেপে START করলেই এই ফাইল অটোমেটিক ডেলিভারি হবে।
+                # (গেট এখনো verified আছে — START-এ পেন্ডিং ডেলিভারি হওয়ার পর ফানেলে ধরা পড়বে;
+                #  ডেলিভারি ব্যর্থ হলে ইউজার যেন দ্বিতীয়বার অ্যাড না দেখতে বাধ্য হয়)
                 await db.pending_files.update_one(
                     {"user_id": d.userId},
                     {"$set": {"movie_id": d.movieId, "title": m.get("title", ""), "created_at": now}},
