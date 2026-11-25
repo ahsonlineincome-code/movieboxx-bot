@@ -409,6 +409,9 @@ async def start_cmd(message: types.Message, state: FSMContext):
         try:
             _fb_kb = []
             if APP_URL: _fb_kb.append([types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))])
+            # 🛡️ চ্যানেল-বাটন হার্ডকোডেড (DB ছাড়াই কাজ করে) — fallback হলেও বাটন সবসময় আসবে
+            _fb_kb.append([types.InlineKeyboardButton(text="🚀 Join Channel", url="https://t.me/addlist/MwbWNafSFK4yZjhl"),
+                           types.InlineKeyboardButton(text="🔴 18+ Channel", url="https://t.me/+W5V9-mn08jMyYTE1")])
             await message.answer(
                 f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।",
                 parse_mode="HTML",
@@ -513,10 +516,12 @@ async def _start_flow(message: types.Message, state: FSMContext):
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
     link_18 = "https://t.me/+W5V9-mn08jMyYTE1"
 
-    kb = [
-        [types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))],
-        [types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)]
-    ]
+    # 🛡️ /start বাটন বুলেট-প্রুফ: APP_URL (Render এনভ) মিস হলেও চ্যানেল-বাটনগুলো সবসময় আসবে —
+    # (আগে Watch Now আনকন্ডিশনাল ছিল → APP_URL মিস থাকলে পুরো বাটন-বিল্ড ক্র্যাশ → বাটনহীন মেসেজ যেত)
+    kb = []
+    if APP_URL:
+        kb.append([types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))])
+    kb.append([types.InlineKeyboardButton(text="🚀 Join Channel", url=tg_link), types.InlineKeyboardButton(text="🔴 18+ Channel", url=link_18)])
 
     # 🔗 ডিপ-লিংক (?start=<movie_id>) দিয়ে এসেছে কিন্তু পেন্ডিং ডেলিভারি হয়নি →
     # Watch Now বাটন সরাসরি ওই মুভির ডাউনলোড পেজ খুলবে (অ্যাড ফ্লো অপরিবর্তিত থাকবে)
@@ -3669,7 +3674,7 @@ async def web_ui(request: Request):
                         if (remain <= 0) { 
                             vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; 
                             // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
-                            if (!adBuzzDone) { adBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([120,60,120]); } catch(e) {} }
+                            if (!adBuzzDone) { adBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([500,120,500]); } catch(e) {} }
                         }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
@@ -3864,7 +3869,7 @@ async def web_ui(request: Request):
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
                             if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; 
                                 // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
-                                if (!gateBuzzDone) { gateBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([120,60,120]); } catch(e) {} }
+                                if (!gateBuzzDone) { gateBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([500,120,500]); } catch(e) {} }
                             }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
@@ -4214,14 +4219,25 @@ async def gate_notify_worker(uid: int, gate_id: str, wait_s: int):
         g = await db.ad_gates.find_one({"_id": ObjectId(gate_id)}, {"status": 1})
         if not g or g.get("status") != "running": return  # ভেরিফাই/বাতিল/খরচ হয়ে গেলে আর নয়
         try:
-            beep = await bot.send_message(uid,
-                f"📳 বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
-                "এখন বিজ্ঞাপন থেকে Back দিয়ে বটে ফিরে আসুন — ফাইলটি নিয়ে নিন। 🎬")
-            # ⏱️ মিডিয়াম-শো টাইম: বিপ মেসেজ ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে চোখে পড়বে),
-            # তারপর বট নিজে থেকেই মেসেজটা মুছে দেবে — চ্যাটে বারবার জমে বিরক্তির কারণ হবে না
+            # 🔥 স্ট্রং বিপ: টানা ৩টা মেসেজ, মাঝে ১.১ সেকেন্ড গ্যাপ → ফোনে টানা ৩ বার
+            # নোটিফিকেশন-ভাইব্রেট (এক মেসেজের হালকা বিপ অনেক মোবাইলে টের পাওয়া যেত না)
+            _txt = (f"📳 বিপ! বিপ! বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
+                    "এখন বিজ্ঞাপন থেকে Back দিয়ে বটে ফিরে আসুন — ফাইলটি নিয়ে নিন। 🎬")
+            _ids = []
+            for _i in range(3):
+                try:
+                    _m = await bot.send_message(uid, _txt)
+                    _ids.append(_m.message_id)
+                except Exception:
+                    break  # ইউজার বট ব্লক করে থাকলে আর চেষ্টা নেই — গেট তবু চলবে
+                if _i < 2:
+                    await asyncio.sleep(1.1)
+            # ⏱️ অটো-ক্লিন: মেসেজগুলো ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে দেখার যথেষ্ট),
+            # তারপর বট নিজেই সব মুছে দেবে — চ্যাটে জমে বিরক্তির কারণ হবে না
             await asyncio.sleep(10)
-            try: await bot.delete_message(uid, beep.message_id)
-            except Exception: pass
+            for _mid in _ids:
+                try: await bot.delete_message(uid, _mid)
+                except Exception: pass
         except Exception:
             pass  # ইউজার বট ব্লক করে থাকলেও গেট চলবে — শুধু মেসেজ যাবে না
     except Exception as e:
@@ -4283,8 +4299,8 @@ async def ad_gate_beat(d: GateBeatModel):
 @app.post("/api/ad/verify")
 async def ad_gate_verify(d: GateVerifyModel):
     """✅ গেট যাচাই — সার্ভারের হিসাবই চূড়ান্ত (TTL এক্সপায়ার নেই — ইউজার-ফ্রেন্ডলি):
-    • beacon এলে: সত্যিকারের অ্যাডে-থাকার সময় (away_ms) ≥ wait হতে হবে
-    • beacon না এলে (PC-তে blur/focus দিয়ে বিকন আসে; তবুও না এলে): আসল সময় (start→verify) ≥ wait
+    • সার্ভারের আসল সময় (start→verify) ≥ wait হবে — বিকন মোবাইলে দেরিতে/অসম্পূর্ণ এলেও ভুল হবে না
+    • away_ms (বিকন-হিসাব) বড় হলে সেটাই গোনা হয় — দুই হিসাবের মধ্যে বড়টাই কাউন্ট
     → কনসোল দিয়ে চেষ্টা করলেও অন্তত wait সেকেন্ড আসল সময় না গেলে ভেরিফাই হবে না।"""
     try:
         uid = await _gate_uid_guard(d.initData)
@@ -4302,8 +4318,11 @@ async def ad_gate_verify(d: GateVerifyModel):
         away_start = gate.get("away_start")
         away_ms = int(gate.get("away_ms") or 0) + (int((now - away_start).total_seconds() * 1000) if away_start else 0)
         beats = int(gate.get("beats") or 0)
-        # বিকন-ভিত্তিক হিসাব প্রাধান্য পায়; বিকন না থাকলে আসল elapsed (ফলব্যাক)
-        effective_ms = away_ms if beats > 0 else elapsed_ms
+        # 🛡️ নির্ভুল হিসাব: সার্ভারের আসল সময় (started_at → এখন) সবসময় গোনা হয়; away_ms বড়
+        # হলে শুধু সেটা নেওয়া হয়। আগে বিকন এলে away_ms-ই প্রাধান্য পেত — কিন্তু অনেক মোবাইলে
+        # অ্যাড খোলার সময় Android ব্যাকগ্রাউন্ড-ফ্রিজে বিকন দেরিতে/অসম্পূর্ণ আসে → ইউজার ১০ সেকেন্ড
+        # দেখার পরও "৮ সেকেন্ড বাকি" ভুয়া উত্তর পেত। এখন আসল সময়ই প্রাধান্য পাবে — ভুয়া মেসেজ শূন্য।
+        effective_ms = max(away_ms, elapsed_ms)
         remain_ms = max(0, aw * 1000 - effective_ms)
         if remain_ms <= 1200:  # ১.২ সেকেন্ড নেটওয়ার্ক-গ্রেস
             await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "verified", "verified_at": now, "suspect": beats == 0}})
