@@ -4219,25 +4219,19 @@ async def gate_notify_worker(uid: int, gate_id: str, wait_s: int):
         g = await db.ad_gates.find_one({"_id": ObjectId(gate_id)}, {"status": 1})
         if not g or g.get("status") != "running": return  # ভেরিফাই/বাতিল/খরচ হয়ে গেলে আর নয়
         try:
-            # 🔥 স্ট্রং বিপ: টানা ৩টা মেসেজ, মাঝে ১.১ সেকেন্ড গ্যাপ → ফোনে টানা ৩ বার
-            # নোটিফিকেশন-ভাইব্রেট (এক মেসেজের হালকা বিপ অনেক মোবাইলে টের পাওয়া যেত না)
-            _txt = (f"📳 বিপ! বিপ! বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
+            # 🔔 মালিকের নির্দেশ: বিপ একবারই — তিনবার নয়। ঠিক সময়ে মাত্র ১টা মেসেজ;
+            # মেসেজ এলেই ফোন নোটিফিকেশনে ভাইব্রেট/রিং করবে (ফোনের টেলিগ্রাম-সেটিং অনুযায়ী)।
+            _txt = (f"📳 বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
                     "এখন বিজ্ঞাপন থেকে Back দিয়ে বটে ফিরে আসুন — ফাইলটি নিয়ে নিন। 🎬")
-            _ids = []
-            for _i in range(3):
-                try:
-                    _m = await bot.send_message(uid, _txt)
-                    _ids.append(_m.message_id)
-                except Exception:
-                    break  # ইউজার বট ব্লক করে থাকলে আর চেষ্টা নেই — গেট তবু চলবে
-                if _i < 2:
-                    await asyncio.sleep(1.1)
-            # ⏱️ অটো-ক্লিন: মেসেজগুলো ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে দেখার যথেষ্ট),
-            # তারপর বট নিজেই সব মুছে দেবে — চ্যাটে জমে বিরক্তির কারণ হবে না
+            try:
+                _m = await bot.send_message(uid, _txt)
+            except Exception:
+                return  # ইউজার বট ব্লক করে থাকলে আর চেষ্টা নেই — গেট তবু চলবে
+            # ⏱️ অটো-ক্লিন: মেসেজটা ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে দেখার যথেষ্ট),
+            # তারপর বট নিজেই মুছে দেবে — চ্যাটে জমে বিরক্তির কারণ হবে না
             await asyncio.sleep(10)
-            for _mid in _ids:
-                try: await bot.delete_message(uid, _mid)
-                except Exception: pass
+            try: await bot.delete_message(uid, _m.message_id)
+            except Exception: pass
         except Exception:
             pass  # ইউজার বট ব্লক করে থাকলেও গেট চলবে — শুধু মেসেজ যাবে না
     except Exception as e:
