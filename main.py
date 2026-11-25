@@ -225,13 +225,17 @@ async def init_db():
     await db.votes.create_index([("title", 1), ("uid", 1)], unique=True)
     await db.votes.create_index("title")
     # 🛡️ সার্ভার-সাইড অ্যাড গেট (PC/DevTools বাইপাস বন্ধ): গেট যাচাই + ফানেল স্ট্যাটের ইনডেক্স
-    await db.ad_gates.create_index([("uid", 1), ("started_at", -1)])
-    await db.ad_gates.create_index([("movie_id", 1), ("status", 1), ("verified_at", -1)])
-    # 🧹 ৭ দিনের স্ট্যাটস সিস্টেম (মালিকের নির্দেশ): ৭ দিন পুরনো গেট-লগ নিজে নিজে মুছে ফ্রেশ শুরু —
-    # পুরনো ১৪-দিনের ইনডেক্স থাকলে ড্রপ করে ৭-দিনের নতুন করে দেওয়া হচ্ছে
-    try: await db.ad_gates.drop_index("started_at_1")
-    except Exception: pass
-    await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*7)  # ৭ দিন পর মঙ্গো-নিজেও অটো-ক্লিন (ব্যাকআপ)
+    # 🛡️ ক্র্যাশ-প্রুফ: পুরনো ডাটাবেজে ইনডেক্স কনফ্লিক্ট হলেও বট বন্ধ হবে না — /start সবসময় বেঁচে থাকবে
+    try:
+        await db.ad_gates.create_index([("uid", 1), ("started_at", -1)])
+        await db.ad_gates.create_index([("movie_id", 1), ("status", 1), ("verified_at", -1)])
+        # 🧹 ৭ দিনের স্ট্যাটস সিস্টেম (মালিকের নির্দেশ): ৭ দিন পুরনো গেট-লগ নিজে নিজে মুছে ফ্রেশ শুরু —
+        # পুরনো ১৪-দিনের ইনডেক্স থাকলে ড্রপ করে ৭-দিনের নতুন করে দেওয়া হচ্ছে
+        try: await db.ad_gates.drop_index("started_at_1")
+        except Exception: pass
+        await db.ad_gates.create_index("started_at", expireAfterSeconds=60*60*24*7)  # ৭ দিন পর মঙ্গো-নিজেও অটো-ক্লিন (ব্যাকআপ)
+    except Exception as e:
+        print(f"⚠️ ad_gates index warning — বট তবুও চলবে: {e}")
 
 async def get_setting(key, default=None):
     """⚙️ সেটিং রিডার — ad_wait / ad_count / banners সব এক জায়গা থেকে"""
@@ -358,11 +362,10 @@ async def broadcast_queue_worker():
 # স্টার্টআপ ইভেন্ট
 @app.on_event("startup")
 async def on_startup():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    await seed_default_ads()
-    await load_log_channel()
+    # 🛡️ ক্র্যাশ-প্রুফ স্টার্টআপ: যেকোনো ধাপ ফেল করলেও বট + anti-sleep pinger চালু থাকবে
+    for _name, _coro in (("db-init", init_db()), ("admins", load_admins()), ("banned", load_banned_users()), ("ads-seed", seed_default_ads()), ("log-channel", load_log_channel())):
+        try: await _coro
+        except Exception as e: print(f"⚠️ Startup step '{_name}' failed — বট তবুও চলবে: {e}")
     # 🤖 বটের আসল ইউজারনেম নিজেই ধরে নিচ্ছি — BOT_USERNAME env ভুল/না দিলেও
     # চ্যানেল পোস্টের t.me ডিপ-লিংক (startapp) ঠিক থাকবে
     global BOT_USERNAME
@@ -397,6 +400,23 @@ async def on_startup():
 # ==========================================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
+    # 🛡️ /start বুলেট-প্রুফ: ভেতরের যেকোনো ধাপে ভুল হলেও ইউজার সবসময় উত্তর পাবে —
+    # (আগে ভেতরের কোনো ডাটাবেজ-এররে /start পুরোপুরি চুপ হয়ে যেত — START ক্লিক করে কিছুই আসত না)
+    try:
+        await _start_flow(message, state)
+    except Exception as _se:
+        print(f"⚠️ Start flow error → fallback welcome যাচ্ছে: {_se}")
+        try:
+            _fb_kb = []
+            if APP_URL: _fb_kb.append([types.InlineKeyboardButton(text="🎬 Watch Now", web_app=types.WebAppInfo(url=APP_URL))])
+            await message.answer(
+                f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n🎬 Movie Box জগতে আপনাকে স্বাগতম। নিচের বাটনে ক্লিক করে মুভি উপভোগ করুন।",
+                parse_mode="HTML",
+                reply_markup=types.InlineKeyboardMarkup(inline_keyboard=_fb_kb) if _fb_kb else None)
+        except Exception:
+            pass
+
+async def _start_flow(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     if uid in banned_cache:
         return await message.answer("🚫 আপনাকে ব্যান করা হয়েছে।", parse_mode="HTML")
@@ -2493,6 +2513,8 @@ async def web_ui(request: Request):
             .ad-box-orange::before { content: ''; position: absolute; top: 0; left: -80%; width: 55%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); animation: adShine 2.6s ease-in-out infinite; }
             @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
             .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
+            /* 📳 ভাইব্রেট-নোট: চোখে পড়ে এমন সোনালি (amber) বক্স — ইউজার আগেই জেনে নেবে ১০ সেকেন্ড শেষে বট মেসেজ দেবে */
+            .ad-vibe-note { background: linear-gradient(135deg, #b45309, #f59e0b); color: #fff; padding: 10px 12px; border-radius: 12px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.7; text-align: left; box-shadow: 0 4px 14px rgba(245,158,11,.35); }
             .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
             .ad-action-btn:active { transform: scale(.96); }
             .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
@@ -2834,6 +2856,7 @@ async def web_ui(request: Request):
                 <div class="ad-icon">🎉</div>
                 <h2 class="ad-title">ফাইলটি প্রস্তুত!</h2>
                 <div class="ad-box-black">✨ সুখবর! আপনি এই ফাইলটি পাচ্ছেন: <b id="gateMovieTitle"></b><br><br>নিচের <b>Watch Now</b> বাটনে ক্লিক করে ফাইলটি দেখুন।</div>
+                <div class="ad-vibe-note">📳 <b>সহজ নিয়ম:</b> অ্যাড খুলে বলা সময়টুকু (যেমন ১০ সেকেন্ড) থাকুন — সময় শেষ হলে বট নিজে থেকেই আপনাকে মেসেজ দেবে, তখন ফোন ভাইব্রেট/রিং করবে 🔔। আপনার আর সময় হিসাব রাখতে হবে না — মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন!</div>
                 <button class="ad-action-btn btn-ad-open" id="gateWatchBtn" onclick="gateNextStep()">🎬 Watch Now</button>
                 <button class="ad-action-btn" style="background:#334155; color:#fff;" onclick="closeModal('fileGateModal')">❌ বন্ধ করুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
@@ -2847,6 +2870,7 @@ async def web_ui(request: Request):
                 <h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
                 <div class="ad-box-black"><span id="adStepText">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>১০ সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।</span></div>
+                <div class="ad-vibe-note">📳 <b>সহজ নিয়ম:</b> <span id="adVibeText">বিজ্ঞাপন খুলে ১০ সেকেন্ড থাকলে বট নিজে থেকেই আপনাকে মেসেজ দেবে — তখন ফোন ভাইব্রেট/রিং করবে 🔔। মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন, আর কিছু করতে হবে না!</span></div>
                 <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
                 <button class="ad-action-btn btn-ad-unlock" id="adVerifyBtn" onclick="checkAdWatched()" style="display:none;">✅ অ্যাড দেখে ফিরে এসেছি</button>
                 <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
@@ -2946,7 +2970,7 @@ async def web_ui(request: Request):
             let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
             // 🛡️ সার্ভার-সাইড গেট স্টেট: লিংক সার্ভার দেয় (/api/ad/start), সময় সার্ভারই যাচাই করে (/api/ad/verify)
             // — PC/DevTools থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না
-            let currentGateId = null; let gateOpening = false; let lastGateLink = '';
+            let currentGateId = null; let gateOpening = false; let lastGateLink = ''; let adBuzzDone = false;  // 📳 টাইমার-শেষ হ্যাপটিক একবারই
             // 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল (ডিফল্ট ON — প্যানেল থেকে OFF করলে সব ব্যানার স্লট বন্ধ)
             let AD_BANNERS_ON = __BANNERS_ON__;
             let homeCurrentPage = 1;
@@ -3526,7 +3550,7 @@ async def web_ui(request: Request):
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
-                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false;
+                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false; adBuzzDone = false;
                 clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 // 🛡️ চলমান সার্ভার-গেট বাতিল (TRY AGAIN / BACK চাপলে পুরনো গেট আর গোনা হবে না)
                 if (currentGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} currentGateId = null; }
@@ -3535,6 +3559,9 @@ async def web_ui(request: Request):
                 let warn = ' ⚠️ সময়ের আগে ফিরে এলে আবার শুরু থেকে দেখতে হবে!';
                 if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে আসুন.${warn}`; }
                 else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে এসে নিচের বাটনে ক্লিক করুন.${warn}`; }
+                // 📳 ভাইব্রেট-নোট আপডেট: সেটিং-এর আসল সেকেন্ড সংখ্যা দিয়ে
+                let vibeEl = document.getElementById('adVibeText');
+                if (vibeEl) vibeEl.innerHTML = `বিজ্ঞাপন খুলে <b>${adSettings.ad_wait} সেকেন্ড</b> থাকলে বট নিজে থেকেই আপনাকে মেসেজ দেবে — তখন ফোন ভাইব্রেট/রিং করবে 🔔। মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন, আর কিছু করতে হবে না!`;
                 document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
                 document.getElementById('adClickBtn').style.display = 'block';
                 document.getElementById('adVerifyBtn').style.display = 'none';
@@ -3639,7 +3666,11 @@ async def web_ui(request: Request):
                     adCountdownTimer = setInterval(() => {
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
-                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                        if (remain <= 0) { 
+                            vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; 
+                            // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
+                            if (!adBuzzDone) { adBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([120,60,120]); } catch(e) {} }
+                        }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
                 } catch(e) {
@@ -3764,11 +3795,11 @@ async def web_ui(request: Request):
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
-            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null;
+            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false;  // 📳 ডিপ-লিংক গেটের হ্যাপটিক একবারই
             // 🧹 ডিপ-লিংক গেট রিসেট: চলমান গেট বাতিল + সব স্টেট শুরুর অবস্থায় (TRY AGAIN/আগে ফিরলে)
             function dlResetGate() {
                 if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
-                gateGateId = null; gateStep = 0;
+                gateGateId = null; gateStep = 0; gateBuzzDone = false;
                 clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                 if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
@@ -3789,7 +3820,7 @@ async def web_ui(request: Request):
             }
             
             function showFileGate(m) {
-                gateMovie = m; gateStep = 0;
+                gateMovie = m; gateStep = 0; gateBuzzDone = false;
                 if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
                 gateGateId = null;
                 let q = (m.files && m.files[0] && m.files[0].quality) ? ' [' + m.files[0].quality + ']' : '';
@@ -3831,7 +3862,10 @@ async def web_ui(request: Request):
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
-                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
+                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; 
+                                // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
+                                if (!gateBuzzDone) { gateBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([120,60,120]); } catch(e) {} }
+                            }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
@@ -4170,6 +4204,29 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
+# 📳 ১০-সেকেন্ড শেষ হলে বট নিজে থেকে ইউজারকে ছোট মেসেজ দেয় — মেসেজ এলেই ফোনে নোটিফিকেশনে
+# ভাইব্রেট/রিং হয় (টেলিগ্রামে সরাসরি "শুধু ভাইব্রেট" করানোর Bot API নেই, মেসেজ-নোটিফিকেশনই সেটা করে)।
+# সার্ভার-টাইমারই সত্যি: ইউজার আগেই ফিরে গেট ভেরিফাই/বাতিল করলে মেসেজ আর যায় না।
+# 💰 খরচ: প্রতি গেটে মাত্র ১টি ছোট মেসেজ — ব্যান্ডউইথে কোনো চাপ নেই।
+async def gate_notify_worker(uid: int, gate_id: str, wait_s: int):
+    try:
+        await asyncio.sleep(max(5, int(wait_s)))
+        g = await db.ad_gates.find_one({"_id": ObjectId(gate_id)}, {"status": 1})
+        if not g or g.get("status") != "running": return  # ভেরিফাই/বাতিল/খরচ হয়ে গেলে আর নয়
+        try:
+            beep = await bot.send_message(uid,
+                f"📳 বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
+                "এখন বিজ্ঞাপন থেকে Back দিয়ে বটে ফিরে আসুন — ফাইলটি নিয়ে নিন। 🎬")
+            # ⏱️ মিডিয়াম-শো টাইম: বিপ মেসেজ ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে চোখে পড়বে),
+            # তারপর বট নিজে থেকেই মেসেজটা মুছে দেবে — চ্যাটে বারবার জমে বিরক্তির কারণ হবে না
+            await asyncio.sleep(10)
+            try: await bot.delete_message(uid, beep.message_id)
+            except Exception: pass
+        except Exception:
+            pass  # ইউজার বট ব্লক করে থাকলেও গেট চলবে — শুধু মেসেজ যাবে না
+    except Exception as e:
+        print(f"gate_notify_worker error: {e}")
+
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
     """🎬 গেট শুরু: সার্ভার র‍্যান্ডম লিংক ঠিক করে gate_id দেয় — ক্লায়েন্ট শুধু খুলবে,
@@ -4189,6 +4246,8 @@ async def ad_gate_start(d: GateStartModel):
             "uid": uid, "movie_id": d.movieId, "adult": bool(d.adult), "link": link,
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
+        # 📳 টাইমার-শেষ নোটিফিকেশন: wait সেকেন্ড পর বট মেসেজ দেবে (ফোন ভাইব্রেট/রিং হবে)
+        asyncio.create_task(gate_notify_worker(uid, str(res.inserted_id), aw))
         return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
                 "wait": aw, "count": ac, "pool": pool_size}
     except Exception as e:
@@ -4686,17 +4745,30 @@ async def web_get_saved(uid: int):
 # 11. Main Application Startup
 # ==========================================
 async def start():
-    await init_db()
-    await load_admins()
-    await load_banned_users()
-    await seed_default_ads()
-    await load_log_channel()
+    # 🛡️ বুট ক্র্যাশ-প্রুফ: ডাটাবেজ/কনফিগ লোডে কোনো ভুল হলেও বট মরবে না — লগে কারণ দেখাবে,
+    # বট উঠে যাবে আর /start সহ সব কমান্ড কাজ করবে (আগে এই ধাপে এরর হলে পুরো বট বন্ধ হয়ে যেত)
+    for _name, _coro in (("db-init", init_db()), ("admins", load_admins()), ("banned", load_banned_users()), ("ads-seed", seed_default_ads()), ("log-channel", load_log_channel())):
+        try: await _coro
+        except Exception as e: print(f"⚠️ Startup step '{_name}' failed — বট তবুও চলবে: {e}")
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
     asyncio.create_task(auto_delete_worker())
-    await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.gather(server.serve(), dp.start_polling(bot))
+
+    # 🔄 পোলিং-সুপারভাইজার: নেটওয়ার্ক খারাপ/অন্য কোথাও টোকেন কনফ্লিক্ট হলেও বট নিজে থেকে
+    # ১০ সেকেন্ড পর আবার polling চালু করে — তাই /start একদিনের জন্যও মরে থাকবে না
+    async def polling_supervisor():
+        while True:
+            try:
+                await bot.delete_webhook(drop_pending_updates=True)
+                print("✅ Polling চালু — /start সহ সব কমান্ড এখন কাজ করবে।")
+                await dp.start_polling(bot)
+                break
+            except Exception as e:
+                print(f"⚠️ Polling বন্ধ হয়েছিল ({e}) → ১০ সেকেন্ড পর আবার চালু হচ্ছে...")
+                await asyncio.sleep(10)
+
+    await asyncio.gather(server.serve(), polling_supervisor())
 
 if __name__ == "__main__": 
     loop = asyncio.get_event_loop()
