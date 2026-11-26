@@ -1274,7 +1274,7 @@ async def set_watch_wait(m: types.Message):
         if not (5 <= sec <= 120):
             await m.answer("⚠️ ৫ থেকে ১২০ সেকেন্ডের মধ্যে দাও।", parse_mode="HTML"); return
         await db.settings.update_one({"id": "watch_wait"}, {"$set": {"value": sec}}, upsert=True)
-        await m.answer(f"✅ Watch Now গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে। এখন ব্রডকাস্ট/লগ-চ্যানেল পোস্টের Watch Now গেটে ইউজারকে অ্যাড পেজে অন্তত <b>{sec} সেকেন্ড</b> থাকতে হবে — টাইমার শেষ হলে ফিরে এসেই ফোন ভাইব্রেট করবে। (ডাউনলোড গেট আগের মতোই — /setadwait)", parse_mode="HTML")
+        await m.answer(f"✅ Watch Now গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে। এখন ব্রডকাস্ট/লগ-চ্যানেল পোস্টের Watch Now গেটে ইউজারকে অ্যাড পেজে অন্তত <b>{sec} সেকেন্ড</b> থাকতে হবে — টাইমার শেষ হলেই অ্যাড পেজে থাকা অবস্থায় ফোন একবার ভাইব্রেট করবে (ফিরে এসে/ফাইল দেওয়ার সময় আর কাঁপবে না)। (ডাউনলোড গেট আগের মতোই — /setadwait)", parse_mode="HTML")
     except: await m.answer("⚠️ /setwatchwait 5 (সেকেন্ড লিখুন, সর্বনিন্ম ৫)", parse_mode="HTML")
 
 @dp.message(Command("setbcastdel"))
@@ -2545,7 +2545,7 @@ async def web_ui(request: Request):
             @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
             .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
             /* 📳 ভাইব্রেট-নোট বাদ (মালিকের নির্দেশ): "সহজ নিয়ম" লেখাটা দুই মোডাল থেকেই পুরোপুরি সরানো হয়েছে —
-               টাইমার শেষ/ফিরে এলে মিনি অ্যাপ নিজেই ফোন ভাইব্রেট করায় (navigator.vibrate + HapticFeedback) */
+               টাইমার শেষ হলেই (অ্যাড পেজে থাকা অবস্থায়) মিনি অ্যাপ নিজেই ফোন একবার ভাইব্রেট করায় (navigator.vibrate + HapticFeedback) — ফিরে এলে/ডেলিভারিতে কাঁপে না */
             .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
             .ad-action-btn:active { transform: scale(.96); }
             .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
@@ -3006,12 +3006,12 @@ async def web_ui(request: Request):
             let searchCurrentPage = 1;
             let trendingMovies = [];
 
-            // 📳 ভাইব্রেশন হেল্পার (মালিকের নির্দেশ) — বট আর কোনো "🔔" মেসেজ পাঠায় না; ফোন কাঁপবে মিনি অ্যাপের নিজের কলে:
-            // 'success' = টাইমার শেষ/ফাইল রেডি (শক্ত লম্বা ভাইব্রেশন), 'warn' = সময়ের আগে ফিরে এসেছে (ছোট),
-            // 'tap' = বাটন-ক্লিক ("বটে যান" সহ)। navigator.vibrate + Telegram HapticFeedback দুটোই ট্রাই করে —
-            // তাই সব অ্যান্ড্রয়েড/আইফোনেই কাঁপবে (আইফোনে Telegram-এর নিজের হ্যাপটিক)।
+            // 📳 ভাইব্রেশন হেল্পার (মালিকের চূড়ান্ত নির্দেশ): প্রতিটা কল = ঠিক **একবার** ঝাঁকুনি — আগের ৩-ধাক্কার
+            // প্যাটার্ন [320,140,320,140,520] পুরোপুরি বাদ। ঝাঁকুনি হবে শুধুমাত্র টাইমার শেষের মুহূর্তে
+            // (ইউজার অ্যাড পেজে থাকা অবস্থায়), ফিরে এলে/ফাইল ডেলিভারির সময় আর কোনো ভাইব্রেট নেই।
+            // navigator.vibrate + Telegram HapticFeedback দুটোই ট্রাই হয় — সব অ্যান্ড্রয়েড/আইফোনে একবারই কাঁপবে।
             function mbVibrate(kind) {
-                try { if (navigator.vibrate) navigator.vibrate(kind === 'success' ? [320,140,320,140,520] : (kind === 'warn' ? [130,90,130] : [200,90,200])); } catch(e) {}
+                try { if (navigator.vibrate) navigator.vibrate(kind === 'success' ? 450 : (kind === 'warn' ? 150 : 110)); } catch(e) {}
                 try {
                     if (!tg.HapticFeedback) return;
                     if ((kind === 'success' || kind === 'warn') && tg.HapticFeedback.notificationOccurred) tg.HapticFeedback.notificationOccurred(kind === 'success' ? 'success' : 'warning');
@@ -3702,6 +3702,7 @@ async def web_ui(request: Request):
                     adCountdownTimer = setInterval(() => {
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
+                        // 📳 টাইমার শেষ = এই মুহূর্তেই একবার ঝাঁকুনি (ইউজার তখনও অ্যাড পেজে) — "সময় পুরো, এখন ফিরে এসো"
                         if (remain <= 0) { if (!adBuzzDone) { adBuzzDone = true; mbVibrate('success'); } vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
@@ -3754,7 +3755,7 @@ async def web_ui(request: Request):
                 clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও (ডুপ্লিকেট যোগাযোগ বন্ধ)
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 closeModal('adModal');
-                mbVibrate('success');  // 📳 সব অ্যাড শেষ — ফাইল যাচ্ছে, ফোন কাঁপুক
+                // 📳 ফাইল ডেলিভারির সময় কোনো ভাইব্রেট নেই (মালিকের চূড়ান্ত নির্দেশ) — ঝাঁকুনি শুধু টাইমার শেষে, একবারই
                 sendFileRequest(activeFileId, true);
             }
 
@@ -3778,9 +3779,7 @@ async def web_ui(request: Request):
                         let vBtn = document.getElementById('adVerifyBtn');
                         vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
                     }
-                    // 📳 অ্যাড থেকে ফিরতেই ফোন ভাইব্রেট — "সময় পুরো হয়েছে, এখন ফাইল নাও" (একবারই)
-                    if (gateGateId) { if (!gateBuzzDone) { gateBuzzDone = true; mbVibrate('success'); } }
-                    else { if (!adBuzzDone) { adBuzzDone = true; mbVibrate('success'); } }
+                    // 📳 ফিরে এলে আর কোনো ভাইব্রেট নেই — ঝাঁকুনি হয়ে গেছে টাইমার শেষ হওয়ার মুহূর্তেই (অ্যাড পেজে থাকা অবস্থায়)
                 } else {
                     // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
                     const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${activeWait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
@@ -3820,7 +3819,10 @@ async def web_ui(request: Request):
                 try { window.location.href = tgUrl; } catch(e) {}
                 setTimeout(function(){ try { if (tg.openTelegramLink) { tg.openTelegramLink(httpsUrl); } else { window.open(httpsUrl, '_blank'); } } catch(e) { try { window.open(httpsUrl, '_blank'); } catch(e2) {} } }, 800);
             }
-            function openBotForFile() { mbVibrate('tap'); openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }  // 📳 "বটে যান" ক্লিকেই ফোন ভাইব্রেট (মালিকের নির্দেশ — আগে কাঁপত, মাঝখানে ভাঙা ছিল)
+            // 📳 "বটে যান" ফিক্স: আগে ভাইব্রেট কল করার সাথে সাথেই নেভিগেশন শুরু হয়ে যেত — ঝাঁকুনি মাঝপথে
+            // বাতিল হয়ে যেত (তাই "ভাইব্রেট করে না" লাগত)। এখন ছোট ৩৫০ms অপেক্ষা — ঝাঁকুনিটা কাটতে পারলে
+            // তারপর বট-চ্যাট খোলে। ফাইল আগেই বটে ডেলিভারি হয়ে থাকে, তাই এই অপেক্ষা কাউকে আটকায় না।
+            function openBotForFile() { mbVibrate('tap'); setTimeout(function(){ openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }, 350); }
 
             async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটে যান ক্লিক করলেই বট চ্যাট খুলবে, ফাইল ওপরেই থাকবে (বাড়তা কোনো মেসেজ যায় না)
  botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
@@ -3904,6 +3906,7 @@ async def web_ui(request: Request):
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
+                            // 📳 Watch Now গেটের টাইমার শেষ = এই মুহূর্তেই একবার ঝাঁকুনি (ইউজার তখনও অ্যাড পেজে)
                             if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; if (!gateBuzzDone) { gateBuzzDone = true; mbVibrate('success'); } btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
@@ -4261,10 +4264,12 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
-# 📳 ভাইব্রেশন-সিস্টেম (মালিকের নতুন নির্দেশ): সার্ভার থেকে "🔔" মেসেজ পাঠানো পুরোপুরি বাদ —
+# 📳 ভাইব্রেশন-সিস্টেম (মালিকের চূড়ান্ত নির্দেশ): সার্ভার থেকে "🔔" মেসেজ পাঠানো পুরোপুরি বাদ —
 # অ্যাড টেলিগ্রামের ভেতরের ব্রাউজারে খোলে, তখন বট-চ্যাটই খোলা থাকে → নতুন মেসেজে ফোন ভাইব্রেটই করে না।
-# এখন ভাইব্রেট হয় মিনি অ্যাপের ভেতরেই (মিনি অ্যাপ JS): ১) টাইমার শেষ হলে, ২) ইউজার অ্যাড থেকে ফিরে এলে
-# (সময় পুরো হলে শক্ত ভাইব্রেশন, আগে ফিরলে ছোট ভাইব্রেশন), ৩) "বটে যান" ক্লিক করলে — সব ফোনে কাজ করে।
+# চূড়ান্ত নিয়ম: ভাইব্রেট হয় শুধুমাত্র **টাইমার শেষ হওয়ার মুহূর্তে, ঠিক একবার** (ইউজার তখনও অ্যাড পেজে থাকে —
+# ঝাঁকুনি পেলেই বুঝবে "সময় পুরো, এখন ফিরে যেতে হবে")। অ্যাড থেকে ফিরে এলে বা ফাইল ডেলিভারির সময়
+# কোনো ভাইব্রেট নেই। সময়ের আগে ফিরলে ছোট এক ঝাঁকুনি (warn), "বটে যান" ক্লিকে ছোট এক ঝাঁকুনি (tap —
+# নেভিগেশনের আগে ৩৫০ms অপেক্ষা, নাহলে ঝাঁকুনি বাতিল হয়ে যায়)। সব ঝাঁকুনি একবারই — ৩ বার নয়।
 
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
