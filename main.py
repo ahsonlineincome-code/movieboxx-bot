@@ -267,7 +267,7 @@ async def seed_default_ads():
             await db.settings.update_one({"id": "adult_direct_links"}, {"$addToSet": {"links": {"$each": DEFAULT_ADULT_DIRECT_LINKS}}}, upsert=True)
             await db.settings.update_one({"id": "random_links_migrated"}, {"$set": {"done": True}}, upsert=True)
             print("🎲 Random ad system: new direct links added to pools (normal+adult).")
-        defaults = {"ad_count": 1, "ad_wait": 10, "bcast_del_hours": 72, "banners_enabled": False}
+        defaults = {"ad_count": 1, "ad_wait": 10, "watch_wait": 5, "bcast_del_hours": 72, "banners_enabled": False}
         for key, val in defaults.items():
             cfg = await db.settings.find_one({"id": key})
             if not cfg:
@@ -1232,6 +1232,7 @@ async def list_ads_cmd(m: types.Message):
     adl_cfg = await db.settings.find_one({"id": "adult_direct_links"}); alinks = adl_cfg.get("links", []) if adl_cfg else []
     ac_cfg = await db.settings.find_one({"id": "ad_count"}); ad_count = ac_cfg.get("value", 1) if ac_cfg else 1
     aw_cfg = await db.settings.find_one({"id": "ad_wait"}); ad_wait = aw_cfg.get("value", 10) if aw_cfg else 10
+    ww_cfg = await db.settings.find_one({"id": "watch_wait"}); watch_wait = ww_cfg.get("value", 5) if ww_cfg else 5
     bd_cfg = await db.settings.find_one({"id": "bcast_del"}); bdel = bd_cfg.get("value", 72) if bd_cfg else 72
     bdel_text = "অফ (কখনো ডিলিট হবে না)" if bdel == 0 else f"{bdel} ঘণ্টা"
     text = (f"💰 <b>বর্তমান অ্যাড সেটিংস</b>\n\n"
@@ -1239,9 +1240,10 @@ async def list_ads_cmd(m: types.Message):
             f"🔴 ১৮+ ডাইরেক্ট লিংক: <b>{len(alinks)}</b>টি\n"
             f"🎲 র‍্যান্ডম সিস্টেম চালু: প্রতিবার ক্লিকে পুল থেকে র‍্যান্ডম লিংক — সেইম লিংক পরপর দুইবার যায় না\n"
             f"🎯 প্রতি আনলকে অ্যাড সংখ্যা: <b>{ad_count}</b>টি\n"
-            f"⏱️ প্রতি অ্যাডে অপেক্ষার সময়: <b>{ad_wait} সেকেন্ড</b>\n"
+            f"⏱️ ডাউনলোড গেটে অপেক্ষার সময়: <b>{ad_wait} সেকেন্ড</b>\n"
+            f"🎬 Watch Now গেটে অপেক্ষার সময়: <b>{watch_wait} সেকেন্ড</b>\n"
             f"📢 ব্রডকাস্ট অটো-ডিলিট: <b>{bdel_text}</b>\n\n"
-            f"<i>কমান্ড: /addlink, /dellink, /addadultlink, /setadcount, /setadwait, /setbcastdel</i>\n\n"
+            f"<i>কমান্ড: /addlink, /dellink, /addadultlink, /setadcount, /setadwait, /setwatchwait, /setbcastdel</i>\n\n"
             f"<i>💡 টিপস: ব্যানার ইম্প্রেশন এখন শুধু ইউজারের চোখে আসা ব্যানারেরই গোনা হয় — লুকানো মোডালের "
             f"মৃত ইম্প্রেশন আর অদেখা ফিড-ব্যানার লোড বন্ধ করা হয়েছে। ইম্প্রেশন কমে গেলেও প্রতি ইম্প্রেশনের ভ্যালু বাড়বে, "
             f"তাই মোট CPM ওঠার কথা। আর ডাইরেক্ট লিংক র‍্যান্ডমলি ঘুরিয়ে দেওয়া ঠিকই আছে — এতে CPM পড়ে না।</i>")
@@ -1258,8 +1260,21 @@ async def set_ad_wait(m: types.Message):
         sec = int(m.text.split()[1])
         if sec < 5: sec = 5
         await db.settings.update_one({"id": "ad_wait"}, {"$set": {"value": sec}}, upsert=True)
-        await m.answer(f"✅ অ্যাড অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে।", parse_mode="HTML")
+        await m.answer(f"✅ ডাউনলোড গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে।", parse_mode="HTML")
     except: await m.answer("⚠️ /setadwait 10 (সেকেন্ড লিখুন, সর্বনিন্ম ৫)", parse_mode="HTML")
+
+@dp.message(Command("setwatchwait"))
+async def set_watch_wait(m: types.Message):
+    """🎬 Watch Now গেটের আলাদা টাইমার (ডিফল্ট ৫ সেকেন্ড) — লগ-চ্যানেল/ব্রডকাস্ট পোস্টের
+    Watch Now গেটে ইউজার কত সেকেন্ড অ্যাড পেজে থাকবে। ডাউনলোড গেটের /setadwait থেকে সম্পূর্ণ আলাদা।"""
+    if m.from_user.id not in admin_cache: return
+    try:
+        sec = int(m.text.split()[1])
+        if not (5 <= sec <= 120):
+            await m.answer("⚠️ ৫ থেকে ১২০ সেকেন্ডের মধ্যে দাও।", parse_mode="HTML"); return
+        await db.settings.update_one({"id": "watch_wait"}, {"$set": {"value": sec}}, upsert=True)
+        await m.answer(f"✅ Watch Now গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে। এখন ব্রডকাস্ট/লগ-চ্যানেল পোস্টের Watch Now গেটে ইউজারকে অ্যাড পেজে অন্তত <b>{sec} সেকেন্ড</b> থাকতে হবে — শেষ হলে ফোনে 🔔 সাউন্ড যাবে। (ডাউনলোড গেট আগের মতোই — /setadwait)", parse_mode="HTML")
+    except: await m.answer("⚠️ /setwatchwait 5 (সেকেন্ড লিখুন, সর্বনিন্ম ৫)", parse_mode="HTML")
 
 @dp.message(Command("setbcastdel"))
 async def set_bcast_del(m: types.Message):
@@ -1980,12 +1995,20 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                 <h2 class="sec-title"><i class="fa-solid fa-shield-halved"></i> গেট সেটিংস — অ্যাপের v5.3 সিস্টেমের বট-ভার্সন</h2>
                 <div class="grid g2">
                     <div class="card">
-                        <h3><i class="fa-solid fa-hourglass-half" style="color:var(--sky)"></i> অ্যাড ওয়াচ টাইম</h3>
+                        <h3><i class="fa-solid fa-hourglass-half" style="color:var(--sky)"></i> ডাউনলোড গেট টাইম</h3>
                         <div class="row" style="margin-top:6px;">
                             <input type="range" id="adWaitRange" min="5" max="60" step="1" value="10" oninput="document.getElementById('adWaitVal').innerText=this.value+'s'">
                             <div class="range-val" id="adWaitVal">10s</div>
                         </div>
-                        <div class="sub" style="margin-top:8px;">প্রতি গেটে ইউজার কত সেকেন্ড অ্যাড পেজে থাকবে (৫–৬০ সেকেন্ড)। সার্ভার নিজেই টাইম যাচাই করে — PC/DevTools দিয়ে ফাঁকি অসম্ভব।</div>
+                        <div class="sub" style="margin-top:8px;">ডাউনলোড গেটে (বিজ্ঞাপন খুলুন → ফাইল ডেলিভারি) ইউজার কত সেকেন্ড অ্যাড পেজে থাকবে (৫–৬০ সেকেন্ড, ডিফল্ট ১০)। সার্ভার নিজেই টাইম যাচাই করে — PC/DevTools দিয়ে ফাঁকি অসম্ভব।</div>
+                    </div>
+                    <div class="card">
+                        <h3><i class="fa-solid fa-clapperboard" style="color:var(--warn)"></i> Watch Now গেট টাইম</h3>
+                        <div class="row" style="margin-top:6px;">
+                            <input type="range" id="watchWaitRange" min="5" max="60" step="1" value="5" oninput="document.getElementById('watchWaitVal').innerText=this.value+'s'">
+                            <div class="range-val" id="watchWaitVal">5s</div>
+                        </div>
+                        <div class="sub" style="margin-top:8px;">লগ-চ্যানেল/ব্রডকাস্ট পোস্টের <b>Watch Now</b> গেটে (ফাইলটি প্রস্তুত! → Watch Now) কত সেকেন্ড থাকতে হবে (৫–৬০)। ডিফল্ট ৫ সেকেন্ড — ডাউনলোড গেটের থেকে সম্পূর্ণ আলাদা, যেটাকে ইচ্ছা মতো ৫→১০ করা যাবে।</div>
                     </div>
                     <div class="card">
                         <h3><i class="fa-solid fa-layer-group" style="color:var(--ok)"></i> অ্যাড রাউন্ড (প্রতি ফাইলে)</h3>
@@ -1998,7 +2021,7 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                 </div>
                 <div class="row" style="margin-top:16px;">
                     <button class="btn btn-grad" onclick="saveGate()"><i class="fa-solid fa-floppy-disk"></i> সেটিংস সেভ করুন</button>
-                    <span class="sub" style="font-size:12px; color:var(--mut);">বট কমান্ড /setadwait, /setadcount-এর সাথে সিঙ্ক করা — যেকোনো জায়গা থেকে বদলান</span>
+                    <span class="sub" style="font-size:12px; color:var(--mut);">বট কমান্ড /setadwait, /setwatchwait, /setadcount-এর সাথে সিঙ্ক করা — যেকোনো জায়গা থেকে বদলান</span>
                 </div>
                 <div class="note">🛡️ <b>সিস্টেমটা যেভাবে চলে (অ্যাপের মতো):</b> প্রতিটি ডাউনলোড ক্লিকে fresh গেট → সার্ভার র‍্যান্ডম লিংক দেয় → ইউজার অ্যাড পেজে থাকার সময় সার্ভারে জমা হয় (visibility + blur-বিকন, PC-তেও কাজ করে) → ফিরে এসে সার্ভার যাচাই করে → ভেরিফাইড গেট ছাড়া /api/send ফাইল দেয় না। গেটে কোনো টাইম-লিমিট নেই — যখন ভেরিফাই করবে তখনই। VIP ইউজার গেট-ফ্রি। আনলক ১৫ মিনিট valid — একবার ডেলিভারির পর গেট খরচ হয়ে যায় (রিপ্লে বন্ধ)।</div>
             </section>
@@ -2087,6 +2110,7 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                 renderPool('adultPool', d.adult_links, 'adult');
                 document.getElementById('bannersToggle').checked = !!d.banners_enabled;
                 document.getElementById('adWaitRange').value = d.ad_wait; document.getElementById('adWaitVal').innerText = d.ad_wait + 's';
+                document.getElementById('watchWaitRange').value = (d.watch_wait || 5); document.getElementById('watchWaitVal').innerText = (d.watch_wait || 5) + 's';
                 document.getElementById('adCountRange').value = d.ad_count; document.getElementById('adCountVal').innerText = d.ad_count + 'টি';
             } catch(e) {} }
             function renderPool(elId, links, pool) {
@@ -2120,6 +2144,7 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
             /* ═══ 🛡️ GATE SETTINGS ═══ */
             async function saveGate() {
                 const body = { ad_wait: parseInt(document.getElementById('adWaitRange').value),
+                               watch_wait: parseInt(document.getElementById('watchWaitRange').value),
                                ad_count: parseInt(document.getElementById('adCountRange').value) };
                 try { const res = await fetch('/api/admin/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
                     const d = await res.json(); if (d.ok) showToast('✅ গেট সেটিংস সেভ হয়েছে — এখনই সব ইউজারের জন্য চালু', true); else showToast('❌ ব্যর্থ', false);
@@ -2518,8 +2543,8 @@ async def web_ui(request: Request):
             .ad-box-orange::before { content: ''; position: absolute; top: 0; left: -80%; width: 55%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); animation: adShine 2.6s ease-in-out infinite; }
             @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
             .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
-            /* 📳 ভাইব্রেট-নোট: চোখে পড়ে এমন সোনালি (amber) বক্স — ইউজার আগেই জেনে নেবে ১০ সেকেন্ড শেষে বট মেসেজ দেবে */
-            .ad-vibe-note { background: linear-gradient(135deg, #b45309, #f59e0b); color: #fff; padding: 10px 12px; border-radius: 12px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.7; text-align: left; box-shadow: 0 4px 14px rgba(245,158,11,.35); }
+            /* 📳 ভাইব্রেট-নোট বাদ (মালিকের নির্দেশ): "সহজ নিয়ম" লেখাটা দুই মোডাল থেকেই পুরোপুরি সরানো হয়েছে —
+               সময় শেষ হলে বট চুপচাপ "🔔" পাঠাবে, ফোন রিং+ভাইব্রেট হলেই ইউজার বুঝবে */
             .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
             .ad-action-btn:active { transform: scale(.96); }
             .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
@@ -2861,7 +2886,6 @@ async def web_ui(request: Request):
                 <div class="ad-icon">🎉</div>
                 <h2 class="ad-title">ফাইলটি প্রস্তুত!</h2>
                 <div class="ad-box-black">✨ সুখবর! আপনি এই ফাইলটি পাচ্ছেন: <b id="gateMovieTitle"></b><br><br>নিচের <b>Watch Now</b> বাটনে ক্লিক করে ফাইলটি দেখুন।</div>
-                <div class="ad-vibe-note">📳 <b>সহজ নিয়ম:</b> অ্যাড খুলে বলা সময়টুকু (যেমন ১০ সেকেন্ড) থাকুন — সময় শেষ হলে বট নিজে থেকেই আপনাকে মেসেজ দেবে, তখন ফোন ভাইব্রেট/রিং করবে 🔔। আপনার আর সময় হিসাব রাখতে হবে না — মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন!</div>
                 <button class="ad-action-btn btn-ad-open" id="gateWatchBtn" onclick="gateNextStep()">🎬 Watch Now</button>
                 <button class="ad-action-btn" style="background:#334155; color:#fff;" onclick="closeModal('fileGateModal')">❌ বন্ধ করুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
@@ -2875,7 +2899,6 @@ async def web_ui(request: Request):
                 <h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
                 <div class="ad-box-black"><span id="adStepText">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>১০ সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।</span></div>
-                <div class="ad-vibe-note">📳 <b>সহজ নিয়ম:</b> <span id="adVibeText">বিজ্ঞাপন খুলে ১০ সেকেন্ড থাকলে বট নিজে থেকেই আপনাকে মেসেজ দেবে — তখন ফোন ভাইব্রেট/রিং করবে 🔔। মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন, আর কিছু করতে হবে না!</span></div>
                 <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
                 <button class="ad-action-btn btn-ad-unlock" id="adVerifyBtn" onclick="checkAdWatched()" style="display:none;">✅ অ্যাড দেখে ফিরে এসেছি</button>
                 <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
@@ -3564,9 +3587,6 @@ async def web_ui(request: Request):
                 let warn = ' ⚠️ সময়ের আগে ফিরে এলে আবার শুরু থেকে দেখতে হবে!';
                 if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে আসুন.${warn}`; }
                 else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে এসে নিচের বাটনে ক্লিক করুন.${warn}`; }
-                // 📳 ভাইব্রেট-নোট আপডেট: সেটিং-এর আসল সেকেন্ড সংখ্যা দিয়ে
-                let vibeEl = document.getElementById('adVibeText');
-                if (vibeEl) vibeEl.innerHTML = `বিজ্ঞাপন খুলে <b>${adSettings.ad_wait} সেকেন্ড</b> থাকলে বট নিজে থেকেই আপনাকে মেসেজ দেবে — তখন ফোন ভাইব্রেট/রিং করবে 🔔। মেসেজ পেলেই Back দিয়ে ফিরে এসে ফাইল নিন, আর কিছু করতে হবে না!`;
                 document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
                 document.getElementById('adClickBtn').style.display = 'block';
                 document.getElementById('adVerifyBtn').style.display = 'none';
@@ -3642,9 +3662,6 @@ async def web_ui(request: Request):
 
             async function openAdLink() {
                 if (gateOpening) return; gateOpening = true;
-                // 📳 টেপ দিলেই ফোন ভাইব্রেট করবে (Telegram হ্যাপটিক ইঞ্জিন + ব্রাউজার ফলব্যাক)
-                try { tg.HapticFeedback.impactOccurred('medium'); } catch (e) {}
-                try { if (navigator.vibrate) navigator.vibrate(80); } catch (e) {}
                 document.getElementById('adClickBtn').style.display = 'none';
                 try {
                     // 🛡️ লিংক + gate_id সার্ভার থেকেই আসে (র‍্যান্ডম, no-repeat) — ক্লায়েন্টে লিংক বদলানোর সুযোগ নেই
@@ -3671,11 +3688,7 @@ async def web_ui(request: Request):
                     adCountdownTimer = setInterval(() => {
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
-                        if (remain <= 0) { 
-                            vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; 
-                            // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
-                            if (!adBuzzDone) { adBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([500,120,500]); } catch(e) {} }
-                        }
+                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
                 } catch(e) {
@@ -3736,7 +3749,9 @@ async def web_ui(request: Request):
                 if (adStartTime === 0) return;
                 if (adAwayStart !== null) { adAwayMs += Date.now() - adAwayStart; adAwayStart = null; }
                 sendGateBeat('back');  // 📡 সার্ভারকে "ফিরে এসেছি" জানানো — আসল অ্যাড-টাইম জমা হলো
-                const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - adTotalAway()) / 1000));
+                // ⏱️ কোন গেট চলছে সেই টাইমারই: Watch Now গেট → gateWaitSec (৫), ডাউনলোড গেট → ad_wait (১০)
+                const activeWait = gateGateId ? gateWaitSec : adSettings.ad_wait;
+                const remain = Math.max(0, Math.ceil((activeWait * 1000 - adTotalAway()) / 1000));
                 if (remain <= 0) {
                     // ✅ পুরো সময় অ্যাডে ছিল — ভেরিফাই বাটন চালু
                     if (gateGateId) {  // ডিপ-লিংক গেট
@@ -3750,7 +3765,7 @@ async def web_ui(request: Request):
                     }
                 } else {
                     // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
-                    const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
+                    const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${activeWait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
                     if (gateGateId) { dlResetGate(); }
                     else { resetAdModal(); }
                     tg.showAlert(msg);
@@ -3788,7 +3803,8 @@ async def web_ui(request: Request):
             }
             function openBotForFile() { openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }
 
-            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { botFileLink = 'https://t.me/' + BOT_USERNAME; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
+            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔔 "বটে গিয়ে ফাইল নিন" ফিক্স: এখন ?start=f_<movieId> ডিপ-লিংক বহন করবে — বট চ্যাট খুললেই বট পয়েন্টার-মেসেজ দেবে, ফোন রিং+ভাইব্রেট হবে (আগে চুপচাপ চ্যাট খুলত, কিছুই হতো না)
+ botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
             async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
@@ -3800,7 +3816,7 @@ async def web_ui(request: Request):
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
-            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false;  // 📳 ডিপ-লিংক গেটের হ্যাপটিক একবারই
+            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false; let gateWaitSec = 5;  // 📳 ডিপ-লিংক গেটের হ্যাপটিক একবারই · ⏱️ গেটের নিজের সেকেন্ড (সার্ভার থেকে আসে, ডাউনলোড গেটের ad_wait আলাদা)
             // 🧹 ডিপ-লিংক গেট রিসেট: চলমান গেট বাতিল + সব স্টেট শুরুর অবস্থায় (TRY AGAIN/আগে ফিরলে)
             function dlResetGate() {
                 if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
@@ -3845,7 +3861,7 @@ async def web_ui(request: Request):
                     btn.disabled = true; btn.innerText = '⏳ প্রস্তুত হচ্ছে...';
                     try {
                         const fid = (gateMovie.files && gateMovie.files[0] && gateMovie.files[0].id) ? gateMovie.files[0].id : (gateMovie._id || '');
-                        const res = await fetch('/api/ad/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({initData: INIT_DATA, movieId: String(fid || ''), adult: !!isAdult})});
+                        const res = await fetch('/api/ad/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({initData: INIT_DATA, movieId: String(fid || ''), adult: !!isAdult, flow: 'watch'})});
                         const g = await res.json();
                         if (!g.ok || !g.link) {
                             // লিংক পুল খালি → আটকে রাখব না, ফাইল পেজে পাঠিয়ে দিই
@@ -3855,22 +3871,21 @@ async def web_ui(request: Request):
                         }
                         gateGateId = g.gate_id;
                         saveGateLS(g.gate_id, String(fid || ''));  // 🔧 রিলোড-রিকভারি: gate_id সেভ
-                        if (g.wait) adSettings.ad_wait = g.wait;
+                        // ⏱️ Watch Now গেটের নিজের টাইমার (প্যানেলের "Watch Now গেট টাইম", ডিফল্ট ৫ সেকেন্ড) —
+                        // ডাউনলোড গেটের adSettings.ad_wait আর কখনো ওভাররাইট হবে না (দুই টাইমার সম্পূর্ণ আলাদা)
+                        gateWaitSec = (typeof g.wait === 'number' && g.wait > 0) ? g.wait : 5;
                         tg.openLink(g.link);
                         gateStep = 1;
                         // 🛡️ ডিপ-লিংক গেটেও বিকন ট্র্যাকিং চালু (visibility + blur) — সার্ভার আসল অ্যাড-টাইম পাবে
                         adStartTime = Date.now(); adAwayMs = 0; adAwayStart = null; adWasHidden = false;
-                        let left = g.wait || adSettings.ad_wait;
+                        let left = gateWaitSec;
                         btn.innerText = `⏳ অপেক্ষা করুন ${left}s`;
                         if (gateTimer) clearInterval(gateTimer);
                         const dlT0 = Date.now();
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
-                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; 
-                                // 📳 অ্যাপে থাকলে (PC/ফিরে-এসে) টাইমার শেষ হলেই এক ঝটকা ভাইব্রেট/বিপ — একবারই
-                                if (!gateBuzzDone) { gateBuzzDone = true; try { tg.HapticFeedback.notificationOccurred('success'); } catch(e) {} try { if (navigator.vibrate) navigator.vibrate([500,120,500]); } catch(e) {} }
-                            }
+                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
@@ -3892,10 +3907,10 @@ async def web_ui(request: Request):
                             if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
                             return;
                         }
-                        let rem = (v && typeof v.remain === 'number') ? v.remain : adSettings.ad_wait;
+                        let rem = (v && typeof v.remain === 'number') ? v.remain : gateWaitSec;
                         // ⚠️ সময় বাকি ছিল — স্পষ্ট মেসেজ + গেট রিসেট (আবার Watch Now থেকে শুরু)
                         dlResetGate();
-                        tg.showAlert(`⚠️ পুরো ${adSettings.ad_wait} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল) — আবার Watch Now চেপে অ্যাড দেখুন।`);
+                        tg.showAlert(`⚠️ পুরো ${gateWaitSec} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল) — আবার Watch Now চেপে অ্যাড দেখুন।`);
                     } catch(e) {
                         dlResetGate();
                         tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।');
@@ -4163,6 +4178,7 @@ async def plus18_svg():
 
 class GateStartModel(BaseModel):
     initData: str; movieId: str; adult: bool = False
+    flow: str = "download"  # 'download' = ডাউনলোড গেট (ad_wait) | 'watch' = Watch Now গেট (watch_wait, ডিফল্ট ৫)
 
 class GateBeatModel(BaseModel):
     gateId: str; initData: str; phase: str  # 'away' | 'back'
@@ -4185,6 +4201,16 @@ def gate_settings():
 
 async def gate_get_settings():
     return await gate_settings()()
+
+async def watch_wait_get() -> int:
+    """⏱️ Watch Now গেটের আলাদা অপেক্ষা-সেকেন্ড (ডিফল্ট ৫) — ডাউনলোড গেটের ad_wait থেকে
+    সম্পূর্ণ আলাদা। মালিকের নির্দেশ: লগ-চ্যানেল/ব্রডকাস্টের Watch Now গেট ৫ সেকেন্ড, ডাউনলোড গেট
+    আগের মতোই ১০ সেকেন্ড — দুটোই প্যানেল/কমান্ড থেকে আলাদাভাবে বদলানো যাবে।"""
+    try: ww = await get_setting("watch_wait", 5)
+    except Exception: ww = 5
+    try: ww = max(5, min(120, int(ww or 5)))
+    except Exception: ww = 5
+    return ww
 
 async def pick_link_for_user(uid: int, adult: bool):
     """🎲 সার্ভার-সাইড র‍্যান্ডম লিংক পিক — অ্যাপের directLinkNow-এর মতো: পুল থেকে র‍্যান্ডম,
@@ -4209,20 +4235,20 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
-# 📳 ১০-সেকেন্ড শেষ হলে বট নিজে থেকে ইউজারকে ছোট মেসেজ দেয় — মেসেজ এলেই ফোনে নোটিফিকেশনে
-# ভাইব্রেট/রিং হয় (টেলিগ্রামে সরাসরি "শুধু ভাইব্রেট" করানোর Bot API নেই, মেসেজ-নোটিফিকেশনই সেটা করে)।
+# 🔔 সাউন্ড-সিস্টেম (মালিকের নতুন নির্দেশ): অ্যাড খোলার (wait+১) সেকেন্ডে — ৫ সেকেন্ড গেট হলে ঠিক ৬ সেকেন্ডে,
+# ১০ সেকেন্ড গেট হলে ১১ সেকেন্ডে — বট শুধু একটা "🔔" পাঠায়। কোনো বড় লেখা নেই — মেসেজ এলেই ফোনে
+# নোটিফিকেশন-রিং + ভাইব্রেট হবে (সব ফোনে কাজ করে), ইউজার টের পাবে সময় শেষ — শুনেই Back দিয়ে ফিরে আসবে।
 # সার্ভার-টাইমারই সত্যি: ইউজার আগেই ফিরে গেট ভেরিফাই/বাতিল করলে মেসেজ আর যায় না।
-# 💰 খরচ: প্রতি গেটে মাত্র ১টি ছোট মেসেজ — ব্যান্ডউইথে কোনো চাপ নেই।
+# 💰 খরচ: প্রতি গেটে মাত্র ১টি ১-ইমোজির মেসেজ — ব্যান্ডউইথে কোনো চাপ নেই।
 async def gate_notify_worker(uid: int, gate_id: str, wait_s: int):
     try:
-        await asyncio.sleep(max(5, int(wait_s)))
+        await asyncio.sleep(max(5, int(wait_s)) + 1)  # 🔔 wait+১ সেকেন্ড (১০ হলে ১১) — তখনই টং
         g = await db.ad_gates.find_one({"_id": ObjectId(gate_id)}, {"status": 1})
         if not g or g.get("status") != "running": return  # ভেরিফাই/বাতিল/খরচ হয়ে গেলে আর নয়
         try:
-            # 🔔 মালিকের নির্দেশ: বিপ একবারই — তিনবার নয়। ঠিক সময়ে মাত্র ১টা মেসেজ;
-            # মেসেজ এলেই ফোন নোটিফিকেশনে ভাইব্রেট/রিং করবে (ফোনের টেলিগ্রাম-সেটিং অনুযায়ী)।
-            _txt = (f"📳 বিপ! আপনার {wait_s} সেকেন্ডের অ্যাড-টাইম শেষ ✅\n"
-                    "এখন বিজ্ঞাপন থেকে Back দিয়ে বটে ফিরে আসুন — ফাইলটি নিয়ে নিন। 🎬")
+            # 🔔 মালিকের নির্দেশ: লেখা কিছুই নয় — শুধু "🔔"। মেসেজ এলেই ফোন রিং+ভাইব্রেট হবে
+            # (সব ফোনে কাজ করে), ইউজার নিজেই টের পাবে সময় শেষ — টং-মেসেজ দেওয়ার দরকার নেই।
+            _txt = "🔔"
             try:
                 _m = await bot.send_message(uid, _txt)
             except Exception:
@@ -4249,17 +4275,22 @@ async def ad_gate_start(d: GateStartModel):
         started_cnt = await db.ad_gates.count_documents({"uid": uid, "started_at": {"$gte": hour_ago}})
         if started_cnt >= 60: return {"ok": False, "msg": "rate"}
         aw, ac = await gate_get_settings()
+        # ⏱️ দুই গেটের আলাদা টাইমার: Watch Now গেট (flow=watch) → watch_wait (ডিফল্ট ৫),
+        # ডাউনলোড গেট → ad_wait (আগের মতোই ১০)। গেট-ডকুমেন্টেই wait সেভ হয় — পরে সেটিং বদলালেও
+        # চলমান গেটের যাচাই ভাঙবে না।
+        wait_used = await watch_wait_get() if d.flow == "watch" else aw
         link, pool_size = await pick_link_for_user(uid, d.adult)
         if not link: return {"ok": False, "msg": "no_link"}
         now = datetime.datetime.utcnow()
         res = await db.ad_gates.insert_one({
             "uid": uid, "movie_id": d.movieId, "adult": bool(d.adult), "link": link,
+            "flow": d.flow if d.flow in ("watch", "download") else "download", "wait": int(wait_used),
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
-        # 📳 টাইমার-শেষ নোটিফিকেশন: wait সেকেন্ড পর বট মেসেজ দেবে (ফোন ভাইব্রেট/রিং হবে)
-        asyncio.create_task(gate_notify_worker(uid, str(res.inserted_id), aw))
+        # 🔔 সাউন্ড: wait+১ সেকেন্ড পর বট "🔔" পাঠাবে — মেসেজ এলেই ফোন রিং+ভাইব্রেট হবে
+        asyncio.create_task(gate_notify_worker(uid, str(res.inserted_id), wait_used))
         return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
-                "wait": aw, "count": ac, "pool": pool_size}
+                "wait": wait_used, "count": ac, "pool": pool_size}
     except Exception as e:
         print(f"ad_gate_start error: {e}")
         return {"ok": False, "msg": "error"}
@@ -4303,7 +4334,10 @@ async def ad_gate_verify(d: GateVerifyModel):
         except Exception: return {"ok": False, "msg": "bad_gate"}
         gate = await db.ad_gates.find_one({"_id": gid, "uid": uid})
         if not gate: return {"ok": False, "msg": "bad_gate"}
-        aw, _ac = await gate_get_settings()
+        # ⏱️ গেটের নিজের সেভ করা wait-ই সত্যি (Watch Now গেট ৫, ডাউনলোড গেট ১০ — আলাদা)।
+        # পুরনো গেটে wait না থাকলে বর্তমান ad_wait সেটিং — আগের আচরণ অক্ষত।
+        try: aw = int(gate.get("wait") or 0) or (await gate_get_settings())[0]
+        except Exception: aw = (await gate_get_settings())[0]
         now = datetime.datetime.utcnow()
         if gate["status"] == "verified": return {"ok": True, "done": True, "remain": 0}
         if gate["status"] != "running": return {"ok": False, "msg": "expired"}
@@ -4341,19 +4375,25 @@ async def ad_gate_abort(d: GateVerifyModel):
 
 async def gate_check_and_consume(uid: int, movie_id: str, is_vip: bool):
     """🔐 /api/send-এর গেট-প্রহরী: VIP ছাড়া ভেরিফাইড গেট সংখ্যা < ad_count হলে ফাইল না।
+    ⚠️ Watch Now গেট (flow=watch) এখানে গোনা হয় না — ওটা শুধু ফাইলের পেজ খোলার গেট;
+    ফাইল পেতে ডাউনলোড গেট (ad_wait সেকেন্ড) আগের মতোই লাগবে — মালিকের নির্দেশ:
+    ডাউনলোড গেটের ১০ সেকেন্ড অক্ষত থাকবে।
     রিটার্ন: (চলবে কি না, ভেরিফাইড গেট, দরকার) — খরচ (consume) আলাদা ফাংশনে"""
     if is_vip: return True, 0, 0
     _, ac = await gate_get_settings()
     since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
     cnt = await db.ad_gates.count_documents({"uid": uid, "movie_id": movie_id,
+                                            "flow": {"$ne": "watch"},
                                             "status": "verified", "verified_at": {"$gte": since}})
     return cnt >= ac, cnt, ac
 
 async def gate_consume(uid: int, movie_id: str):
-    """🧾 ডেলিভারি হয়ে গেলে ভেরিফাইড গেটগুলো consumed মার্ক — একবারের গেট = একবারের ফাইল (রিপ্লে আটকায়)"""
+    """🧾 ডেলিভারি হয়ে গেলে ভেরিফাইড গেটগুলো consumed মার্ক — একবারের গেট = একবারের ফাইল (রিপ্লে আটকায়)।
+    Watch Now গেট এখানেও বাদ (ওটা ফাইল-ডেলিভারির গেট নয় — নিজের টাইমারেই শেষ)"""
     _, ac = await gate_get_settings()
     since = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
-    gates = await db.ad_gates.find({"uid": uid, "movie_id": movie_id, "status": "verified",
+    gates = await db.ad_gates.find({"uid": uid, "movie_id": movie_id, "flow": {"$ne": "watch"},
+                                    "status": "verified",
                                     "verified_at": {"$gte": since}}).sort("verified_at", -1).to_list(ac)
     for g in gates:
         await db.ad_gates.update_one({"_id": g["_id"]}, {"$set": {"status": "consumed", "consumed_at": datetime.datetime.utcnow()}})
@@ -4415,12 +4455,14 @@ async def admin_get_config(auth: bool = Depends(verify_admin)):
     dl = await db.settings.find_one({"id": "direct_links"}); links = (dl or {}).get("links", []) or []
     adl = await db.settings.find_one({"id": "adult_direct_links"}); alinks = (adl or {}).get("links", []) or []
     aw, ac = await gate_get_settings()
+    ww = await watch_wait_get()
     banners = await get_setting("banners_enabled", False)
     return {"ok": True, "links": links, "adult_links": alinks,
-            "ad_wait": aw, "ad_count": ac, "banners_enabled": bool(banners)}
+            "ad_wait": aw, "watch_wait": ww, "ad_count": ac, "banners_enabled": bool(banners)}
 
 class AdminConfigModel(BaseModel):
     ad_wait: int | None = None
+    watch_wait: int | None = None
     ad_count: int | None = None
     banners_enabled: bool | None = None
 
@@ -4430,6 +4472,10 @@ async def admin_set_config(d: AdminConfigModel, auth: bool = Depends(verify_admi
         if d.ad_wait is not None:
             v = max(5, min(120, int(d.ad_wait)))
             await db.settings.update_one({"id": "ad_wait"}, {"$set": {"value": v}}, upsert=True)
+        if d.watch_wait is not None:
+            # ⏱️ Watch Now গেটের আলাদা টাইমার (ডিফল্ট ৫) — ডাউনলোড গেটের ad_wait থেকে সম্পূর্ণ আলাদা
+            v = max(5, min(120, int(d.watch_wait)))
+            await db.settings.update_one({"id": "watch_wait"}, {"$set": {"value": v}}, upsert=True)
         if d.ad_count is not None:
             v = max(1, min(5, int(d.ad_count)))
             await db.settings.update_one({"id": "ad_count"}, {"$set": {"value": v}}, upsert=True)
