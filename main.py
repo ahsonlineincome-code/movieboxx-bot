@@ -89,6 +89,12 @@ def is_adult_movie(m):
     except Exception:
         return False
 
+# 🔞 অ্যাডাল্ট-মঙ্গো-ফিল্টার (is_adult_movie() এর সেম নিয়ম, কোয়েরি-আকারে):
+# মালিকের রিপোর্ট অনুযায়ী নরমাল মুভি দেখতে দেখতে ফিডে অ্যাডাল্ট মুভি ঢুকে যাচ্ছিল —
+# এখন Home ফিড / ট্রেন্ডিং / রিসেন্ট / সারপ্রাইজ / সার্চ — সব নরমাল জায়গা থেকে অ্যাডাল্ট বাদ।
+# অ্যাডাল্ট মুভি দেখা যাবে শুধু "Adult Content" ক্যাটাগরিতে (অ্যাপে এজ-ভেরিফাই গেটের পরে) ও 18+ চ্যানেলে।
+ADULT_MATCH_OR = [{"categories": "Adult Content"}, {"title": {"$regex": r"18\+", "$options": "i"}}]
+
 # 300x250 ব্যানার অ্যাড (Web App Home + অ্যাড মোডালে দেখাবে)
 BANNER_AD_JS = """<script>
   atOptions = {
@@ -251,12 +257,15 @@ async def get_setting(key, default=None):
 # (অ্যাডমিন নিজে লিংক বসালে তার লিংকই থাকবে, ওভাররাইট করবে না)
 async def seed_default_ads():
     try:
+        # 🛡️ মালিকের রিপোর্ট ফিক্স: আগে links তালিকা খালি থাকলেও রিস্টার্টে ডিফল্ট লিংক ফিরে বসে যেত —
+        # ফলে প্যানেল থেকে মুছে ফেলা অ্যাডাল্ট লিংক বট-রিস্টার্টের পর আবার চালু হয়ে যেত!
+        # এখন: সেটিং-ডকুমেন্ট একদম না থাকলে (নতুন DB) তবেই ডিফল্ট বসবে; অ্যাডমিন খালি করে দিলে সেটাই ফাইনাল।
         dl_cfg = await db.settings.find_one({"id": "direct_links"})
-        if not dl_cfg or not dl_cfg.get("links"):
+        if not dl_cfg:
             await db.settings.update_one({"id": "direct_links"}, {"$set": {"links": DEFAULT_DIRECT_LINKS}}, upsert=True)
             print(f"💰 Seeded {len(DEFAULT_DIRECT_LINKS)} default direct ad links.")
         adl_cfg = await db.settings.find_one({"id": "adult_direct_links"})
-        if not adl_cfg or not adl_cfg.get("links"):
+        if not adl_cfg:
             await db.settings.update_one({"id": "adult_direct_links"}, {"$set": {"links": DEFAULT_ADULT_DIRECT_LINKS}}, upsert=True)
             print(f"🔴 Seeded {len(DEFAULT_ADULT_DIRECT_LINKS)} default adult direct links.")
         # 🎲 র‍্যান্ডম অ্যাড সিস্টেম মাইগ্রেশন (একবারই চলে): নতুন নরমাল ৫টা + অ্যাডাল্ট ৩টা ডাইরেক্ট লিংক
@@ -462,32 +471,21 @@ async def _start_flow(message: types.Message, state: FSMContext):
         else:
             user_row = await db.users.find_one({"user_id": uid})
             if user_row:
-                _cfg = await db.settings.find_one({"id": "tg_link"})
-                _link = _cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if _cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
-                _kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🚀 Join Channel", url=_link)]])
-                # এইমাত্র (১০ মিনিটের ভেতরে) ওয়েব অ্যাপ থেকে ডেলিভারি হয়ে থাকলে ডুপ্লিকেট কপি
-                # না পাঠিয়ে সুন্দর পয়েন্টার মেসেজ — "ফাইল ওপরের মেসেজে আছে 👆"
+                # 🚫 মালিকের নির্দেশ: "এই তো আপনার ফাইল!" পয়েন্টার-মেসেজটা আর যাবেই না —
+                # START চাপলেই বারবার/দুইবার একই লেখা এসে ইউজার বিরক্ত হত। ফাইল বট-চ্যাটেই
+                # থাকে (ওপরে স্ক্রল করলেই মিলবে), তাই আলাদা কোনো লেখা পাঠানোর দরকারই নেই।
                 recent = await db.user_unlocks.find_one({
                     "user_id": uid, "movie_id": movie_id,
                     "unlocked_at": {"$gte": now - datetime.timedelta(minutes=10)}})
-                if recent:
-                    try:
-                        await message.answer(
-                            f"🎉 <b>এই তো আপনার ফাইল!</b>\n\n✅ <b>{m.get('title', 'Movie')}</b> এই চ্যাটেই পাঠানো হয়েছে — ওপরে স্ক্রল করে ফাইলটায় 👆 ট্যাপ করলেই দেখতে/ডাউনলোড করতে পারবেন।\n\n✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!",
-                            parse_mode="HTML", reply_markup=_kb, disable_web_page_preview=True)
-                    except Exception: pass
-                    return
-                ok, _ = await deliver_movie_file(uid, m)
-                if ok:
-                    await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$inc": {"clicks": 1}})
-                    await db.user_unlocks.update_one({"user_id": uid, "movie_id": movie_id}, {"$set": {"unlocked_at": now}}, upsert=True)
-                    try:
-                        await message.answer(
-                            f"🎉 <b>এই তো আপনার ফাইল!</b>\n\n📥 <b>{m.get('title', 'Movie')}</b> ওপরের মেসেজে পাঠানো হয়েছে 👆 — ট্যাপ করে দেখুন।\n\n✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন!",
-                            parse_mode="HTML", reply_markup=_kb, disable_web_page_preview=True)
-                    except Exception: pass
-                    return
-                # ডেলিভারি ব্যর্থ → নিচের স্বাভাবিক স্টার্ট ফ্লোতে যাবে (ইউজার আটকে থাকবে না)
+                if not recent:
+                    ok, _ = await deliver_movie_file(uid, m)
+                    if ok:
+                        await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$inc": {"clicks": 1}})
+                        await db.user_unlocks.update_one({"user_id": uid, "movie_id": movie_id}, {"$set": {"unlocked_at": now}}, upsert=True)
+                        # ✅ ফাইল সদ্য ডেলিভারি হলো → নিচের স্বাগতম-মেসেজের মাথায় "ডেলিভারি হয়েছে" লাইনটাই যাবে
+                        delivered = True
+                # ডেলিভারি ব্যর্থ/সদ্য-ডেলিভারি থাকলে → নিচের স্বাভাবিক স্বাগতম-মেসেজই যাবে (ইউজার আটকে থাকবে না)
+                payload = ""  # ফাইল নিজেই চ্যাটে আছে — Watch Now বাটন-ওভাররাইডের দরকার নেই
             else:
                 # নতুন ইউজার f_ লিংকে এলে স্বাভাবিক রেজিস্ট্রেশন হবে; Watch Now বাটন ওই মুভির পেজ খুলবে
                 payload = movie_id
@@ -582,8 +580,11 @@ async def search_movies_smart(q: str, limit: int = 6, enforce_digits: bool = Tru
     words = [w for w in re.split(r"\s+", q.lower()) if w]
     if not words: return []
     async def run_pipeline(match_stage):
+        # 🔞 বট-সার্চেও অ্যাডাল্ট বাদ — নরমাল নাম লিখলে অ্যাডাল্ট মুভি আর ভেসে উঠবে না (মালিকের রিপোর্ট ফিক্স)
+        stage = dict(match_stage)
+        stage["$nor"] = ADULT_MATCH_OR
         pipeline = [
-            {"$match": match_stage},
+            {"$match": stage},
             {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}, "qualities": {"$addToSet": {"$ifNull": ["$quality", "HD"]}}}},
             {"$sort": {"created_at": -1}},
             {"$limit": 40},
@@ -1273,7 +1274,7 @@ async def set_watch_wait(m: types.Message):
         if not (5 <= sec <= 120):
             await m.answer("⚠️ ৫ থেকে ১২০ সেকেন্ডের মধ্যে দাও।", parse_mode="HTML"); return
         await db.settings.update_one({"id": "watch_wait"}, {"$set": {"value": sec}}, upsert=True)
-        await m.answer(f"✅ Watch Now গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে। এখন ব্রডকাস্ট/লগ-চ্যানেল পোস্টের Watch Now গেটে ইউজারকে অ্যাড পেজে অন্তত <b>{sec} সেকেন্ড</b> থাকতে হবে — শেষ হলে ফোনে 🔔 সাউন্ড যাবে। (ডাউনলোড গেট আগের মতোই — /setadwait)", parse_mode="HTML")
+        await m.answer(f"✅ Watch Now গেটের অপেক্ষার সময় <b>{sec} সেকেন্ড</b> এ সেট হয়েছে। এখন ব্রডকাস্ট/লগ-চ্যানেল পোস্টের Watch Now গেটে ইউজারকে অ্যাড পেজে অন্তত <b>{sec} সেকেন্ড</b> থাকতে হবে — টাইমার শেষ হলে ফিরে এসেই ফোন ভাইব্রেট করবে। (ডাউনলোড গেট আগের মতোই — /setadwait)", parse_mode="HTML")
     except: await m.answer("⚠️ /setwatchwait 5 (সেকেন্ড লিখুন, সর্বনিন্ম ৫)", parse_mode="HTML")
 
 @dp.message(Command("setbcastdel"))
@@ -2209,9 +2210,9 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
 async def get_trending_movies():
     try:
         now = datetime.datetime.utcnow()
-        # গত ৩০ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (Top 10)
+        # গত ৩০ দিনের মধ্যে যেগুলো বেশি দেখা হয়েছে (Top 10) — 🔞 অ্যাডাল্ট বাদ (নরমাল স্লাইডারে অ্যাডাল্ট ঢুকবে না)
         thirty_days_ago = now - datetime.timedelta(days=30)
-        movies = await db.movies.find({"created_at": {"$gte": thirty_days_ago}}).sort("clicks", -1).limit(10).to_list(10)
+        movies = await db.movies.find({"created_at": {"$gte": thirty_days_ago}, "$nor": ADULT_MATCH_OR}).sort("clicks", -1).limit(10).to_list(10)
         
         for m in movies:
             m["_id"] = str(m["_id"])
@@ -2223,7 +2224,7 @@ async def get_trending_movies():
 async def get_recent_movies():
     try:
         # সবশেষে আপলোড করা ১০টি মুভি (created_at অনুযায়ী সর্ট করা)
-        movies = await db.movies.find({}).sort("created_at", -1).limit(10).to_list(10)
+        movies = await db.movies.find({"$nor": ADULT_MATCH_OR}).sort("created_at", -1).limit(10).to_list(10)
         for m in movies:
             m["_id"] = str(m["_id"])
         return movies
@@ -2544,7 +2545,7 @@ async def web_ui(request: Request):
             @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
             .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
             /* 📳 ভাইব্রেট-নোট বাদ (মালিকের নির্দেশ): "সহজ নিয়ম" লেখাটা দুই মোডাল থেকেই পুরোপুরি সরানো হয়েছে —
-               সময় শেষ হলে বট চুপচাপ "🔔" পাঠাবে, ফোন রিং+ভাইব্রেট হলেই ইউজার বুঝবে */
+               টাইমার শেষ/ফিরে এলে মিনি অ্যাপ নিজেই ফোন ভাইব্রেট করায় (navigator.vibrate + HapticFeedback) */
             .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
             .ad-action-btn:active { transform: scale(.96); }
             .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
@@ -3003,7 +3004,20 @@ async def web_ui(request: Request):
             let AD_BANNERS_ON = __BANNERS_ON__;
             let homeCurrentPage = 1;
             let searchCurrentPage = 1;
-            let trendingMovies = []; 
+            let trendingMovies = [];
+
+            // 📳 ভাইব্রেশন হেল্পার (মালিকের নির্দেশ) — বট আর কোনো "🔔" মেসেজ পাঠায় না; ফোন কাঁপবে মিনি অ্যাপের নিজের কলে:
+            // 'success' = টাইমার শেষ/ফাইল রেডি (শক্ত লম্বা ভাইব্রেশন), 'warn' = সময়ের আগে ফিরে এসেছে (ছোট),
+            // 'tap' = বাটন-ক্লিক ("বটে যান" সহ)। navigator.vibrate + Telegram HapticFeedback দুটোই ট্রাই করে —
+            // তাই সব অ্যান্ড্রয়েড/আইফোনেই কাঁপবে (আইফোনে Telegram-এর নিজের হ্যাপটিক)।
+            function mbVibrate(kind) {
+                try { if (navigator.vibrate) navigator.vibrate(kind === 'success' ? [320,140,320,140,520] : (kind === 'warn' ? [130,90,130] : [200,90,200])); } catch(e) {}
+                try {
+                    if (!tg.HapticFeedback) return;
+                    if ((kind === 'success' || kind === 'warn') && tg.HapticFeedback.notificationOccurred) tg.HapticFeedback.notificationOccurred(kind === 'success' ? 'success' : 'warning');
+                    else if (tg.HapticFeedback.impactOccurred) tg.HapticFeedback.impactOccurred('medium');
+                } catch(e) {}
+            } 
 
             setTimeout(function() { document.getElementById('welcomeScreen').classList.add('hide'); }, 2500);
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) { document.getElementById('profileName').innerText = tg.initDataUnsafe.user.first_name; }
@@ -3688,7 +3702,7 @@ async def web_ui(request: Request):
                     adCountdownTimer = setInterval(() => {
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
-                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                        if (remain <= 0) { if (!adBuzzDone) { adBuzzDone = true; mbVibrate('success'); } vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
                 } catch(e) {
@@ -3740,6 +3754,7 @@ async def web_ui(request: Request):
                 clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও (ডুপ্লিকেট যোগাযোগ বন্ধ)
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 closeModal('adModal');
+                mbVibrate('success');  // 📳 সব অ্যাড শেষ — ফাইল যাচ্ছে, ফোন কাঁপুক
                 sendFileRequest(activeFileId, true);
             }
 
@@ -3763,11 +3778,15 @@ async def web_ui(request: Request):
                         let vBtn = document.getElementById('adVerifyBtn');
                         vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
                     }
+                    // 📳 অ্যাড থেকে ফিরতেই ফোন ভাইব্রেট — "সময় পুরো হয়েছে, এখন ফাইল নাও" (একবারই)
+                    if (gateGateId) { if (!gateBuzzDone) { gateBuzzDone = true; mbVibrate('success'); } }
+                    else { if (!adBuzzDone) { adBuzzDone = true; mbVibrate('success'); } }
                 } else {
                     // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
                     const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${activeWait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
                     if (gateGateId) { dlResetGate(); }
                     else { resetAdModal(); }
+                    mbVibrate('warn');  // 📳 ছোট ভাইব্রেশন — সময় পুরো হয়নি বোঝার জন্য
                     tg.showAlert(msg);
                 }
             }
@@ -3801,9 +3820,9 @@ async def web_ui(request: Request):
                 try { window.location.href = tgUrl; } catch(e) {}
                 setTimeout(function(){ try { if (tg.openTelegramLink) { tg.openTelegramLink(httpsUrl); } else { window.open(httpsUrl, '_blank'); } } catch(e) { try { window.open(httpsUrl, '_blank'); } catch(e2) {} } }, 800);
             }
-            function openBotForFile() { openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }
+            function openBotForFile() { mbVibrate('tap'); openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }  // 📳 "বটে যান" ক্লিকেই ফোন ভাইব্রেট (মালিকের নির্দেশ — আগে কাঁপত, মাঝখানে ভাঙা ছিল)
 
-            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔔 "বটে গিয়ে ফাইল নিন" ফিক্স: এখন ?start=f_<movieId> ডিপ-লিংক বহন করবে — বট চ্যাট খুললেই বট পয়েন্টার-মেসেজ দেবে, ফোন রিং+ভাইব্রেট হবে (আগে চুপচাপ চ্যাট খুলত, কিছুই হতো না)
+            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটে যান ক্লিক করলেই বট চ্যাট খুলবে, ফাইল ওপরেই থাকবে (বাড়তা কোনো মেসেজ যায় না)
  botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
@@ -3885,7 +3904,7 @@ async def web_ui(request: Request):
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
-                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
+                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; if (!gateBuzzDone) { gateBuzzDone = true; mbVibrate('success'); } btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
@@ -4029,7 +4048,14 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
         async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}): unlocked_ids.append(u["movie_id"])
     match_stage = {}
     if q: match_stage["title"] = {"$regex": q, "$options": "i"}
-    if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
+    if cat == "Adult Content":
+        # 🔞 অ্যাডাল্ট ক্যাটাগরি — শুধু অ্যাডাল্ট মুভিই (এজ-ভেরিফাই গেটের পরে এখানে আসা যায়)
+        match_stage = {"$or": ADULT_MATCH_OR}
+    else:
+        if q: match_stage["title"] = {"$regex": q, "$options": "i"}
+        if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
+        # 🔞 নরমাল ফিড (Home/অন্য ক্যাটাগরি/সার্চ) — অ্যাডাল্ট মুভি আর ঢুকবে না (মালিকের রিপোর্ট ফিক্স)
+        match_stage["$nor"] = ADULT_MATCH_OR
     
     total_unique_titles = len(await db.movies.distinct("title", match_stage))
     total_pages = math.ceil(total_unique_titles / limit)
@@ -4054,7 +4080,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
 async def get_random_movie():
     try:
         # ডাটাবেস থেকে র‍্যান্ডমলি ১টি মুভি আনা
-        movie = await db.movies.aggregate([{"$sample": {"size": 1}}]).to_list(1)
+        movie = await db.movies.aggregate([{"$match": {"$nor": ADULT_MATCH_OR}}, {"$sample": {"size": 1}}]).to_list(1)
         if movie:
             m = movie[0]
             m["_id"] = str(m["_id"]) # ObjectId কে স্ট্রিং-এ কনভার্ট করা
@@ -4235,33 +4261,10 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
-# 🔔 সাউন্ড-সিস্টেম (মালিকের নতুন নির্দেশ): অ্যাড খোলার (wait+১) সেকেন্ডে — ৫ সেকেন্ড গেট হলে ঠিক ৬ সেকেন্ডে,
-# ১০ সেকেন্ড গেট হলে ১১ সেকেন্ডে — বট শুধু একটা "🔔" পাঠায়। কোনো বড় লেখা নেই — মেসেজ এলেই ফোনে
-# নোটিফিকেশন-রিং + ভাইব্রেট হবে (সব ফোনে কাজ করে), ইউজার টের পাবে সময় শেষ — শুনেই Back দিয়ে ফিরে আসবে।
-# সার্ভার-টাইমারই সত্যি: ইউজার আগেই ফিরে গেট ভেরিফাই/বাতিল করলে মেসেজ আর যায় না।
-# 💰 খরচ: প্রতি গেটে মাত্র ১টি ১-ইমোজির মেসেজ — ব্যান্ডউইথে কোনো চাপ নেই।
-async def gate_notify_worker(uid: int, gate_id: str, wait_s: int):
-    try:
-        await asyncio.sleep(max(5, int(wait_s)) + 1)  # 🔔 wait+১ সেকেন্ড (১০ হলে ১১) — তখনই টং
-        g = await db.ad_gates.find_one({"_id": ObjectId(gate_id)}, {"status": 1})
-        if not g or g.get("status") != "running": return  # ভেরিফাই/বাতিল/খরচ হয়ে গেলে আর নয়
-        try:
-            # 🔔 মালিকের নির্দেশ: লেখা কিছুই নয় — শুধু "🔔"। মেসেজ এলেই ফোন রিং+ভাইব্রেট হবে
-            # (সব ফোনে কাজ করে), ইউজার নিজেই টের পাবে সময় শেষ — টং-মেসেজ দেওয়ার দরকার নেই।
-            _txt = "🔔"
-            try:
-                _m = await bot.send_message(uid, _txt)
-            except Exception:
-                return  # ইউজার বট ব্লক করে থাকলে আর চেষ্টা নেই — গেট তবু চলবে
-            # ⏱️ অটো-ক্লিন: মেসেজটা ১০ সেকেন্ড থাকবে (ইউজার ফিরে এসে দেখার যথেষ্ট),
-            # তারপর বট নিজেই মুছে দেবে — চ্যাটে জমে বিরক্তির কারণ হবে না
-            await asyncio.sleep(10)
-            try: await bot.delete_message(uid, _m.message_id)
-            except Exception: pass
-        except Exception:
-            pass  # ইউজার বট ব্লক করে থাকলেও গেট চলবে — শুধু মেসেজ যাবে না
-    except Exception as e:
-        print(f"gate_notify_worker error: {e}")
+# 📳 ভাইব্রেশন-সিস্টেম (মালিকের নতুন নির্দেশ): সার্ভার থেকে "🔔" মেসেজ পাঠানো পুরোপুরি বাদ —
+# অ্যাড টেলিগ্রামের ভেতরের ব্রাউজারে খোলে, তখন বট-চ্যাটই খোলা থাকে → নতুন মেসেজে ফোন ভাইব্রেটই করে না।
+# এখন ভাইব্রেট হয় মিনি অ্যাপের ভেতরেই (মিনি অ্যাপ JS): ১) টাইমার শেষ হলে, ২) ইউজার অ্যাড থেকে ফিরে এলে
+# (সময় পুরো হলে শক্ত ভাইব্রেশন, আগে ফিরলে ছোট ভাইব্রেশন), ৩) "বটে যান" ক্লিক করলে — সব ফোনে কাজ করে।
 
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
@@ -4287,8 +4290,7 @@ async def ad_gate_start(d: GateStartModel):
             "flow": d.flow if d.flow in ("watch", "download") else "download", "wait": int(wait_used),
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
-        # 🔔 সাউন্ড: wait+১ সেকেন্ড পর বট "🔔" পাঠাবে — মেসেজ এলেই ফোন রিং+ভাইব্রেট হবে
-        asyncio.create_task(gate_notify_worker(uid, str(res.inserted_id), wait_used))
+        # 📳 ভাইব্রেশন এখন মিনি অ্যাপের ভেতরেই হয় (টাইমার শেষ/ফিরে এলে) — সার্ভার থেকে কোনো মেসেজ যায় না
         return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
                 "wait": wait_used, "count": ac, "pool": pool_size}
     except Exception as e:
