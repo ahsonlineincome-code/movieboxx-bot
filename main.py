@@ -2380,7 +2380,11 @@ async def web_ui(request: Request):
                 align-items: center;
                 gap: 3px;
             }
-            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; color: #ef4444; font-size: 40px; z-index: 5; }
+            /* 🔞 অ্যাডাল্ট কার্ড ব্লার (১৮+ ভেরিফাই না-করা ইউজারের জন্য): আসল পোস্টার ঝাপসা + গাঢ় আবরণ + লাল "18+ 🔒" ব্যাজ;
+               ভেরিফাই করা ইউজার এই ক্লাসগুলো পায় না — কার্ড একদম স্বাভাবিক দেখায় */
+            .adult-blur-img { filter: blur(14px) brightness(.5) saturate(.7); transform: scale(1.15); }
+            .adult-lock-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(2,6,23,0.45); display: flex; align-items: center; justify-content: center; z-index: 5; overflow: hidden; }
+            .adult-18-badge { background: #ef4444; color: #fff; font-weight: 900; font-size: 15px; letter-spacing: 1px; padding: 9px 20px; border-radius: 999px; border: 2px solid rgba(255,255,255,.28); box-shadow: 0 4px 16px rgba(239,68,68,.55); white-space: nowrap; }
             /* 🔧 ফ্লোটিং বাটন ডান দিকে, ছোট (42px) আর একটু উপরে — নিচের কনটেন্ট ঢেকে দেয় না */
             .floating-btn { position: fixed; right: 15px; width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 17px; z-index: 500; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 2px solid white; text-decoration: none; color: white; }
             .btn-tg { bottom: 200px; background: linear-gradient(45deg, #24A1DE, #1b7ba8); }
@@ -2544,8 +2548,8 @@ async def web_ui(request: Request):
             .ad-box-orange::before { content: ''; position: absolute; top: 0; left: -80%; width: 55%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); animation: adShine 2.6s ease-in-out infinite; }
             @keyframes adShine { 0% { left: -80%; } 55%, 100% { left: 130%; } }
             .ad-box-black { background: rgba(2,6,23,.75); border: 1px dashed #475569; color: #e2e8f0; padding: 12px 14px; border-radius: 12px; margin-bottom: 18px; font-size: 13.5px; line-height: 1.75; text-align: left; }
-            /* 📳 ভাইব্রেট-নোট বাদ (মালিকের নির্দেশ): "সহজ নিয়ম" লেখাটা দুই মোডাল থেকেই পুরোপুরি সরানো হয়েছে —
-               টাইমার শেষ হলেই (অ্যাড পেজে থাকা অবস্থায়) মিনি অ্যাপ নিজেই ফোন একবার ভাইব্রেট করায় (navigator.vibrate + HapticFeedback) — ফিরে এলে/ডেলিভারিতে কাঁপে না */
+            /* 🔇 ভাইব্রেট-নোট নেই (মালিকের নির্দেশ): "সহজ নিয়ম" লেখাটা দুই মোডাল থেকেই সরানো হয়েছে —
+   টাইমার শেষ হলে ফোন কাঁপে **বটের 🔔 নোটিফিকেশন দিয়ে** (সার্ভার থেকে ঠিক ১টা মেসেজ) — ফিরে এলে/ডেলিভারিতে কাঁপে না */
             .ad-action-btn { width: 100%; padding: 15px; border-radius: 12px; font-weight: 800; border: none; font-size: 16px; cursor: pointer; margin-bottom: 10px; transition: transform .15s ease; }
             .ad-action-btn:active { transform: scale(.96); }
             .btn-ad-open { background: linear-gradient(135deg, #f97316 0%, #ea580c 55%, #dc2626 100%); color: white; font-size: 17px; font-weight: 900; letter-spacing: .4px; position: relative; overflow: hidden; box-shadow: 0 8px 22px rgba(234,88,12,.42); animation: adBtnBreathe 2s ease-in-out infinite; }
@@ -2999,7 +3003,7 @@ async def web_ui(request: Request):
             let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
             // 🛡️ সার্ভার-সাইড গেট স্টেট: লিংক সার্ভার দেয় (/api/ad/start), সময় সার্ভারই যাচাই করে (/api/ad/verify)
             // — PC/DevTools থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না
-            let currentGateId = null; let gateOpening = false; let lastGateLink = ''; let adBuzzDone = false;  // 📳 টাইমার-শেষ হ্যাপটিক একবারই
+            let currentGateId = null; let gateOpening = false; let lastGateLink = ''; let adBuzzDone = false;  // (ভাইব্রেশন এখন সার্ভারের 🔔 মেসেজে — এই ভ্যারিয়েবল আর ব্যবহৃত হয় না)
             // 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল (ডিফল্ট ON — প্যানেল থেকে OFF করলে সব ব্যানার স্লট বন্ধ)
             let AD_BANNERS_ON = __BANNERS_ON__;
             let homeCurrentPage = 1;
@@ -3060,7 +3064,12 @@ async def web_ui(request: Request):
             function filterCat(cat, btnEl) { activeCat = cat; homeCurrentPage = 1; document.querySelectorAll('.cat-chip').forEach(function(el) { el.classList.remove('active'); }); btnEl.classList.add('active'); loadHomeMovies(1); }
             
             function verify18(btnEl) { active18Btn = btnEl; if(localStorage.getItem('isAdult')) { if(btnEl) filterCat('Adult Content', btnEl); } else { document.getElementById('ageModal').style.display = 'flex'; } }
-            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal'); if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadHomeMovies(1); } }
+            // 🔞 "হ্যাঁ, আমি ১৮+" চাপলে: ভেরিফাই সেভ → হোম + সার্চ (সার্চ লেখা থাকলে) + ফেভরিট — সব লিস্ট রিফ্রেশ,
+            // তাই যেসব অ্যাডাল্ট কার্ড ব্লার ছিল সেগুলো সাথে সাথেই স্বাভাবিক দেখা যাবে (ADULT CONTENT চিপে ক্লিক করা হলে সেই ক্যাটাগরিই খুলবে)
+            function access18() { localStorage.setItem('isAdult', 'true'); closeModal('ageModal');
+                if(active18Btn) { filterCat('Adult Content', active18Btn); } else { loadHomeMovies(1); }
+                try { const sVal = document.getElementById('searchInputMain').value.trim(); if (sVal) searchMovies(1); } catch(e) {}
+                loadFavorites(); }
             
             function closeModal(id) { document.getElementById(id).style.display = 'none'; }
             function toggleOledMode() { document.body.classList.toggle('oled-mode'); let sEl = document.getElementById('darkModeStatus'); if(document.body.classList.contains('oled-mode')) { sEl.innerText = 'ON'; localStorage.setItem('oledMode', 'true'); } else { sEl.innerText = 'OFF'; localStorage.setItem('oledMode', 'false'); } }
@@ -3260,9 +3269,14 @@ async def web_ui(request: Request):
                 let isFav = userFavs.includes(m._id);
                 let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
                 let isVerified = localStorage.getItem('isAdult') === 'true';
-                let imgSrc = (isAdult && !isVerified) ? '/api/plus18.svg' : `/api/image/${m.photo_id}`;
-                let lockOverlay = (isAdult && !isVerified) ? `<div class="adult-lock-overlay"><i class="fa-solid fa-lock"></i></div>` : '';
-                let clickAction = (isAdult && !isVerified) ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
+                // 🔞 অ্যাডাল্ট কার্ড (১৮+ ভেরিফাই না-করা ইউজারের কাছে): আসল পোস্টারই দেখানো হয় কিন্তু CSS দিয়ে
+                // ব্লার করা + ওপরে লাল "18+ 🔒" ব্যাজ — ক্লিক করলেই বয়স-মোডাল (হ্যাঁ চাপলে সব খুলে যাবে)।
+                // ভেরিফাই করা ইউজার (isAdult='true') সবকিছু একদম স্বাভাবিক দেখে।
+                let adultHidden = isAdult && !isVerified;
+                let imgSrc = `/api/image/${m.photo_id}`;
+                let imgCls = adultHidden ? ' class="adult-blur-img"' : '';
+                let lockOverlay = adultHidden ? `<div class="adult-lock-overlay"><div class="adult-18-badge">18+ 🔒</div></div>` : '';
+                let clickAction = adultHidden ? `onclick="verify18(null)"` : `onclick="openDetail(${index}${srcName ? ", '" + srcName + "'" : ''})"`;
 
                 // 🗂 ফাইল কাউন্ট ব্যাজ — ভিতরে কয়টা ফাইল/লিংক আছে ("পার্ট" বা 720p লেখা হয় না) + 👁 ভিউ ব্যাজ
                 let filesArr = m.files || [];
@@ -3278,7 +3292,7 @@ async def web_ui(request: Request):
 
     return `<div class="movie-card" ${clickAction}>
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${imgSrc}" style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" loading="lazy">
+                    <img src="${imgSrc}"${imgCls} style="width: 100%; aspect-ratio: 16/9; object-fit: cover;" loading="lazy">
                     ${lockOverlay}
                     <div class="part-badge"><i class="fa-solid fa-layer-group"></i> ${fileLabel}</div>
                     ${viewsBadge}
@@ -3702,8 +3716,10 @@ async def web_ui(request: Request):
                     adCountdownTimer = setInterval(() => {
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
-                        // 📳 টাইমার শেষ = এই মুহূর্তেই একবার ঝাঁকুনি (ইউজার তখনও অ্যাড পেজে) — "সময় পুরো, এখন ফিরে এসো"
-                        if (remain <= 0) { if (!adBuzzDone) { adBuzzDone = true; mbVibrate('success'); } vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
+                        // 📳 টাইমার শেষ হলে ফোন কাঁপে **বটের 🔔 নোটিফিকেশন দিয়ে** (সার্ভার gate_timer_buzz ঠিক
+                        // wait সেকেন্ড পর ১টা মেসেজ পাঠায় — ইউজার তখনও অ্যাড পেজে, ঠিক একবার কাঁপে)।
+                        // JS ভাইব্রেট ব্যাকগ্রাউন্ডে কাজ করে না, তাই এখানে কোনো ভাইব্রেশন-কল নেই — শুধু বাটন চালু।
+                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
                         else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
                     }, 250);
                 } catch(e) {
@@ -3782,10 +3798,10 @@ async def web_ui(request: Request):
                     // 📳 ফিরে এলে আর কোনো ভাইব্রেট নেই — ঝাঁকুনি হয়ে গেছে টাইমার শেষ হওয়ার মুহূর্তেই (অ্যাড পেজে থাকা অবস্থায়)
                 } else {
                     // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
+                    // 📳 এখানে কোনো ভাইব্রেশন নেই (মালিকের নির্দেশ) — ঝাঁকুনি শুধু টাইমার শেষে, সার্ভারের 🔔 মেসেজে
                     const msg = `⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${activeWait} সেকেন্ড থাকতে হবে। (${remain}s বাকি ছিল) — আবার অ্যাড খুলে দেখুন।`;
                     if (gateGateId) { dlResetGate(); }
                     else { resetAdModal(); }
-                    mbVibrate('warn');  // 📳 ছোট ভাইব্রেশন — সময় পুরো হয়নি বোঝার জন্য
                     tg.showAlert(msg);
                 }
             }
@@ -3819,10 +3835,9 @@ async def web_ui(request: Request):
                 try { window.location.href = tgUrl; } catch(e) {}
                 setTimeout(function(){ try { if (tg.openTelegramLink) { tg.openTelegramLink(httpsUrl); } else { window.open(httpsUrl, '_blank'); } } catch(e) { try { window.open(httpsUrl, '_blank'); } catch(e2) {} } }, 800);
             }
-            // 📳 "বটে যান" ফিক্স: আগে ভাইব্রেট কল করার সাথে সাথেই নেভিগেশন শুরু হয়ে যেত — ঝাঁকুনি মাঝপথে
-            // বাতিল হয়ে যেত (তাই "ভাইব্রেট করে না" লাগত)। এখন ছোট ৩৫০ms অপেক্ষা — ঝাঁকুনিটা কাটতে পারলে
-            // তারপর বট-চ্যাট খোলে। ফাইল আগেই বটে ডেলিভারি হয়ে থাকে, তাই এই অপেক্ষা কাউকে আটকায় না।
-            function openBotForFile() { mbVibrate('tap'); setTimeout(function(){ openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }, 350); }
+            // 🔇 "বটে যান" ক্লিকে কোনো ভাইব্রেশন নেই (মালিকের চূড়ান্ত নির্দেশ — ফাইল নেওয়ার সময় ফোন কাঁপবে না)।
+            // ছোট ৩৫০ms অপেক্ষা রাখা হয়েছে — ক্লিক-ফিডব্যাক থেকে সরাসরি বট-চ্যাট খোলে (ফাইল আগেই বটে ডেলিভারি হয়ে থাকে)।
+            function openBotForFile() { setTimeout(function(){ openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }, 350); }
 
             async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটে যান ক্লিক করলেই বট চ্যাট খুলবে, ফাইল ওপরেই থাকবে (বাড়তা কোনো মেসেজ যায় না)
  botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
@@ -3837,7 +3852,7 @@ async def web_ui(request: Request):
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
-            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false; let gateWaitSec = 5;  // 📳 ডিপ-লিংক গেটের হ্যাপটিক একবারই · ⏱️ গেটের নিজের সেকেন্ড (সার্ভার থেকে আসে, ডাউনলোড গেটের ad_wait আলাদা)
+            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false; let gateWaitSec = 5;  // (ভাইব্রেশন এখন সার্ভারের 🔔 মেসেজে — এই ভ্যারিয়েবল আর ব্যবহৃত হয় না) · ⏱️ গেটের নিজের সেকেন্ড (সার্ভার থেকে আসে, ডাউনলোড গেটের ad_wait আলাদা)
             // 🧹 ডিপ-লিংক গেট রিসেট: চলমান গেট বাতিল + সব স্টেট শুরুর অবস্থায় (TRY AGAIN/আগে ফিরলে)
             function dlResetGate() {
                 if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
@@ -3906,8 +3921,9 @@ async def web_ui(request: Request):
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
-                            // 📳 Watch Now গেটের টাইমার শেষ = এই মুহূর্তেই একবার ঝাঁকুনি (ইউজার তখনও অ্যাড পেজে)
-                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; if (!gateBuzzDone) { gateBuzzDone = true; mbVibrate('success'); } btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
+                            // 📳 Watch Now গেটের টাইমার শেষ হলেও ফোন কাঁপে বটের 🔔 নোটিফিকেশনে (সার্ভার থেকে ১ মেসেজ —
+                            // gate_timer_buzz)। JS ব্যাকগ্রাউন্ড-ভাইব্রেশন অনির্ভরযোগ্য, তাই এখানে কোনো ভাইব্রেশন-কল নেই।
+                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
                             else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
@@ -4057,8 +4073,9 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     else:
         if q: match_stage["title"] = {"$regex": q, "$options": "i"}
         if cat and cat != "Home": match_stage["categories"] = {"$in": [cat]}
-        # 🔞 নরমাল ফিড (Home/অন্য ক্যাটাগরি/সার্চ) — অ্যাডাল্ট মুভি আর ঢুকবে না (মালিকের রিপোর্ট ফিক্স)
-        match_stage["$nor"] = ADULT_MATCH_OR
+        # 🔞 অ্যাডাল্ট মুভি আবার হোম/ক্যাটাগরি/সার্চ ফিডেই থাকবে (মালিকের নতুন নির্দেশ) —
+        #    তবে ১৮+ ভেরিফাই না-করা ইউজারের কাছে কার্ড ব্লার + "18+" ব্যাজ দেখাবে (কার্ডে ক্লিক করলেই বয়স-মোডাল),
+        #    ভেরিফাই করা ইউজার (Yes চেপেছে) সবকিছু স্বাভাবিকভাবেই দেখতে পাবে। ব্লার-লজিক মিনি-অ্যাপের কার্ডে।
     
     total_unique_titles = len(await db.movies.distinct("title", match_stage))
     total_pages = math.ceil(total_unique_titles / limit)
@@ -4264,12 +4281,45 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
-# 📳 ভাইব্রেশন-সিস্টেম (মালিকের চূড়ান্ত নির্দেশ): সার্ভার থেকে "🔔" মেসেজ পাঠানো পুরোপুরি বাদ —
-# অ্যাড টেলিগ্রামের ভেতরের ব্রাউজারে খোলে, তখন বট-চ্যাটই খোলা থাকে → নতুন মেসেজে ফোন ভাইব্রেটই করে না।
-# চূড়ান্ত নিয়ম: ভাইব্রেট হয় শুধুমাত্র **টাইমার শেষ হওয়ার মুহূর্তে, ঠিক একবার** (ইউজার তখনও অ্যাড পেজে থাকে —
-# ঝাঁকুনি পেলেই বুঝবে "সময় পুরো, এখন ফিরে যেতে হবে")। অ্যাড থেকে ফিরে এলে বা ফাইল ডেলিভারির সময়
-# কোনো ভাইব্রেট নেই। সময়ের আগে ফিরলে ছোট এক ঝাঁকুনি (warn), "বটে যান" ক্লিকে ছোট এক ঝাঁকুনি (tap —
-# নেভিগেশনের আগে ৩৫০ms অপেক্ষা, নাহলে ঝাঁকুনি বাতিল হয়ে যায়)। সব ঝাঁকুনি একবারই — ৩ বার নয়।
+# 📳 টাইমার-শেষ ভাইব্রেশন (মালিকের চূড়ান্ত নির্দেশ — নির্ভরযোগ্য পদ্ধতি):
+# মিনি-অ্যাপের JS দিয়ে ভাইব্রেট করানো ব্যাকগ্রাউন্ডে কাজ করে না — ইউজার অ্যাড পেজে থাকলে
+# ওয়েবভিউ ফ্রিজ হয়, টাইমার শেষ হলেও ঝাঁকুনি আসে না (ফিরে এলে দেরিতে আসে = ভুল আচরণ)।
+# ✅ এখন ফোন কাঁপে **বট-নোটিফিকেশন দিয়ে**: গেট শুরুর ঠিক `wait` সেকেন্ড পর সার্ভার নিজেই
+#    ১টা ছোট 🔔 মেসেজ পাঠায় (নোটিফিকেশন ON) → ইউজার তখনও অ্যাড পেজে — ফোন ঠিক **একবার** কাঁপে
+#    ("সময় শেষ, এখন ফিরে এসো")। মেসেজ যায় শুধু গেট এখনো 'running' আর ইউজার সত্যিই অ্যাড পেজে
+#    থাকলে (away_start বসা) — আগে ফিরলে/ভেরিফাই-বাতিল হলে টাস্ক বাতিল/স্কিপ → বাড়তা মেসেজ নেই।
+# 🔇 ফিরে এলে / ফাইল ডেলিভারিতে কোনো ভাইব্রেশন নেই — সব ফাইল-মেসেজ disable_notification=True
+#    (সাইলেন্ট)। ঝাঁকুনি পুরোপুরি বন্ধ করতে চাইলে বট-চ্যাট মিউট করলেই হবে।
+
+# ঝুলে-থাকা buzz-টাস্কের রেজিস্ট্রি: gate_id(str) -> asyncio.Task (verify/abort/নতুন-গেটে বাতিল হয়)
+_gate_buzz_tasks = {}
+
+def _cancel_gate_buzz(gate_oid):
+    """🚫 গেটের পেন্ডিং টাইমার-মেসেজ টাস্ক বাতিল (ভেরিফাই/বাতিল/নতুন গেট শুরুতে ডাকা হয়)"""
+    t = _gate_buzz_tasks.pop(str(gate_oid), None)
+    if t and not t.done():
+        try: t.cancel()
+        except Exception: pass
+
+async def gate_timer_buzz(gate_oid_str: str, uid: int, wait_sec: int):
+    """🔔 গেটের নিজের `wait` সেকেন্ড পূর্ণ হলে ১টা নোটিফিকেশন-মেসেজ → ফোন ঠিক একবার কাঁপে।
+    ইউজার তখনও অ্যাড পেজে আছে কিনা সার্ভারই যাচাই করে (status=running + away_start বসা) —
+    আগে ফিরে এলে/গেট ভেরিফাই-বাতিল হলে মেসেজ আর যায় না।"""
+    try:
+        await asyncio.sleep(max(1, int(wait_sec)))
+        g = await db.ad_gates.find_one({"_id": ObjectId(gate_oid_str)}, {"status": 1, "away_start": 1})
+        if not g or g.get("status") != "running": return   # ভেরিফাই/বাতিল/খরচ হয়ে গেছে → নয়
+        if g.get("away_start") is None: return             # ইউজার আগেই ফিরে এসেছে → নয়
+        try:
+            await bot.send_message(uid, "🔔 <b>সময় শেষ!</b> এখন ফিরে এসে ফাইলটি নিয়ে নিন ✅", parse_mode="HTML")
+        except Exception:
+            pass  # ইউজার বটকে START দেয়নি/ব্লক করেছে — চুপচাপ পাস
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"gate_timer_buzz error: {e}")
+    finally:
+        _gate_buzz_tasks.pop(gate_oid_str, None)
 
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
@@ -4295,8 +4345,16 @@ async def ad_gate_start(d: GateStartModel):
             "flow": d.flow if d.flow in ("watch", "download") else "download", "wait": int(wait_used),
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
-        # 📳 ভাইব্রেশন এখন মিনি অ্যাপের ভেতরেই হয় (টাইমার শেষ/ফিরে এলে) — সার্ভার থেকে কোনো মেসেজ যায় না
-        return {"ok": True, "gate_id": str(res.inserted_id), "link": link,
+        # 📳 টাইমার-শেষ ভাইব্রেশন: ঠিক `wait` সেকেন্ড পর সার্ভার 🔔 মেসেজ পাঠাবে (নোটিফিকেশন ON →
+        # ইউজার অ্যাড পেজে থাকা অবস্থায় ফোন ১ বার কাঁপবে)। এই ইউজারের আগের ঝুলে-থাকা buzz-টাস্ক থাকলে আগে বাতিল —
+        # পুরনো গেটের দেরির মেসেজ যেন নতুন অ্যাড দেখার সময় না এসে পড়ে।
+        gid_str = str(res.inserted_id)
+        for _k, _t in list(_gate_buzz_tasks.items()):
+            if getattr(_t, "buzz_uid", None) == uid: _cancel_gate_buzz(_k)
+        _task = asyncio.create_task(gate_timer_buzz(gid_str, uid, int(wait_used)))
+        _task.buzz_uid = uid
+        _gate_buzz_tasks[gid_str] = _task
+        return {"ok": True, "gate_id": gid_str, "link": link,
                 "wait": wait_used, "count": ac, "pool": pool_size}
     except Exception as e:
         print(f"ad_gate_start error: {e}")
@@ -4360,6 +4418,7 @@ async def ad_gate_verify(d: GateVerifyModel):
         effective_ms = max(away_ms, elapsed_ms)
         remain_ms = max(0, aw * 1000 - effective_ms)
         if remain_ms <= 1200:  # ১.২ সেকেন্ড নেটওয়ার্ক-গ্রেস
+            _cancel_gate_buzz(gid)  # 📳 গেট ভেরিফাই হলে টাইমার-মেসেজ আর যাবে না (এক ঝাঁকুনিই শেষ)
             await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "verified", "verified_at": now, "suspect": beats == 0}})
             return {"ok": True, "done": True, "remain": 0}
         return {"ok": True, "done": False, "remain": int(remain_ms / 1000) + 1}
@@ -4375,7 +4434,8 @@ async def ad_gate_abort(d: GateVerifyModel):
         if uid == 0: return {"ok": False}
         try: gid = ObjectId(d.gateId)
         except Exception: return {"ok": False}
-        await db.ad_gates.update_one({"_id": gid, "uid": uid, "status": "running"}, {"$set": {"status": "aborted"}})
+        _ab = await db.ad_gates.update_one({"_id": gid, "uid": uid, "status": "running"}, {"$set": {"status": "aborted"}})
+        if _ab.modified_count: _cancel_gate_buzz(gid)  # 📳 বাতিল গেটের টাইমার-মেসেজও বাতিল
         return {"ok": True}
     except Exception:
         return {"ok": False}
@@ -4540,17 +4600,19 @@ async def deliver_movie_file(uid: int, m: dict):
 
     try:
         sent_msg = None
+        # 🔇 ফাইল-মেসেজ সবসময় সাইলেন্ট (disable_notification=True) — মালিকের নির্দেশ: ফাইল আসার সময়
+        # ফোন কাঁপবে না। একমাত্র ঝাঁকুনি হয় টাইমার শেষ হওয়ার মুহূর্তে (gate_timer_buzz এর 🔔 মেসেজে, ১ বার)।
         try:
             if m.get("file_type") == "video":
-                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
             else:
-                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
             if m.get("file_type") == "video":
-                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
             else:
-                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
         if sent_msg:
             if not is_vip:
                 delete_at = now + datetime.timedelta(minutes=del_minutes)
