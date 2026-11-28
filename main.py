@@ -249,11 +249,11 @@ async def init_db():
         print(f"⚠️ ad_gates index warning — বট তবুও চলবে: {e}")
 
 # ==========================================
-# 👁 পুরনো মুভির ভিউ-ব্যাকফিল (মালিকের নির্দেশ: "সবগুলো 0 0 থাকা যাবে না")
-# আগের দিনগুলোতে ভিউ=ডাউনলোড একসাথে গণনা হতো, আলাদা হওয়ার পর পুরনো পোস্টের views 0-ই থেকে গেছে।
+# 👁 পুরনো মুভির ভিউ-ব্যাকফিল (মালিকের নির্দেশ: "সবগুলো 0 0 থাকা যাবে না" + "ডাউনলোডের উপর থেকে ৫% ধরো, একটু বেশি রেখে দাও")
+# মালিকের হিসাব: ডাউনলোড ≈ ভিউয়ের ৫% → ভিউ ≈ ডাউনলোড × ২০। "একটু বেশি" রাখতে ২০-২৫ গুণ ধরা হয়।
 # নিয়ম:
-#   ১) ডাউনলোড (clicks) আছে কিন্তু ভিউ কম → ভিউ = ডাউনলোড + ডাউনলোডের ৫%-এর একটু বেশি (৫%-১০%)
-#   ২) একদম পুরনো (২৪ ঘণ্টার বেশি) কিন্তু ভিউ ও ডাউনলোড দুটোই 0 → ছোট একটা রিয়েল-লুকিং সিড (৩-১২)
+#   ১) ডাউনলোড (clicks) আছে কিন্তু ভিউ কম → ভিউ = ডাউনলোড × ২০-২৫ (র‍্যান্ডম, কমপক্ষে ১)
+#   ২) একদম পুরনো (২৪ ঘণ্টার বেশি) কিন্তু ভিউ ও ডাউনলোড দুটোই 0 → ছোট একটা রিয়েল-লুকিং সিড (১০-৩০)
 #   ৩) নতুন আপলোড (২৪ ঘণ্টার ভেতরে) → কিছুই করা হয় না — রিয়েল ভিউ নিজেই জমা হবে (/api/web/view)
 #   ভিউ কখনোই কমানো হয় না, শুধু বাড়ানো হয়। প্রতিবার বট চালু হলেই একবার চেক চলে (একবার বসালে আর ধরা পড়ে না)।
 # ==========================================
@@ -265,14 +265,14 @@ async def backfill_movie_views():
             clicks = m.get("clicks", 0) or 0
             views = m.get("views", 0) or 0
             if clicks > 0:
-                # ডাউনলোডের উপর থেকে ৫% — "একটু বেশি" রাখতে ৫%-১০% র‍্যান্ডম + কমপক্ষে ১ ভিউ
-                target = clicks + max(1, int(clicks * (0.05 + random.random() * 0.05)))
+                # 📡 মালিকের হিসাব: ডাউনলোড ≈ ভিউয়ের ৫% → ভিউ = ডাউনলোড × ২০ — "একটু বেশি" রাখতে ২০-২৫ গুণ র‍্যান্ডম
+                target = max(1, int(clicks * (20 + random.random() * 5)))
                 if views < target:
                     await db.movies.update_one({"_id": m["_id"]}, {"$set": {"views": target}})
             elif views <= 0:
                 created = m.get("created_at")
                 if created and (now - created) > datetime.timedelta(hours=24):
-                    await db.movies.update_one({"_id": m["_id"]}, {"$set": {"views": random.randint(3, 12)}})
+                    await db.movies.update_one({"_id": m["_id"]}, {"$set": {"views": random.randint(10, 30)}})
         print("✅ View backfill check done — পুরনো পোস্টের ভিউ ডাউনলোড-ভিত্তিক সেট করা হলো।")
     except Exception as e:
         print(f"⚠️ view backfill warning — বট তবুও চলবে: {e}")
@@ -494,10 +494,10 @@ async def _start_flow(message: types.Message, state: FSMContext):
                 # মুভিটি আর DB-তে নেই → পেন্ডিং রেকর্ড মুছে ফেলা হলো
                 await db.pending_files.delete_one({"_id": pending["_id"]})
 
-    # 🎯 ওল্ড ইউজার ফাস্ট ডেলিভারি (?start=f_<movie_id>): ওয়েব অ্যাপে ডাউনলোড ফ্লো শেষ করে
-    # "🤖 বটে গিয়ে ফাইল নিন" বাটনে ক্লিক করলে ইউজার এই লিংকে চলে আসে — বট-চ্যাট সরাসরি খুলে যায়,
-    # ফাইল আগেই ডেলিভারি হয়ে থাকে (/api/send) — START/ওয়েলকাম কিছুই দেখানো হয় না (মালিকের নির্দেশ)।
-    # ডেলিভারি কোনো কারণে ব্যর্থ হলে এই /start আবার চেষ্টা করে — সফল হলেও কোনো টেক্সট যায় না।
+    # 🎯 ওল্ড ইউজার f_ ডিপ-লিঙ্ক ডেলিভারি (?start=f_<movie_id>) — কম্প্যাটিবিলিটি ব্লক:
+    # আগের ডিপ্লয়ে সেন্ডিং-ফ্লোর রিডাইরেক্ট এই f_ লিঙ্ক নিত; এখন অটো-সেন্ড ফ্লো পে-লোডহীন রিডাইরেক্ট নেয়
+    # (কোনো /start কমান্ড দেখা যায় না), তবে পুরনো মেসেজে ছড়ানো f_ লিংক যেন এখনো কাজ করে সেজন্য ব্লকটা আছে।
+    # পুরাতন ইউজার f_ লিঙ্কে এলে ফাইল নিজে থেকে ডেলিভারি হয়, কোনো টেক্সট যায় না (মালিকের নির্দেশ)।
     if payload.startswith("f_") and ObjectId.is_valid(payload[2:]):
         movie_id = payload[2:]
         m = await db.movies.find_one({"_id": ObjectId(movie_id)})
@@ -550,11 +550,11 @@ async def _start_flow(message: types.Message, state: FSMContext):
         # একবার রেজিস্টার হওয়ার পর থেকে ওই ইউজার আর কখনো ওয়েলকাম দেখবে না।
         return
 
-    # 📡 মালিকের নতুন সেন্ডিং-ফ্লো: ওয়েব অ্যাপে অ্যাড দেখা শেষ করে "বটে যান/ফিরে যান" ডিপ-লিংকে এসে
-    # START চাপলে ফাইলটি উপরের ব্লকেই ডেলিভারি হয়ে গেছে — এখানে বট একদম চুপ থাকবে।
-    # কোনো START/ওয়েলকাম/কনফার্মেশন লেখা যাবে না — ইউজার বট-ইনবক্সে শুধু ফাইলটাই দেখবে
-    # ("Sending File..." স্ক্রিন ওয়েব অ্যাপে দেখিয়ে দিয়েছে; এখানে শুধু ফাইল-ডেলিভারি)।
-    # নতুন ইউজারের নিবন্ধন উপরেই হয়ে গেছে, তাই সাইলেন্ট রিটার্ন সম্পূর্ণ নিরাপদ।
+    # 📡 মালিকের নতুন অটো-সেন্ড ফ্লো: ওয়েব অ্যাপে ১০ সেকেন্ডের অ্যাড শেষ হয়ে ইউজার ফিরতেই
+    # "Sending File..." দেখিয়ে ফাইল /api/send দিয়ে ডেলিভারি হয়ে যায়, তারপর পে-লোডহীন রিডাইরেক্টে
+    # ইউজার সরাসরি বট-চ্যাটে চলে যায় + মিনি অ্যাপ ক্লোজ (কোনো /start কমান্ড দেখা যায় না)।
+    # নতুন ইউজারের ক্ষেত্রে "বটে যান" মোডালের (?start=<movie_id>) START-এ পেন্ডিং ফাইল উপরের
+    # ব্লকেই ডেলিভারি হয়ে যায় — সেক্ষেত্রেও এখানে বট একদম চুপ থাকবে, কোনো লেখা যাবে না।
     if delivered:
         return
 
@@ -2949,12 +2949,12 @@ async def web_ui(request: Request):
              প্রথম Watch Now ক্লিকে অ্যাক্টিভ স্পন্সর লিংক খোলে (ইনকাম), ফিরে এসে আবার চাপলে ফাইলের পেজে যায়. ক্লোজ বাটন দিয়ে বের হওয়া যায়. -->
         <div id="fileGateModal" class="modal">
             <div class="modal-content" style="text-align: center;">
-                <button class="close-icon" onclick="closeModal('fileGateModal')"><i class="fa-solid fa-xmark"></i></button>
+                <button class="close-icon" onclick="closeModal('fileGateModal'); dlResetGate();"><i class="fa-solid fa-xmark"></i></button>
                 <div class="ad-icon">🎉</div>
                 <h2 class="ad-title">ফাইলটি প্রস্তুত!</h2>
                 <div class="ad-box-black">✨ সুখবর! আপনি এই ফাইলটি পাচ্ছেন: <b id="gateMovieTitle"></b><br><br>নিচের <b>Watch Now</b> বাটনে ক্লিক করে ফাইলটি দেখুন।</div>
                 <button class="ad-action-btn btn-ad-open" id="gateWatchBtn" onclick="gateNextStep()">🎬 Watch Now</button>
-                <button class="ad-action-btn" style="background:#334155; color:#fff;" onclick="closeModal('fileGateModal')">❌ বন্ধ করুন</button>
+                <button class="ad-action-btn" style="background:#334155; color:#fff;" onclick="closeModal('fileGateModal'); dlResetGate();">❌ বন্ধ করুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:8px;">✨ প্রতিদিন নতুন মুভি আপডেট পেতে চ্যানেলে জয়েন করুন।</p>
             </div>
         </div>
@@ -2965,10 +2965,10 @@ async def web_ui(request: Request):
                 <div class="ad-icon">⚠️</div>
                 <h2 class="ad-title">সতর্কতা!</h2>
                 <div class="ad-box-orange">ডাউনলোড করতে হলে অবশ্যই বিজ্ঞাপন দেখুন!</div>
-                <div class="ad-box-black"><span id="adStepText">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>১০ সেকেন্ড</b> পর ফিরে এসে নিচের বাটনে ক্লিক করুন।</span></div>
+                <div class="ad-box-black"><span id="adStepText">লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>১০ সেকেন্ড</b> অ্যাড পেজে থাকুন — সময় শেষে অ্যাপে ফিরে এলেই ফাইলটি অটোমেটিক পাঠানো হবে!</span></div>
                 <button class="ad-action-btn btn-ad-open" id="adClickBtn" onclick="openAdLink()">বিজ্ঞাপন খুলুন</button>
-                <button class="ad-action-btn btn-ad-unlock" id="adVerifyBtn" onclick="checkAdWatched()" style="display:none;">✅ অ্যাড দেখে ফিরে এসেছি</button>
-                <button class="ad-action-btn btn-ad-tryagain" id="adTryAgainBtn" onclick="resetAdModal()" style="display:none;">TRY AGAIN</button>
+                <!-- 🚫 মালিকের নতুন নির্দেশ: "✅ অ্যাড দেখে ফিরে এসেছি" যাচাই-বাটন আর নেই — ১০ সেকেন্ড শেষ হয়ে
+                     অ্যাপে ফিরতেই অটোমেটিক "Sending File..." + ফাইল ডেলিভারি (কোনো বাটন-চাপ লাগবে না) -->
                 <button class="ad-back-btn" onclick="closeModal('adModal'); resetAdModal(); openDownloadModal();"><i class="fa-solid fa-arrow-left"></i> ব্যাক — ডাউনলোড লিস্টে ফিরুন</button>
                 <p style="color:#64748b; font-size:12px; margin-top:5px;">💎 VIP হলে কোনো অ্যাড দেখতে হবে না — Profile ট্যাব থেকে VIP নিন!</p>
                 <!-- 🧠 CPM: অ্যাড-গেট মোডাল খোলার মুহূর্তে JS দিয়ে ব্যানার মাউন্ট হয় (handleFileClick)।
@@ -3062,9 +3062,11 @@ async def web_ui(request: Request):
             // 🔙 ডিটেইলস খোলার আগের ট্যাব + স্ক্রল পজিশন — ব্যাক করলে সেখানেই ফেরা যাবে
             let detailsReturnTab = 'home'; let detailsReturnScroll = 0;
             let adRound = 0; let adCountdownTimer = null; let adSettings = {ad_count: 1, ad_wait: 10, active_link: '', active_adult_link: ''}; let adAwayMs = 0; let adAwayStart = null; let adWasHidden = false;
+            // 📡 অটো-সেন্ড ফ্লো গার্ড: ১০ সেকেন্ড শেষ + অ্যাপে ফিরতেই একবারই "Sending File..." ট্রিগার হবে (ডাবল-ট্রিগার আটকায়)
+            let adAutoTriggered = false;
             // 🛡️ সার্ভার-সাইড গেট স্টেট: লিংক সার্ভার দেয় (/api/ad/start), সময় সার্ভারই যাচাই করে (/api/ad/verify)
             // — PC/DevTools থেকে টাইমার বদলালেও সার্ভারের হিসাব বদলায় না
-            let currentGateId = null; let gateOpening = false; let lastGateLink = ''; let adBuzzDone = false;  // (ভাইব্রেশন এখন সার্ভারের 🔔 মেসেজে — এই ভ্যারিয়েবল আর ব্যবহৃত হয় না)
+            let currentGateId = null; let gateOpening = false; let lastGateLink = '';
             // 🎛️ অ্যাডমিন প্যানেলের ব্যানার-টগল (ডিফল্ট ON — প্যানেল থেকে OFF করলে সব ব্যানার স্লট বন্ধ)
             let AD_BANNERS_ON = __BANNERS_ON__;
             let homeCurrentPage = 1;
@@ -3564,14 +3566,17 @@ async def web_ui(request: Request):
                 } catch(e) {}
             }
 
-            /* 📤 শেয়ার */
+            /* 📤 শেয়ার (মালিকের নতুন সিস্টেম): শেয়ার-ডায়ালগে সরাসরি মুভির লিঙ্ক — "আপনার বন্ধুদেরকে এই লিঙ্কটা
+               শেয়ার করলে সে-ও আপনার মতন এই মুভিটা দেখতে পারবে।" বন্ধু লিঙ্কে ক্লিক করলেই সেইম মুভিতে চলে আসবে;
+               নতুন বন্ধু হলে START চেপে আমাদের ইউজার হয়ে যাবে (মালিকের নির্দেশমতো), তারপর একই অ্যাড-ফ্লোতে ফাইল। */
             async function shareMovie() {
                 if (!activeDetailMovie) return;
                 let mid = detailMovieId(activeDetailMovie);
                 let url = 'https://t.me/' + BOT_USERNAME + '?startapp=' + mid;
+                let _shTxt = '🎬 ' + detailTitle(activeDetailMovie) + ' — এই লিঙ্কে ক্লিক করলেই আমার মতো আপনিও এই মুভিটা দেখতে পারবেন! 👇';
                 try {
-                    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent('🎬 ' + detailTitle(activeDetailMovie) + ' — Movie Box এ দেখুন!'));
-                } catch(e) { window.open('https://t.me/share/url?url=' + encodeURIComponent(url), '_blank'); }
+                    tg.openTelegramLink('https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent(_shTxt));
+                } catch(e) { window.open('https://t.me/share/url?url=' + encodeURIComponent(url) + '&text=' + encodeURIComponent(_shTxt), '_blank'); }
                 try {
                     const res = await fetch('/api/web/share', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: mid, initData: INIT_DATA})});
                     const d = await res.json();
@@ -3674,19 +3679,17 @@ async def web_ui(request: Request):
             
             // 💰 অ্যাড রাউন্ড সিস্টেম: ad_count সেটিং অনুযায়ী ১টির বেশি অ্যাড দেখানো যায় + লিংক রোটেশন (Adsterra ↔ Monetag)
             function resetAdModal() {
-                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false; adBuzzDone = false;
+                adStartTime = 0; adRound = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false; gateOpening = false; adAutoTriggered = false;
                 clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 // 🛡️ চলমান সার্ভার-গেট বাতিল (TRY AGAIN / BACK চাপলে পুরনো গেট আর গোনা হবে না)
                 if (currentGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} currentGateId = null; }
                 if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
                 let stepEl = document.getElementById('adStepText');
                 let warn = ' ⚠️ সময়ের আগে ফিরে এলে আবার শুরু থেকে দেখতে হবে!';
-                if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে আসুন.${warn}`; }
-                else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অপেক্ষা করে ফিরে এসে নিচের বাটনে ক্লিক করুন.${warn}`; }
+                if(adSettings.ad_count > 1) { stepEl.innerHTML = `আপনাকে মোট <b>${adSettings.ad_count}টি</b> বিজ্ঞাপন দেখতে হবে। প্রতিটি লিংকে ক্লিক করে কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অ্যাড পেজে থাকুন — সময় শেষে অ্যাপে ফিরে এলেই ফাইলটি অটোমেটিক পাঠানো হবে!${warn}`; }
+                else { stepEl.innerHTML = `লিংকে ক্লিক করে বিজ্ঞাপনটি দেখুন এবং কমপক্ষে <b>${adSettings.ad_wait} সেকেন্ড</b> অ্যাড পেজে থাকুন — সময় শেষে অ্যাপে ফিরে এলেই ফাইলটি অটোমেটিক পাঠানো হবে!${warn}`; }
                 document.getElementById('adClickBtn').innerText = 'বিজ্ঞাপন খুলুন';
                 document.getElementById('adClickBtn').style.display = 'block';
-                document.getElementById('adVerifyBtn').style.display = 'none';
-                document.getElementById('adTryAgainBtn').style.display = 'none';
             }
             
             // 🎲 র‍্যান্ডম লিংক পিক: প্রতিবার ক্লিকে পুল থেকে র‍্যান্ডম লিংক সিলেক্ট হয় —
@@ -3772,23 +3775,21 @@ async def web_ui(request: Request):
                     if (g.wait) adSettings.ad_wait = g.wait;
                     if (g.count) adSettings.ad_count = Math.max(1, g.count);
                     tg.openLink(g.link);
-                    adStartTime = Date.now();
+                    adStartTime = Date.now(); adAutoTriggered = false;
                     // 🛡️ অ্যাড খুলল — থাকার সময় visibility/blur বিকনে সার্ভারে জমা হবে;
                     //    বাটনের কাউন্টডাউন এখন ওয়াল-ক্লক — PC-তে এক্সটার্নাল ব্রাউজারে অ্যাড খুললেও আর আটকে থাকবে না
                     adAwayMs = 0; adAwayStart = null; adWasHidden = false;
-                    let vBtn = document.getElementById('adVerifyBtn');
-                    vBtn.style.display = 'block';
-                    vBtn.disabled = true;
-                    vBtn.innerText = `⏳ অপেক্ষা করুন ${adSettings.ad_wait}s`;
                     if (adCountdownTimer) clearInterval(adCountdownTimer);
+                    // 📡 মালিকের নতুন অটো-সেন্ড ফ্লো: কাউন্টডাউনের কোনো বাটন আর নেই। ১০ সেকেন্ড পূর্ণ +
+                    // ইউজার অ্যাড থেকে অ্যাপে ফিরে এলে (hidden→visible) সাথে সাথে "Sending File..." + ফাইল ডেলিভারি।
+                    // (adWasHidden = ইউজার সত্যিই অ্যাড পেজে গিয়েছিল; adAwayStart = null = এখন ফিরে এসেছে —
+                    //  এগুলোই অ্যান্টি-বাইপাস সিস্টেমের আস্থার সিগন্যাল, সেগুলোকেই অটো-ট্রিগারে বিশ্বাস করা হচ্ছে)
                     adCountdownTimer = setInterval(() => {
-                        // ⏱️ ওয়াল-ক্লক কাউন্টডাউন (০.২৫ সে টিক — থ্রটল হলেও ফিরে এসে সঠিক সময় দেখাবে)
                         const remain = Math.max(0, Math.ceil((adSettings.ad_wait * 1000 - (Date.now() - adStartTime)) / 1000));
-                        // 📳 টাইমার শেষ হলে ফোন কাঁপে **বটের 🔔 নোটিফিকেশন দিয়ে** (সার্ভার gate_timer_buzz ঠিক
-                        // wait সেকেন্ড পর ১টা মেসেজ পাঠায় — ইউজার তখনও অ্যাড পেজে, ঠিক একবার কাঁপে)।
-                        // JS ভাইব্রেট ব্যাকগ্রাউন্ডে কাজ করে না, তাই এখানে কোনো ভাইব্রেশন-কল নেই — শুধু বাটন চালু।
-                        if (remain <= 0) { vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি'; }
-                        else { vBtn.innerText = `⏳ অপেক্ষা করুন ${remain}s`; }
+                        if (remain <= 0 && adWasHidden && adAwayStart === null) {
+                            clearInterval(adCountdownTimer); adCountdownTimer = null;
+                            autoSendAfterAd();
+                        }
                     }, 250);
                 } catch(e) {
                     gateOpening = false;
@@ -3796,10 +3797,13 @@ async def web_ui(request: Request):
                 }
             }
 
-            async function checkAdWatched() {
-                if (adStartTime === 0 || !currentGateId) return;
-                let vBtn = document.getElementById('adVerifyBtn');
-                vBtn.disabled = true; vBtn.innerText = '🔍 সার্ভারে যাচাই হচ্ছে...';
+            // 📡 মালিকের নতুন অটো-সেন্ড ফ্লো: ১০ সেকেন্ড শেষ হয়ে অ্যাপে ফিরতেই — কোনো বাটন চাপা লাগবে না।
+            // সাথে সাথে "Sending File..." দেখিয়ে সার্ভার-ভেরিফাই → সব রাউন্ড শেষ হলে ফাইল ডেলিভারি
+            // (sendFileRequest নিজেই অটো-রিডাইরেক্ট + মিনি অ্যাপ ক্লোজ করে); আরও রাউন্ড বাকি থাকলে পরের অ্যাড খুলতে বলা হবে।
+            async function autoSendAfterAd() {
+                if (adAutoTriggered || adStartTime === 0 || !currentGateId) return;
+                adAutoTriggered = true;
+                showSending();  // 📡 ফিরতেই সাথে সাথে "Sending File..." — যাচাই-বাটন/অপেক্ষা কিছুই নেই
                 try {
                     // 🛡️ সার্ভার-ভেরিফাই: আসল সময় সার্ভারের হিসাব — ক্লায়েন্ট শুধু ফল দেখায়
                     const res = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: currentGateId, initData: INIT_DATA})});
@@ -3808,29 +3812,32 @@ async def web_ui(request: Request):
                         currentGateId = null; gateOpening = false;
                         adRound++;
                         if (adRound >= adSettings.ad_count) {
-                            finishAdRounds();
+                            finishAdRounds();  // → sendFileRequest: ফাইল ডেলিভারি + অটো-রিডাইরেক্ট + ক্লোজ
                         } else {
-                            // পরের অ্যাড রাউন্ড
+                            // পরের অ্যাড রাউন্ড — ব্রাউজার-নিয়মে অ্যাড-লিংক অটো-খোলা যায় না, ইউজার নিজে খুলবে
+                            hideSending();
                             tg.showAlert(`✅ দারুণ! এবার পরের বিজ্ঞাপনটি দেখুন (${adRound + 1}/${adSettings.ad_count})`);
-                            document.getElementById('adVerifyBtn').style.display = 'none';
                             let oBtn = document.getElementById('adClickBtn');
                             oBtn.style.display = 'block';
                             oBtn.innerText = `বিজ্ঞাপন ${adRound + 1}/${adSettings.ad_count} খুলুন`;
+                            adAutoTriggered = false;  // পরের রাউন্ডের অটো-সেন্ড আবার চালু
                         }
                     } else {
-                        let remaining = (v && typeof v.remain === 'number') ? v.remain : adSettings.ad_wait;
+                        hideSending();
+                        let remaining = (v && typeof v.remain === 'number') ? v.remain : 0;
                         if (v.ok === false) {
                             // auth/error/bad_gate — যাচাই-ই হয়নি, স্পষ্ট মেসেজ
-                            tg.showAlert('⚠️ যাচাই করা গেল না — TRY AGAIN চেপে আবার চেষ্টা করুন।');
-                        } else {
-                            // ⏱️ সার্ভার বলল সময় বাকি — স্পষ্ট "আবার চেষ্টা করুন" মেসেজ (আগের নিয়ম ফিরিয়ে আনা হলো)
-                            tg.showAlert(`⚠️ আপনি সময়ের আগেই ফিরে এসেছেন! বিজ্ঞাপন পুরো ${adSettings.ad_wait} সেকেন্ড থাকতে হবে। (${remaining}s বাকি ছিল) — TRY AGAIN চেপে আবার অ্যাড খুলুন।`);
-                        }
-                        document.getElementById('adVerifyBtn').style.display = 'none';
-                        document.getElementById('adTryAgainBtn').style.display = 'block';
+                            resetAdModal();
+                            tg.showAlert('⚠️ যাচাই করা গেল না — আবার অ্যাড খুলে চেষ্টা করুন।');
+                        } else if (remaining > 0) {
+                            // 🛡️ নেটওয়ার্ক-রেসে সামান্য সময় বাকি থাকলে সেই সামান্যটুকু পরে আবার অটো-চেষ্টা
+                            // (সার্ভারে ১.২ সেকেন্ড গ্রেস আছে — সাধারণত এই শাখায় আসাই লাগে না)
+                            setTimeout(function() { adAutoTriggered = false; autoSendAfterAd(); }, Math.min(remaining, 3) * 1000);
+                        } else { resetAdModal(); }
                     }
                 } catch(e) {
-                    vBtn.disabled = false; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
+                    hideSending(); adAutoTriggered = false;
+                    tg.showAlert('⚠️ নেটওয়ার্ক সমস্যা — অ্যাপে ফিরে আবার চেষ্টা করুন।');
                 }
             }
 
@@ -3853,17 +3860,15 @@ async def web_ui(request: Request):
                 const activeWait = gateGateId ? gateWaitSec : adSettings.ad_wait;
                 const remain = Math.max(0, Math.ceil((activeWait * 1000 - adTotalAway()) / 1000));
                 if (remain <= 0) {
-                    // ✅ পুরো সময় অ্যাডে ছিল — ভেরিফাই বাটন চালু
-                    if (gateGateId) {  // ডিপ-লিংক গেট
+                    // ✅ পুরো সময় অ্যাডে ছিল → মালিকের নতুন ফ্লো: কোনো বাটন নেই, সাথে সাথে অটো-অ্যাকশন
+                    if (gateGateId) {  // ডিপ-লিঙ্ক গেট → সরাসরি ফাইলের পেজ
                         if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
-                        let gBtn = document.getElementById('gateWatchBtn');
-                        gBtn.disabled = false; gBtn.innerText = '✅ ফাইলটি দেখুন';
-                    } else {
+                        gateAutoVerify();
+                    } else {           // ডাউনলোড গেট → সরাসরি "Sending File..." + ফাইল
                         if (adCountdownTimer) { clearInterval(adCountdownTimer); adCountdownTimer = null; }
-                        let vBtn = document.getElementById('adVerifyBtn');
-                        vBtn.disabled = false; vBtn.style.display = 'block'; vBtn.innerText = '✅ অ্যাড দেখে ফিরে এসেছি';
+                        autoSendAfterAd();
                     }
-                    // 📳 ফিরে এলে আর কোনো ভাইব্রেট নেই — ঝাঁকুনি হয়ে গেছে টাইমার শেষ হওয়ার মুহূর্তেই (অ্যাড পেজে থাকা অবস্থায়)
+                    // 📳 ফিরে এলে আর কোনো ভাইব্রেট/মেসেজ নেই — ফাইল নিজে নিজেই চলে আসবে
                 } else {
                     // ⚠️ আগে ফিরে এসেছে — স্পষ্ট মেসেজ + আবার শুরু থেকে (আগের নিয়ম, এখন সব ডিভাইসে কাজ করে)
                     // 📳 এখানে কোনো ভাইব্রেশন নেই (মালিকের নির্দেশ) — ঝাঁকুনি শুধু টাইমার শেষে, সার্ভারের 🔔 মেসেজে
@@ -3917,10 +3922,11 @@ async def web_ui(request: Request):
                     const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})});
                     const data = await res.json();
                     if (data.ok) {
-                        // ✅ ফাইল বট-ইনবক্সে চলে গেছে → ছোট সুসংবাদ দেখিয়ে বট অটোমেটিক ইউজারকে বট-চ্যাটে নিয়ে যাবে।
-                        // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটের /start এটা সাইলেন্টলি হ্যান্ডেল করে,
-                        // কোনো START-টেক্সট বা ওয়েলকাম আর যায় না; ইউজার বট-চ্যাট খুললেই ফাইল সামনে থাকবে।
-                        botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId;
+                        // ✅ ফাইল বট-ইনবক্সে চলে গেছে → সরাসরি বট-চ্যাটে নিয়ে যাওয়া হবে + মিনি অ্যাপ অটো-ক্লোজ।
+                        // 🔗 ডিপ-লিংকে কোনো ?start= পে-লোড নেই — চ্যাটের ইনপুটে "/start f_..." কমান্ড আর দেখা যাবে না
+                        // (মালিকের নির্দেশ)। ফাইল আগেই /api/send দিয়ে ডেলিভারি হয়ে গেছে — ইউজার বট-চ্যাটে
+                        // ঢুকলেই ফাইলটা সামনে থাকবে, কোনো কমান্ড/বাটন-চাপ লাগবে না।
+                        botFileLink = 'https://t.me/' + BOT_USERNAME;
                         document.getElementById('sendingTitle').innerText = '✅ File Sent!';
                         document.getElementById('sendingSub').innerText = 'Taking you to your bot inbox...';
                         fetchUserInfo();
@@ -3956,11 +3962,11 @@ async def web_ui(request: Request):
             // 🔗 ডিপ-লিংক: ব্রডকাস্ট/লগ পোস্টের Watch Now বাটনে ?open=<movie_id> বা ?startapp=<movie_id> থাকে —
             // 🎯 নতুন-পুরাতন সব ইউজারই প্রথমে "ফাইলটি প্রস্তুত!" মেসেজ দেখবে; Watch Now চাপলে
             // একবার অ্যাক্টিভ স্পন্সর লিংক খুলে (ইনকাম), ফিরে এসে আবার চাপলে সরাসরি ফাইলের পেজে যাবে।
-            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateBuzzDone = false; let gateWaitSec = 5;  // (ভাইব্রেশন এখন সার্ভারের 🔔 মেসেজে — এই ভ্যারিয়েবল আর ব্যবহৃত হয় না) · ⏱️ গেটের নিজের সেকেন্ড (সার্ভার থেকে আসে, ডাউনলোড গেটের ad_wait আলাদা)
+            let gateMovie = null; let gateStep = 0; let gateGateId = null; let gateTimer = null; let gateWaitSec = 5;  // ⏱️ গেটের নিজের সেকেন্ড (সার্ভার থেকে আসে, ডাউনলোড গেটের ad_wait আলাদা)
             // 🧹 ডিপ-লিংক গেট রিসেট: চলমান গেট বাতিল + সব স্টেট শুরুর অবস্থায় (TRY AGAIN/আগে ফিরলে)
             function dlResetGate() {
                 if (gateGateId) { try { fetch('/api/ad/abort', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA}), keepalive: true}).catch(function(){}); } catch(e) {} }
-                gateGateId = null; gateStep = 0; gateBuzzDone = false;
+                gateGateId = null; gateStep = 0;
                 clearGateLS();  // 🔧 রিকভারি-রেকর্ডও বাতিল
                 adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
                 if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
@@ -3981,7 +3987,7 @@ async def web_ui(request: Request):
             }
             
             function showFileGate(m) {
-                gateMovie = m; gateStep = 0; gateBuzzDone = false;
+                gateMovie = m; gateStep = 0;
                 if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
                 gateGateId = null;
                 let q = (m.files && m.files[0] && m.files[0].quality) ? ' [' + m.files[0].quality + ']' : '';
@@ -4025,39 +4031,49 @@ async def web_ui(request: Request):
                         // ⏱️ ওয়াল-ক্লক কাউন্টডাউন — PC-তে এক্সটার্নাল ব্রাউজারে খুললেও বাটন আটকাবে না
                         gateTimer = setInterval(function() {
                             const rem = Math.max(0, Math.ceil((left * 1000 - (Date.now() - dlT0)) / 1000));
-                            // 📳 Watch Now গেটের টাইমার শেষ হলেও ফোন কাঁপে বটের 🔔 নোটিফিকেশনে (সার্ভার থেকে ১ মেসেজ —
-                            // gate_timer_buzz)। JS ব্যাকগ্রাউন্ড-ভাইব্রেশন অনির্ভরযোগ্য, তাই এখানে কোনো ভাইব্রেশন-কল নেই।
-                            if (rem <= 0) { clearInterval(gateTimer); gateTimer = null; btn.disabled = false; btn.innerText = '✅ ফাইলটি দেখুন'; }
-                            else { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
+                            // 📡 মালিকের নতুন অটো-ফ্লো: ৫ সেকেন্ড পূর্ণ + ইউজার অ্যাড থেকে অ্যাপে ফিরে এলেই
+                            // সরাসরি ফাইলের পেজ — "✅ ফাইলটি দেখুন" বাটন-চাপ আর লাগবে না।
+                            if (rem <= 0 && adWasHidden && adAwayStart === null) { clearInterval(gateTimer); gateTimer = null; gateAutoVerify(); }
+                            else if (rem > 0) { btn.innerText = `⏳ অপেক্ষা করুন ${rem}s`; }
                         }, 250);
                     } catch(e) { btn.disabled = false; btn.innerText = '🎬 Watch Now'; }
                 } else {
-                    // 🛡️ সার্ভার-ভেরিফাই: পুরো সময় পার হলেই ফাইল পেজ খুলবে
-                    btn.disabled = true; btn.innerText = '🔍 যাচাই হচ্ছে...';
-                    try {
-                        const vres = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA})});
-                        const v = await vres.json();
-                        if (v.ok && v.done) {
-                            if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
-                            gateGateId = null;
-                            clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও
-                            adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
-                            closeModal('fileGateModal');
-                            // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
-                            // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
-                            // এখন গেটে যে মুভিটা দেখানো হয়েছিল (gateMovie) — সেটাই খুলবে
-                            if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
-                            return;
-                        }
+                    // 🛡️ ফলব্যাক ম্যানুয়াল-ভেরিফাই (সাধারণত লাগে না — টিক-টাইমার/ফিরতেই gateAutoVerify নিজেই চলে)
+                    gateAutoVerify();
+                }
+            }
+
+            // 📡 Watch Now গেট অটো-ভেরিফাই (মালিকের নতুন ফ্লো): wait সেকেন্ড পূর্ণ + অ্যাপে ফিরতেই
+            // সার্ভার-ভেরিফাই → সরাসরি ফাইলের পেজ খুলে যাবে — কোনো বাটন-চাপ লাগবে না।
+            let gateAutoRunning = false;
+            async function gateAutoVerify() {
+                if (gateAutoRunning || !gateGateId) return;
+                gateAutoRunning = true;
+                let btn = document.getElementById('gateWatchBtn');
+                try {
+                    if (btn) { btn.disabled = true; btn.innerText = '🔍 যাচাই হচ্ছে...'; }
+                    const vres = await fetch('/api/ad/verify', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({gateId: gateGateId, initData: INIT_DATA})});
+                    const v = await vres.json();
+                    if (v.ok && v.done) {
+                        if (gateTimer) { clearInterval(gateTimer); gateTimer = null; }
+                        gateGateId = null;
+                        clearGateLS();  // 🔧 গেট শেষ — রিকভারি-রেকর্ড মুছে দাও
+                        adStartTime = 0; adAwayMs = 0; adAwayStart = null; adWasHidden = false;
+                        closeModal('fileGateModal');
+                        // 🔧 ফিক্স: ডিপ-লিংকের গেট খোলার পর ব্যাকগ্রাউন্ডে হোম ফিড লোড হয়ে currentViewMovies
+                        // ওভাররাইট হয়ে যায় — ফলে openDetail(0) সবসময় লেটেস্ট মুভি খুলে ফেলত!
+                        // এখন গেটে যে মুভিটা দেখানো হয়েছিল (gateMovie) — সেটাই খুলবে
+                        if (gateMovie) { currentViewMovies = [gateMovie]; openDetail(0); }
+                    } else {
                         let rem = (v && typeof v.remain === 'number') ? v.remain : gateWaitSec;
                         // ⚠️ সময় বাকি ছিল — স্পষ্ট মেসেজ + গেট রিসেট (আবার Watch Now থেকে শুরু)
                         dlResetGate();
                         tg.showAlert(`⚠️ পুরো ${gateWaitSec} সেকেন্ড অ্যাড পেজে থাকতে হবে! (${rem}s বাকি ছিল) — আবার Watch Now চেপে অ্যাড দেখুন।`);
-                    } catch(e) {
-                        dlResetGate();
-                        tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।');
                     }
-                }
+                } catch(e) {
+                    dlResetGate();
+                    tg.showAlert('⚠️ যাচাই করা গেল না — আবার চেষ্টা করুন।');
+                } finally { gateAutoRunning = false; }
             }
             
             // ⚙️ অ্যাড সেটিং লোড (ad_count / ad_wait / ব্যানার-টগল — অ্যাডমিন প্যানেলে বদলালে ৫ মিনিটে ধরা পড়ে)
@@ -4385,45 +4401,9 @@ async def _gate_uid_guard(init_data: str):
     uid, _name = tg_user_from_init(init_data)
     return uid or 0
 
-# 📳 টাইমার-শেষ ভাইব্রেশন (মালিকের চূড়ান্ত নির্দেশ — নির্ভরযোগ্য পদ্ধতি):
-# মিনি-অ্যাপের JS দিয়ে ভাইব্রেট করানো ব্যাকগ্রাউন্ডে কাজ করে না — ইউজার অ্যাড পেজে থাকলে
-# ওয়েবভিউ ফ্রিজ হয়, টাইমার শেষ হলেও ঝাঁকুনি আসে না (ফিরে এলে দেরিতে আসে = ভুল আচরণ)।
-# ✅ এখন ফোন কাঁপে **বট-নোটিফিকেশন দিয়ে**: গেট শুরুর ঠিক `wait` সেকেন্ড পর সার্ভার নিজেই
-#    ১টা ছোট 🔔 মেসেজ পাঠায় (নোটিফিকেশন ON) → ইউজার তখনও অ্যাড পেজে — ফোন ঠিক **একবার** কাঁপে
-#    ("সময় শেষ, এখন ফিরে এসো")। মেসেজ যায় শুধু গেট এখনো 'running' আর ইউজার সত্যিই অ্যাড পেজে
-#    থাকলে (away_start বসা) — আগে ফিরলে/ভেরিফাই-বাতিল হলে টাস্ক বাতিল/স্কিপ → বাড়তা মেসেজ নেই।
-# 🔇 ফিরে এলে / ফাইল ডেলিভারিতে কোনো ভাইব্রেশন নেই — সব ফাইল-মেসেজ disable_notification=True
-#    (সাইলেন্ট)। ঝাঁকুনি পুরোপুরি বন্ধ করতে চাইলে বট-চ্যাট মিউট করলেই হবে।
-
-# ঝুলে-থাকা buzz-টাস্কের রেজিস্ট্রি: gate_id(str) -> asyncio.Task (verify/abort/নতুন-গেটে বাতিল হয়)
-_gate_buzz_tasks = {}
-
-def _cancel_gate_buzz(gate_oid):
-    """🚫 গেটের পেন্ডিং টাইমার-মেসেজ টাস্ক বাতিল (ভেরিফাই/বাতিল/নতুন গেট শুরুতে ডাকা হয়)"""
-    t = _gate_buzz_tasks.pop(str(gate_oid), None)
-    if t and not t.done():
-        try: t.cancel()
-        except Exception: pass
-
-async def gate_timer_buzz(gate_oid_str: str, uid: int, wait_sec: int):
-    """🔔 গেটের নিজের `wait` সেকেন্ড পূর্ণ হলে ১টা নোটিফিকেশন-মেসেজ → ফোন ঠিক একবার কাঁপে।
-    ইউজার তখনও অ্যাড পেজে আছে কিনা সার্ভারই যাচাই করে (status=running + away_start বসা) —
-    আগে ফিরে এলে/গেট ভেরিফাই-বাতিল হলে মেসেজ আর যায় না।"""
-    try:
-        await asyncio.sleep(max(1, int(wait_sec)))
-        g = await db.ad_gates.find_one({"_id": ObjectId(gate_oid_str)}, {"status": 1, "away_start": 1})
-        if not g or g.get("status") != "running": return   # ভেরিফাই/বাতিল/খরচ হয়ে গেছে → নয়
-        if g.get("away_start") is None: return             # ইউজার আগেই ফিরে এসেছে → নয়
-        try:
-            await bot.send_message(uid, "🔔 <b>সময় শেষ!</b> এখন ফিরে এসে ফাইলটি নিয়ে নিন ✅", parse_mode="HTML")
-        except Exception:
-            pass  # ইউজার বটকে START দেয়নি/ব্লক করেছে — চুপচাপ পাস
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        print(f"gate_timer_buzz error: {e}")
-    finally:
-        _gate_buzz_tasks.pop(gate_oid_str, None)
+# 🚫 মালিকের নতুন নির্দেশ: টাইমার শেষে বটের "🔔 সময় শেষ!" মেসেজ-নোটিফিকেশন সম্পূর্ণ বাদ।
+# নতুন অটো-সেন্ড ফ্লোতে ইউজার অ্যাড থেকে অ্যাপে ফিরতেই "Sending File..." দেখিয়ে ফাইল অটোমেটিক চলে যায় —
+# আলাদা কোনো "সময় শেষ" লেখা/ঝাঁকুনির দরকারই নেই। (আগের gate_timer_buzz সিস্টেম পুরোপুরি সরানো হয়েছে)
 
 @app.post("/api/ad/start")
 async def ad_gate_start(d: GateStartModel):
@@ -4449,15 +4429,8 @@ async def ad_gate_start(d: GateStartModel):
             "flow": d.flow if d.flow in ("watch", "download") else "download", "wait": int(wait_used),
             "started_at": now, "away_ms": 0, "away_start": None, "beats": 0,
             "status": "running", "verified_at": None, "consumed_at": None})
-        # 📳 টাইমার-শেষ ভাইব্রেশন: ঠিক `wait` সেকেন্ড পর সার্ভার 🔔 মেসেজ পাঠাবে (নোটিফিকেশন ON →
-        # ইউজার অ্যাড পেজে থাকা অবস্থায় ফোন ১ বার কাঁপবে)। এই ইউজারের আগের ঝুলে-থাকা buzz-টাস্ক থাকলে আগে বাতিল —
-        # পুরনো গেটের দেরির মেসেজ যেন নতুন অ্যাড দেখার সময় না এসে পড়ে।
         gid_str = str(res.inserted_id)
-        for _k, _t in list(_gate_buzz_tasks.items()):
-            if getattr(_t, "buzz_uid", None) == uid: _cancel_gate_buzz(_k)
-        _task = asyncio.create_task(gate_timer_buzz(gid_str, uid, int(wait_used)))
-        _task.buzz_uid = uid
-        _gate_buzz_tasks[gid_str] = _task
+        # 🚫 (আগে এখানে টাইমার-শেষে "🔔 সময় শেষ!" বট-মেসেজের buzz-টাস্ক ছিল — মালিকের নতুন অটো-সেন্ড ফ্লোতে সেটা সম্পূর্ণ বাদ)
         return {"ok": True, "gate_id": gid_str, "link": link,
                 "wait": wait_used, "count": ac, "pool": pool_size}
     except Exception as e:
@@ -4522,7 +4495,6 @@ async def ad_gate_verify(d: GateVerifyModel):
         effective_ms = max(away_ms, elapsed_ms)
         remain_ms = max(0, aw * 1000 - effective_ms)
         if remain_ms <= 1200:  # ১.২ সেকেন্ড নেটওয়ার্ক-গ্রেস
-            _cancel_gate_buzz(gid)  # 📳 গেট ভেরিফাই হলে টাইমার-মেসেজ আর যাবে না (এক ঝাঁকুনিই শেষ)
             await db.ad_gates.update_one({"_id": gid}, {"$set": {"status": "verified", "verified_at": now, "suspect": beats == 0}})
             return {"ok": True, "done": True, "remain": 0}
         return {"ok": True, "done": False, "remain": int(remain_ms / 1000) + 1}
@@ -4539,7 +4511,6 @@ async def ad_gate_abort(d: GateVerifyModel):
         try: gid = ObjectId(d.gateId)
         except Exception: return {"ok": False}
         _ab = await db.ad_gates.update_one({"_id": gid, "uid": uid, "status": "running"}, {"$set": {"status": "aborted"}})
-        if _ab.modified_count: _cancel_gate_buzz(gid)  # 📳 বাতিল গেটের টাইমার-মেসেজও বাতিল
         return {"ok": True}
     except Exception:
         return {"ok": False}
@@ -4702,21 +4673,38 @@ async def deliver_movie_file(uid: int, m: dict):
     else:
         caption = base_caption + f"\n\n⏳ সতর্কতা: সিকিউরিটির জন্য এই ভিডিওটি {del_minutes} মিনিট পর অটোমেটিক ডিলিট হয়ে যাবে!"
 
+    # 📤 শেয়ার-সিস্টেম (মালিকের নতুন নির্দেশ): প্রতিটা ডেলিভারি-মেসেজে মুভির লিঙ্ক + শেয়ার বাটন —
+    # "আপনার বন্ধুদেরকে এই লিঙ্কটা শেয়ার করলে সে-ও আপনার মতন এই মুভিটা দেখতে পারবে।"
+    # লিঙ্ক = মিনি-অ্যাপ ডিপ-লিঙ্ক (?startapp=<movie_id>) → বন্ধু ক্লিক করলেই সেইম মুভির পেজে চলে আসবে;
+    # নতুন বন্ধু হলে START চেপে ইউজার হয়ে যাবে (মালিকের নির্দেশমতো), তারপর একই অ্যাড-ফ্লোতে ফাইল পাবে।
+    share_kb = None
+    try:
+        _share_url = f"https://t.me/{BOT_USERNAME}?startapp={m['_id']}"
+        _share_txt = "🎬 এই মুভিটা দেখুন! লিঙ্কে ক্লিক করলেই আমার মতো আপনিও এই মুভিটা দেখতে পারবেন 👇"
+        _share_line = (f"\n\n🔗 <b>বন্ধুদের সাথে শেয়ার করুন:</b> নিচের লিঙ্কটা বন্ধুকে পাঠালে সে-ও আপনার মতো এই মুভিটি দেখতে পারবে!\n{_share_url}")
+        if len(caption) + len(_share_line) <= 1000:  # ক্যাপশন-লিমিট ১০২৪ — নিরাপদে ঢোকানো হবে
+            caption += _share_line
+        share_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+            types.InlineKeyboardButton(text="📤 বন্ধুদের সাথে শেয়ার করুন",
+                url="https://t.me/share/url?url=" + urllib.parse.quote_plus(_share_url) + "&text=" + urllib.parse.quote_plus(_share_txt))]])
+    except Exception as _se:
+        print(f"share-build warning (ফাইল তবুও যাবে): {_se}")
+
     try:
         sent_msg = None
-        # 🔇 ফাইল-মেসেজ সবসময় সাইলেন্ট (disable_notification=True) — মালিকের নির্দেশ: ফাইল আসার সময়
-        # ফোন কাঁপবে না। একমাত্র ঝাঁকুনি হয় টাইমার শেষ হওয়ার মুহূর্তে (gate_timer_buzz এর 🔔 মেসেজে, ১ বার)।
+        # 🔇 ফাইল-মেসেজ সবসময় সাইলেন্ট (disable_notification=True) — ফাইল আসার সময় ফোন কাঁপবে না।
+        # (আগের gate_timer_buzz-ভাইব্রেশন সিস্টেমটাও এখন বাদ — মালিকের নতুন অটো-সেন্ড ফ্লোতে দরকার নেই)
         try:
             if m.get("file_type") == "video":
-                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True, reply_markup=share_kb)
             else:
-                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True, reply_markup=share_kb)
         except TelegramRetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
             if m.get("file_type") == "video":
-                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True, reply_markup=share_kb)
             else:
-                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True)
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected, disable_notification=True, reply_markup=share_kb)
         if sent_msg:
             if not is_vip:
                 delete_at = now + datetime.timedelta(minutes=del_minutes)
