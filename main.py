@@ -248,6 +248,35 @@ async def init_db():
     except Exception as e:
         print(f"⚠️ ad_gates index warning — বট তবুও চলবে: {e}")
 
+# ==========================================
+# 👁 পুরনো মুভির ভিউ-ব্যাকফিল (মালিকের নির্দেশ: "সবগুলো 0 0 থাকা যাবে না")
+# আগের দিনগুলোতে ভিউ=ডাউনলোড একসাথে গণনা হতো, আলাদা হওয়ার পর পুরনো পোস্টের views 0-ই থেকে গেছে।
+# নিয়ম:
+#   ১) ডাউনলোড (clicks) আছে কিন্তু ভিউ কম → ভিউ = ডাউনলোড + ডাউনলোডের ৫%-এর একটু বেশি (৫%-১০%)
+#   ২) একদম পুরনো (২৪ ঘণ্টার বেশি) কিন্তু ভিউ ও ডাউনলোড দুটোই 0 → ছোট একটা রিয়েল-লুকিং সিড (৩-১২)
+#   ৩) নতুন আপলোড (২৪ ঘণ্টার ভেতরে) → কিছুই করা হয় না — রিয়েল ভিউ নিজেই জমা হবে (/api/web/view)
+#   ভিউ কখনোই কমানো হয় না, শুধু বাড়ানো হয়। প্রতিবার বট চালু হলেই একবার চেক চলে (একবার বসালে আর ধরা পড়ে না)।
+# ==========================================
+async def backfill_movie_views():
+    now = datetime.datetime.utcnow()
+    try:
+        q = {"$or": [{"clicks": {"$gt": 0}}, {"views": {"$exists": False}}, {"views": {"$lte": 0}}]}
+        async for m in db.movies.find(q, {"clicks": 1, "views": 1, "created_at": 1}):
+            clicks = m.get("clicks", 0) or 0
+            views = m.get("views", 0) or 0
+            if clicks > 0:
+                # ডাউনলোডের উপর থেকে ৫% — "একটু বেশি" রাখতে ৫%-১০% র‍্যান্ডম + কমপক্ষে ১ ভিউ
+                target = clicks + max(1, int(clicks * (0.05 + random.random() * 0.05)))
+                if views < target:
+                    await db.movies.update_one({"_id": m["_id"]}, {"$set": {"views": target}})
+            elif views <= 0:
+                created = m.get("created_at")
+                if created and (now - created) > datetime.timedelta(hours=24):
+                    await db.movies.update_one({"_id": m["_id"]}, {"$set": {"views": random.randint(3, 12)}})
+        print("✅ View backfill check done — পুরনো পোস্টের ভিউ ডাউনলোড-ভিত্তিক সেট করা হলো।")
+    except Exception as e:
+        print(f"⚠️ view backfill warning — বট তবুও চলবে: {e}")
+
 async def get_setting(key, default=None):
     """⚙️ সেটিং রিডার — ad_wait / ad_count / banners সব এক জায়গা থেকে"""
     try:
@@ -377,7 +406,8 @@ async def broadcast_queue_worker():
 @app.on_event("startup")
 async def on_startup():
     # 🛡️ ক্র্যাশ-প্রুফ স্টার্টআপ: যেকোনো ধাপ ফেল করলেও বট + anti-sleep pinger চালু থাকবে
-    for _name, _coro in (("db-init", init_db()), ("admins", load_admins()), ("banned", load_banned_users()), ("ads-seed", seed_default_ads()), ("log-channel", load_log_channel())):
+    # 👁 view-backfill: পুরনো পোস্টের ভিউ ডাউনলোড-ভিত্তিক ঠিক করে (নতুন আপলোড রিয়েল ভিউতেই থাকে)
+    for _name, _coro in (("db-init", init_db()), ("admins", load_admins()), ("banned", load_banned_users()), ("ads-seed", seed_default_ads()), ("log-channel", load_log_channel()), ("view-backfill", backfill_movie_views())):
         try: await _coro
         except Exception as e: print(f"⚠️ Startup step '{_name}' failed — বট তবুও চলবে: {e}")
     # 🤖 বটের আসল ইউজারনেম নিজেই ধরে নিচ্ছি — BOT_USERNAME env ভুল/না দিলেও
@@ -518,6 +548,14 @@ async def _start_flow(message: types.Message, state: FSMContext):
         # বারবার /start দিলেও বট চুপ থাকবে (ফাইল-ডেলিভারি উপরের ব্লকেই হয়ে গেছে)।
         # ওয়েলকাম মেসেজ এখন শুধু একবারই যায় — একদম নতুন ইউজারের প্রথম /start-এ (নিচের রেজিস্ট্রেশন)।
         # একবার রেজিস্টার হওয়ার পর থেকে ওই ইউজার আর কখনো ওয়েলকাম দেখবে না।
+        return
+
+    # 📡 মালিকের নতুন সেন্ডিং-ফ্লো: ওয়েব অ্যাপে অ্যাড দেখা শেষ করে "বটে যান/ফিরে যান" ডিপ-লিংকে এসে
+    # START চাপলে ফাইলটি উপরের ব্লকেই ডেলিভারি হয়ে গেছে — এখানে বট একদম চুপ থাকবে।
+    # কোনো START/ওয়েলকাম/কনফার্মেশন লেখা যাবে না — ইউজার বট-ইনবক্সে শুধু ফাইলটাই দেখবে
+    # ("Sending File..." স্ক্রিন ওয়েব অ্যাপে দেখিয়ে দিয়েছে; এখানে শুধু ফাইল-ডেলিভারি)।
+    # নতুন ইউজারের নিবন্ধন উপরেই হয়ে গেছে, তাই সাইলেন্ট রিটার্ন সম্পূর্ণ নিরাপদ।
+    if delivered:
         return
 
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
@@ -2415,7 +2453,15 @@ async def web_ui(request: Request):
             /* 🎯 অ্যাড গেট ও সাকসেস মোডাল সব মোডালের উপরে — ডাউনলোড পপ-আপের পেছনে খুলে
                ইউজার আটকে যাওয়ার বাগ এখন নেই */
             #adModal { z-index: 4000; }
-            #successModal, #newUserModal { z-index: 4100; }
+            #newUserModal { z-index: 4100; }
+            /* 📡 "Sending File..." ফুল-স্ক্রিন ওভারলে (মালিকের স্ক্রিনশট অনুযায়ী): লাল স্পিনার + লাল টাইটেল + সাদা সাব-টেক্সট।
+               অ্যাডের ১০ সেকেন্ড শেষ হতেই / ডাউনলোড চাপতেই এই স্ক্রিন আসবে, তারপর বট অটোমেটিক ইউজারকে বট-চ্যাটে নিয়ে যাবে। */
+            #sendingOverlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 5000; background: rgba(2, 6, 23, 0.94); backdrop-filter: blur(6px); flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; }
+            .sending-spinner { width: 64px; height: 64px; border-radius: 50%; border: 6px solid rgba(239, 68, 68, 0.18); border-top-color: #ef4444; animation: sendspin 0.9s linear infinite; }
+            @keyframes sendspin { to { transform: rotate(360deg); } }
+            .sending-title { color: #ef4444; font-weight: 800; font-size: 22px; margin-top: 20px; }
+            .sending-sub { color: #e2e8f0; font-size: 14px; margin-top: 8px; max-width: 300px; line-height: 1.5; }
+            .sending-open-btn { display: none; margin-top: 22px; background: linear-gradient(45deg, #ff416c, #ff4b2b); color: #fff; border: none; border-radius: 10px; padding: 12px 26px; font-size: 15px; font-weight: 700; cursor: pointer; }
             .bottom-nav { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border-top: 1px solid #1e293b; display: flex; justify-content: space-around; padding: 10px 0; z-index: 1000; }
             body.oled-mode .bottom-nav { background: rgba(0, 0, 0, 0.95); border-color: #1a1a1a; }
             .nav-item { display: flex; flex-direction: column; align-items: center; color: #64748b; font-size: 11px; font-weight: 600; cursor: pointer; border: none; background: none; }
@@ -2955,26 +3001,25 @@ async def web_ui(request: Request):
             </div>
         </div>
 
-        <div id="successModal" class="modal">
-            <div class="modal-content" style="text-align: center; padding-top: 40px;">
-                <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
-                <h2>ফাইল পাঠানো হয়েছে! 🎉</h2>
-                <div class="ad-box-orange" style="margin-top:12px;">✨ সুখবর! আপনার মুভি বটে পাঠানো হয়েছে।</div>
-                <div class="ad-box-black" style="margin-top:10px;">👇 নিচের <b>"🤖 বটে গিয়ে ফাইল নিন"</b> বাটনে ক্লিক করুন — সরাসরি বট খুলে যাবে আর সাথে সাথেই আপনার মুভি পেয়ে যাবেন! বটের ওপরের মেসেজে ফাইলটা ট্যাপ করলেই দেখতে পারবেন।</div>
-                <button class="bot-go-btn" onclick="openBotForFile()"><i class="fa-solid fa-robot"></i> 🤖 বটে গিয়ে ফাইল নিন</button>
-                <a href="https://t.me/addlist/MwbWNafSFK4yZjhl" target="_blank" class="join-channel-btn" style="margin-top:10px;">🚀 Join Channel</a>
-            </div>
+        <!-- 📡 সেন্ডিং স্ক্রিন (মালিকের দেওয়া স্ক্রিনশট অনুযায়ী): অ্যাডের ১০ সেকেন্ড শেষ হলে / ডাউনলোড চাপলে
+             আগে এই "Sending File..." স্ক্রিনটা আসবে — তারপর বট অটোমেটিক রিডাইরেক্ট করে ইউজারকে বট-চ্যাটে নিয়ে যাবে,
+             ফাইল আগেই বট-ইনবক্সে পৌঁছে যায়। এখানে কোনো START-টেক্সট বা ওয়েলকাম আর দেখানো হয় না। -->
+        <div id="sendingOverlay">
+            <div class="sending-spinner"></div>
+            <div id="sendingTitle" class="sending-title">Sending File...</div>
+            <div id="sendingSub" class="sending-sub">Please wait, video is going to your bot inbox!</div>
+            <button id="sendingOpenBtn" class="sending-open-btn" onclick="openBotForFile()"><i class="fa-solid fa-robot"></i> 🤖 Open Bot</button>
         </div>
 
-        <!-- 🎯 নতুন ইউজার মোডাল: বটকে এখনো START করেননি, তাই ফাইল পাঠানো যায়নি —
-             "বটে যান" চেপে START করলেই অ্যাড দেখা ফাইলটি অটোমেটিক ডেলিভারি হয়ে যাবে -->
+        <!-- 🎯 নতুন ইউজার মোডাল: বটকে এখনো START করেননি, তাই টেলিগ্রামের নিয়মে বট নিজে থেকে ফাইল পাঠাতে পারে না —
+             "বটে যান" চেপে একবার START করলেই অ্যাড দেখা ফাইলটি সাইলেন্টলি ডেলিভারি হয়ে যাবে (কোনো ওয়েলকাম/লেখা আসবে না) -->
         <div id="newUserModal" class="modal">
             <div class="modal-content" style="text-align: center; padding-top: 40px;">
                 <i class="fa-solid fa-circle-check" style="font-size:70px; color:#4ade80; margin-bottom:20px;"></i>
                 <h2>🎉 সাকসেসফুল!</h2>
-                <p style="color:#94a3b8; margin-top:10px;">আপনার ফাইল প্রস্তুত! নিচের <b>বটে যান</b> বাটনে ক্লিক করে বট চ্যাট খুলুন, তারপর <b>START</b> চাপুন — ফাইলটি সাথে সাথেই আপনাকে পাঠিয়ে দেওয়া হবে।</p>
+                <p style="color:#94a3b8; margin-top:10px;">আপনার ফাইল প্রস্তুত! নিচের <b>বটে যান</b> বাটনে ক্লিক করে বট চ্যাট খুলুন, তারপর <b>START</b> চাপুন — ফাইলটি সাথে সাথেই আপনার বট-ইনবক্সে চলে আসবে।</p>
                 <a id="newUserBotLink" href="#" class="join-channel-btn" style="background: linear-gradient(45deg, #ff416c, #ff4b2b);" onclick="event.preventDefault(); openBotDeep(this.href);">🤖 বটে যান</a>
-                <p style="color:#64748b; font-size:12px; margin-top:8px;">⚠️ অবশ্যই START চাপবেন — START চাপলেই ফাইল অটো চলে আসবে!</p>
+                <p style="color:#64748b; font-size:12px; margin-top:8px;">⚠️ অবশ্যই START চাপবেন — START চাপলেই ফাইলটা একা একা চলে আসবে, কোনো লেখা আসবে না!</p>
             </div>
         </div>
 
@@ -3845,10 +3890,10 @@ async def web_ui(request: Request):
                 if (adAwayStart !== null) { adUserReturned(); }
             });
 
-            // 🤖 সাকসেস মোডালের "বটে গিয়ে ফাইল নিন" — ফাইল সার্ভার থেকেই ইউজারের বট চ্যাটে
-            // ডেলিভারি হয়ে যায় (/api/send), তাই প্লেইন লিংক দিলেই ক্লিক করলে বট চ্যাটে ফাইল সামনে
+            // 📡 সেন্ডিং-ফ্লো: ফাইল সার্ভার থেকেই ইউজারের বট চ্যাটে ডেলিভারি হয়ে যায় (/api/send) —
+            // তারপর এই ডিপ-লিংক দিয়ে বট অটোমেটিক ইউজারকে বট-চ্যাটে নিয়ে যায় (ফাইল সামনেই থাকে)
             let botFileLink = 'https://t.me/' + BOT_USERNAME;
-            // 🤖 "বটে গিয়ে ফাইল নিন" — ক্লিক করলেই সরাসরি বট চ্যাট খুলে যাবে (ফাইল আগেই বটে
+            // 🤖 বটে অটো-রিডাইরেক্ট — ক্লিক ছাড়াই সরাসরি বট চ্যাট খুলে যাবে (ফাইল আগেই বটে
             // ডেলিভারি হয়ে থাকে), সাথে মিনি অ্যাপ পেজটাও বন্ধ হয়ে ইউজার বটেই থাকবে
             /* 🔗 বটে নেওয়ার ডিপ-লিংক: ওয়েবভিউতে t.me-লিংক খুললে টেলিগ্রাম 'START Movie Box' ওয়েব-পেজ দেখায় কিন্তু চ্যাটে ঢোকে না —
                তাই আগে tg://resolve (সরাসরি বট-চ্যাটে ঢোকে), না হলে tg.openTelegramLink, শেষ ফলব্যাক নতুন-ট্যাব */
@@ -3862,8 +3907,44 @@ async def web_ui(request: Request):
             // ছোট ৩৫০ms অপেক্ষা রাখা হয়েছে — ক্লিক-ফিডব্যাক থেকে সরাসরি বট-চ্যাট খোলে (ফাইল আগেই বটে ডেলিভারি হয়ে থাকে)।
             function openBotForFile() { setTimeout(function(){ openBotDeep(botFileLink); setTimeout(function(){ try { tg.close(); } catch(e) {} }, 900); }, 350); }
 
-            async function sendFileRequest(fileId, fromGate) { try { const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})}); const data = await res.json(); if(data.ok) { // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটে যান ক্লিক করলেই বট চ্যাট খুলবে, ফাইল ওপরেই থাকবে (বাড়তা কোনো মেসেজ যায় না)
- botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId; document.getElementById('successModal').style.display = 'flex'; fetchUserInfo(); } else if(data.new_user) { document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id; document.getElementById('newUserModal').style.display = 'flex'; } else if(data.gate_required) { /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */ if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।'); resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } else { tg.showAlert("⚠️ Failed!"); } } catch(e) { /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */ resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {} } }
+            // 📡 সেন্ডিং-স্ক্রিন হেল্পার: ফাইল পাঠানোর সময় পুরো স্ক্রিনে "Sending File..." দেখায় (মালিকের স্ক্রিনশট অনুযায়ী)
+            function showSending() { const ov = document.getElementById('sendingOverlay'); if (!ov) return; document.getElementById('sendingOpenBtn').style.display = 'none'; document.getElementById('sendingTitle').innerText = 'Sending File...'; document.getElementById('sendingSub').innerText = 'Please wait, video is going to your bot inbox!'; ov.style.display = 'flex'; }
+            function hideSending() { const ov = document.getElementById('sendingOverlay'); if (ov) ov.style.display = 'none'; }
+
+            async function sendFileRequest(fileId, fromGate) {
+                showSending();  // 📡 অ্যাডের কাউন্টডাউন শেষ হতেই / ডাউনলোড চাপতেই সাথে সাথে "Sending File..." স্ক্রিন
+                try {
+                    const res = await fetch('/api/send', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({userId: uid, movieId: fileId, initData: INIT_DATA})});
+                    const data = await res.json();
+                    if (data.ok) {
+                        // ✅ ফাইল বট-ইনবক্সে চলে গেছে → ছোট সুসংবাদ দেখিয়ে বট অটোমেটিক ইউজারকে বট-চ্যাটে নিয়ে যাবে।
+                        // 🔗 ?start=f_<movieId> ডিপ-লিংক বহন করে — বটের /start এটা সাইলেন্টলি হ্যান্ডেল করে,
+                        // কোনো START-টেক্সট বা ওয়েলকাম আর যায় না; ইউজার বট-চ্যাট খুললেই ফাইল সামনে থাকবে।
+                        botFileLink = 'https://t.me/' + BOT_USERNAME + '?start=f_' + fileId;
+                        document.getElementById('sendingTitle').innerText = '✅ File Sent!';
+                        document.getElementById('sendingSub').innerText = 'Taking you to your bot inbox...';
+                        fetchUserInfo();
+                        setTimeout(function() { openBotForFile(); }, 1000);
+                        // 🛡️ ফলব্যাক: কোনো কারণে অটো-রিডাইরেক্ট না হলে ৩ সেকেন্ড পর ম্যানুয়াল "Open Bot" বাটন জেগে ওঠে
+                        setTimeout(function() { const ob = document.getElementById('sendingOpenBtn'); if (ob && document.getElementById('sendingOverlay').style.display !== 'none') ob.style.display = 'inline-block'; }, 3200);
+                    } else if (data.new_user) {
+                        // 🆕 বটকে এখনো START করেননি — টেলিগ্রামের নিয়মে বট নিজে থেকে ফাইল পাঠাতে পারে না।
+                        // সেন্ডিং-স্ক্রিন সরিয়ে "বটে যান" মোডাল: START চাপলেই ফাইলটা একা একা চলে আসবে (বট কোনো লেখা পাঠাবে না)।
+                        hideSending();
+                        document.getElementById('newUserBotLink').href = 'https://t.me/' + (data.bot_username || BOT_USERNAME) + '?start=' + data.movie_id;
+                        document.getElementById('newUserModal').style.display = 'flex';
+                    } else if (data.gate_required) {
+                        /* 🛡️ ভেরিফাইড গেট নেই — অ্যাড-গেট মোডাল; অ্যালার্ট শুধু অ্যাড দেখা শেষ করে ফেল করলে */
+                        hideSending();
+                        if (fromGate) tg.showAlert('⚠️ অ্যাড ভেরিফিকেশন পাওয়া যায়নি! আবার অ্যাড দেখে চেষ্টা করুন।');
+                        resetAdModal(); mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex';
+                    } else { hideSending(); tg.showAlert("⚠️ Failed!"); }
+                } catch(e) {
+                    /* 🔧 নেটওয়ার্ক-ফেল → অ্যাড-গেট মোডালই দেখাও, ইউজার যেন আটকে না থাকে */
+                    hideSending();
+                    resetAdModal(); try { mountSquareSlot('adModalAdSlot', AD_300_CONF); document.getElementById('adModal').style.display = 'flex'; } catch(e2) {}
+                }
+            }
             async function loadFavorites() { const list = document.getElementById('movieListFav'); list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/favs/' + uid); const data = await res.json(); userFavs = data.map(function(m) { return m._id; }); favMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'fav'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">কোনো ফেভারিট নেই!</p>'; } catch(e) {} loadSavedList(); }
             /* 💾 সেভ লেটার লিস্ট (ডিটেইলস পেজ থেকে সেভ করা মুভিগুলো) */
             async function loadSavedList() { const list = document.getElementById('movieListSaved'); if (!list) return; list.innerHTML = '<div class="skeleton"></div>'; try { const res = await fetch('/api/web/saved/' + uid); const data = await res.json(); savedMovies = data; list.innerHTML = data.length > 0 ? data.map(function(m, index) { return createMovieCard(m, index, 'saved'); }).join('') : '<p style="text-align:center; color:#64748b; padding:30px;">সেভ করা কিছু নেই!</p>'; } catch(e) { list.innerHTML = ''; } }
