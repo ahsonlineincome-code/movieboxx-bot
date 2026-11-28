@@ -230,6 +230,11 @@ async def init_db():
     # 🗳️ রেটিং পোল (মুভির টাইটেল অনুযায়ী সব পার্ট শেয়ার করে) — ইউনিক ইনডেক্স: এক ইউজার এক ভোট
     await db.votes.create_index([("title", 1), ("uid", 1)], unique=True)
     await db.votes.create_index("title")
+    # 👁 ভিউ কাউন্টার (রিপোর্ট ফিক্স #1): ডাউনলোড আর ভিউ এখন আলাদা —
+    # movie_views = কোন ইউজার কোন পোস্ট কোন দিন খুলল (১ ইউজার × ১ পোস্ট × ১ দিন = ১ ভিউ)
+    # movies.views = আসল ভিউ কাউন্ট; movies.clicks = ডাউনলোড কাউন্ট (আগের মতোই, ধরা হয়নি)
+    await db.movie_views.create_index([("uid", 1), ("movie_id", 1), ("day", 1)], unique=True)
+    await db.movie_views.create_index("day")
     # 🛡️ সার্ভার-সাইড অ্যাড গেট (PC/DevTools বাইপাস বন্ধ): গেট যাচাই + ফানেল স্ট্যাটের ইনডেক্স
     # 🛡️ ক্র্যাশ-প্রুফ: পুরনো ডাটাবেজে ইনডেক্স কনফ্লিক্ট হলেও বট বন্ধ হবে না — /start সবসময় বেঁচে থাকবে
     try:
@@ -460,9 +465,9 @@ async def _start_flow(message: types.Message, state: FSMContext):
                 await db.pending_files.delete_one({"_id": pending["_id"]})
 
     # 🎯 ওল্ড ইউজার ফাস্ট ডেলিভারি (?start=f_<movie_id>): ওয়েব অ্যাপে ডাউনলোড ফ্লো শেষ করে
-    # "🤖 বটে গিয়ে ফাইল নিন" বাটনে ক্লিক করলে ইউজার এই লিংকে চলে আসে — ওল্ড ইউজারকে START
-    # ওয়েলকাম মেসেজ ছাড়াই সুন্দর স্টাইলে সাথে সাথে ফাইল পেয়ে যাওয়ার অভিজ্ঞতা দেওয়া হয়
-    # (নতুন ইউজারের অটো-ডেলিভারির মতোই, কিন্তু স্টাইল আলাদা)
+    # "🤖 বটে গিয়ে ফাইল নিন" বাটনে ক্লিক করলে ইউজার এই লিংকে চলে আসে — বট-চ্যাট সরাসরি খুলে যায়,
+    # ফাইল আগেই ডেলিভারি হয়ে থাকে (/api/send) — START/ওয়েলকাম কিছুই দেখানো হয় না (মালিকের নির্দেশ)।
+    # ডেলিভারি কোনো কারণে ব্যর্থ হলে এই /start আবার চেষ্টা করে — সফল হলেও কোনো টেক্সট যায় না।
     if payload.startswith("f_") and ObjectId.is_valid(payload[2:]):
         movie_id = payload[2:]
         m = await db.movies.find_one({"_id": ObjectId(movie_id)})
@@ -482,9 +487,9 @@ async def _start_flow(message: types.Message, state: FSMContext):
                     if ok:
                         await db.movies.update_one({"_id": ObjectId(movie_id)}, {"$inc": {"clicks": 1}})
                         await db.user_unlocks.update_one({"user_id": uid, "movie_id": movie_id}, {"$set": {"unlocked_at": now}}, upsert=True)
-                        # ✅ ফাইল সদ্য ডেলিভারি হলো → নিচের স্বাগতম-মেসেজের মাথায় "ডেলিভারি হয়েছে" লাইনটাই যাবে
+                        # ✅ ফাইল সদ্য ডেলিভারি হলো — ওয়েলকাম/কনফার্মেশন কিছুই পাঠানো হবে না (সাইলেন্ট)
                         delivered = True
-                # ডেলিভারি ব্যর্থ/সদ্য-ডেলিভারি থাকলে → নিচের স্বাভাবিক স্বাগতম-মেসেজই যাবে (ইউজার আটকে থাকবে না)
+                # ডেলিভারি ব্যর্থ/সদ্য-ডেলিভারি থাকলেও কোনো মেসেজ যাবে না — পুরাতন ইউজার সাইলেন্ট থাকবে
                 payload = ""  # ফাইল নিজেই চ্যাটে আছে — Watch Now বাটন-ওভাররাইডের দরকার নেই
             else:
                 # নতুন ইউজার f_ লিংকে এলে স্বাভাবিক রেজিস্ট্রেশন হবে; Watch Now বাটন ওই মুভির পেজ খুলবে
@@ -509,6 +514,11 @@ async def _start_flow(message: types.Message, state: FSMContext):
         await db.users.insert_one({"user_id": uid, "first_name": message.from_user.first_name, "joined_at": now, "refer_count": 0, "coins": 0, "last_checkin": now - datetime.timedelta(days=2), "vip_until": now - datetime.timedelta(days=1)})
     else:
         await db.users.update_one({"user_id": uid}, {"$set": {"first_name": message.from_user.first_name}})
+        # 🛑 মালিকের রিপোর্ট ফিক্স #2: পুরাতন ইউজারকে /start-এ আর কোনো ওয়েলকাম/স্টার্ট মেসেজ যাবে না —
+        # বারবার /start দিলেও বট চুপ থাকবে (ফাইল-ডেলিভারি উপরের ব্লকেই হয়ে গেছে)।
+        # ওয়েলকাম মেসেজ এখন শুধু একবারই যায় — একদম নতুন ইউজারের প্রথম /start-এ (নিচের রেজিস্ট্রেশন)।
+        # একবার রেজিস্টার হওয়ার পর থেকে ওই ইউজার আর কখনো ওয়েলকাম দেখবে না।
+        return
 
     tg_cfg = await db.settings.find_one({"id": "tg_link"})
     tg_link = tg_cfg.get("url", "https://t.me/addlist/MwbWNafSFK4yZjhl") if tg_cfg else "https://t.me/addlist/MwbWNafSFK4yZjhl"
@@ -585,7 +595,7 @@ async def search_movies_smart(q: str, limit: int = 6, enforce_digits: bool = Tru
         stage["$nor"] = ADULT_MATCH_OR
         pipeline = [
             {"$match": stage},
-            {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}, "qualities": {"$addToSet": {"$ifNull": ["$quality", "HD"]}}}},
+            {"$group": {"_id": "$title", "doc_id": {"$first": {"$toString": "$_id"}}, "photo_id": {"$first": "$photo_id"}, "quality": {"$first": "$quality"}, "year": {"$first": "$year"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "created_at": {"$max": "$created_at"}, "parts": {"$sum": 1}, "qualities": {"$addToSet": {"$ifNull": ["$quality", "HD"]}}}},
             {"$sort": {"created_at": -1}},
             {"$limit": 40},
         ]
@@ -1652,7 +1662,7 @@ async def action_new_broadcast(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     await state.clear()
     
-    movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
+    movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "views": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
 
     # 🎯 এখন লগ পোস্টের আসল ফলাফল দেখানো হয় — ব্যর্থ হলে আর ভুয়া "পোস্ট হয়েছে" বলা হবে না
     ok, err = await send_log_post(data, selected_cats, str(movie_id))
@@ -1673,7 +1683,7 @@ async def action_log_only(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     await state.clear()
     
-    movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
+    movie_id = (await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "views": 0, "created_at": datetime.datetime.utcnow()})).inserted_id
 
     # 🎯 এখন লগ পোস্টের আসল ফলাফল দেখানো হয় — ব্যর্থ হলে আর ভুয়া "পোস্ট হয়েছে" বলা হবে না
     ok, err = await send_log_post(data, selected_cats, str(movie_id))
@@ -1692,7 +1702,7 @@ async def action_add_file_only(c: types.CallbackQuery, state: FSMContext):
     selected_cats = data.get("categories", [])
     await state.clear()
     
-    await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "created_at": datetime.datetime.utcnow()})
+    await db.movies.insert_one({"title": data["title"], "quality": data["quality"], "photo_id": data["photo_id"], "file_id": data["file_id"], "file_type": data["file_type"], "year": data.get("year", "N/A"), "categories": selected_cats, "clicks": 0, "views": 0, "created_at": datetime.datetime.utcnow()})
     
     await c.message.edit_text(f"✅ <b>{data['title']} [{data['quality']}]</b> সফলভাবে যুক্ত হয়েছে!\n\n❌ কোনো ব্রডকাস্ট বা লগ পোস্ট করা হয়নি। ফাইলটি শুধুমাত্র ওয়েব অ্যাপে যুক্ত হয়েছে।", parse_mode="HTML")
     await c.answer("✅ ফাইল অ্যাড হয়েছে!")
@@ -1935,6 +1945,7 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                     <div class="card"><div class="stat-top"><h3>আজকের নতুন</h3><span class="ic green"><i class="fa-solid fa-user-plus"></i></span></div><div class="big" id="todayUsers">0</div></div>
                     <div class="card"><div class="stat-top"><h3>Total Views</h3><span class="ic orange"><i class="fa-solid fa-eye"></i></span></div><div class="big" id="totalClicks">0</div></div>
                     <div class="card"><div class="stat-top"><h3>আজকের Views</h3><span class="ic red"><i class="fa-solid fa-chart-line"></i></span></div><div class="big" id="todayClicks">0</div></div>
+                    <div class="card"><div class="stat-top"><h3>মোট ডাউনলোড</h3><span class="ic blue"><i class="fa-solid fa-download"></i></span></div><div class="big" id="totalDownloads">0</div></div>
                     <div class="card"><div class="stat-top"><h3>লাইভ (১ মিনিট)</h3><span class="ic green"><i class="fa-solid fa-signal"></i></span></div><div class="big" id="activeUsers">0</div></div>
                 </div>
 
@@ -2035,8 +2046,8 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                         <b style="color:#fff;"><i class="fa-solid fa-film" style="color:var(--acc)"></i> সব মুভি (<span id="movieTotal">0</span>)</b>
                         <input type="text" id="movieSearchInput" placeholder="🔍 মুভি সার্চ..." style="min-width:170px;">
                     </div>
-                    <table><thead><tr><th>টাইটেল</th><th>কোয়ালিটি</th><th>ক্যাটাগরি</th><th>Views</th><th>অ্যাকশন</th></tr></thead>
-                    <tbody id="movieTableBody"><tr><td colspan="5" class="empty">লোড হচ্ছে...</td></tr></tbody></table>
+                    <table><thead><tr><th>টাইটেল</th><th>কোয়ালিটি</th><th>ক্যাটাগরি</th><th>ভিউ</th><th>ডাউনলোড</th><th>অ্যাকশন</th></tr></thead>
+                    <tbody id="movieTableBody"><tr><td colspan="6" class="empty">লোড হচ্ছে...</td></tr></tbody></table>
                 </div>
             </section>
         </main>
@@ -2074,7 +2085,7 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
             /* ═══ 📊 STATS + FUNNEL ═══ */
             async function fetchStats() { try { const res = await fetch('/api/admin/stats'); const d = await res.json();
                 document.getElementById('totalUsers').innerText = d.total_users; document.getElementById('todayUsers').innerText = d.today_users;
-                document.getElementById('totalClicks').innerText = d.total_clicks; document.getElementById('todayClicks').innerText = d.today_clicks;
+                document.getElementById('totalClicks').innerText = d.total_views || 0; document.getElementById('todayClicks').innerText = d.today_views || 0; document.getElementById('totalDownloads').innerText = d.total_clicks || 0;
                 document.getElementById('activeUsers').innerText = d.active_users; } catch(e) {} }
             async function fetchFunnel() { try {
                 const res = await fetch('/api/admin/funnel'); const d = await res.json(); if (!d.ok) return;
@@ -2157,11 +2168,12 @@ async def admin_panel_ui(request: Request, auth: bool = Depends(verify_admin)):
                 document.getElementById('movieTotal').innerText = allMovies.length; renderMovies(allMovies); } catch(e) {} }
             function renderMovies(list) {
                 const tbody = document.getElementById('movieTableBody');
-                if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">কোনো মুভি নেই</td></tr>'; return; }
+                if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">কোনো মুভি নেই</td></tr>'; return; }
                 tbody.innerHTML = list.map(m => '<tr id="row-' + m._id + '">' +
                     '<td><strong>' + (m.title || '') + '</strong><br><small style="color:var(--mut)">ID: ' + m._id + '</small></td>' +
                     '<td>' + (m.quality || 'N/A') + '</td><td>' + (m.categories || []).join(', ') + '</td>' +
-                    '<td><span class="badge b-blue"><i class="fa-solid fa-eye"></i> ' + (m.clicks || 0) + '</span></td>' +
+                    '<td><span class="badge b-blue"><i class="fa-solid fa-eye"></i> ' + (m.views || 0) + '</span></td>' +
+                    '<td><span class="badge b-green"><i class="fa-solid fa-download"></i> ' + (m.clicks || 0) + '</span></td>' +
                     '<td><button class="btn btn-ghost btn-mini" onclick="openEditModal(\'' + m._id + '\')" style="margin-right:6px;"><i class="fa-solid fa-pen"></i> এডিট</button>' +
                     '<button class="btn btn-del btn-mini" onclick="deleteMovie(\'' + m._id + '\')"><i class="fa-solid fa-trash"></i></button></td></tr>').join(''); }
             document.getElementById('movieSearchInput').addEventListener('input', function(e) {
@@ -2204,7 +2216,11 @@ async def admin_stats(auth: bool = Depends(verify_admin)):
     one_min_ago = now - datetime.timedelta(minutes=1); active_users = await db.users.count_documents({"last_active": {"$gte": one_min_ago}})
     total_clicks_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$clicks"}}}]).to_list(1); total_clicks = total_clicks_res[0]["total"] if total_clicks_res else 0
     today_clicks = await db.user_unlocks.count_documents({"unlocked_at": {"$gte": today_start}})
-    return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks}
+    # 👁 ভিউ স্ট্যাট (রিপোর্ট ফিক্স #১): ডাউনলোড (clicks) আর ভিউ (views) এখন আলাদা —
+    # total_views = সব পোস্টের মোট ভিউ, today_views = আজকের ইউনিক পোস্ট-ভিউ (movie_views লগ)
+    total_views_res = await db.movies.aggregate([{"$group": {"_id": None, "total": {"$sum": "$views"}}}]).to_list(1); total_views = total_views_res[0]["total"] if total_views_res else 0
+    today_views = await db.movie_views.count_documents({"day": now.strftime("%Y-%m-%d")})
+    return {"total_users": total_users, "today_users": today_users, "active_users": active_users, "total_clicks": total_clicks, "today_clicks": today_clicks, "total_views": total_views, "today_views": today_views}
 
 @app.get("/api/movies/trending")
 async def get_trending_movies():
@@ -3282,7 +3298,8 @@ async def web_ui(request: Request):
                 let filesArr = m.files || [];
                 let nFiles = filesArr.length > 0 ? filesArr.length : 1;
                 let fileLabel = nFiles > 1 ? nFiles + ' ফাইল' : '1 ফাইল';
-                let viewsBadge = `<div class="views-badge"><i class="fa-solid fa-eye"></i> ${m.clicks || 0}</div>`;
+                // 👁 ভিউ ব্যাজ — এখন আসল ভিউ কাউন্ট (views) দেখায়, ডাউনলোড (clicks) নয় (রিপোর্ট ফিক্স #১)
+                let viewsBadge = `<div class="views-badge"><i class="fa-solid fa-eye"></i> ${m.views || 0}</div>`;
 
                 // 👑 Admin Badge (শুধু অ্যাডমিন দেখবে; বাম-উপরের কোণটা এখন লাভ বাটনের — তাই ডান-নিচে)
                 let adminViewBadge = '';
@@ -3327,6 +3344,7 @@ async def web_ui(request: Request):
                     detailsReturnScroll = window.scrollY || 0;
                 }
                 activeDetailMovie = m;
+                countView(m);  // 👁 পোস্ট খুললেই ভিউ কাউন্ট (ডাউনলোড থেকে আলাদা — রিপোর্ট ফিক্স #১)
                 // সব ট্যাব লুকিয়ে ডিটেইলস পেজ দেখানো
                 document.querySelectorAll('.page-section').forEach(function(el) { el.classList.remove('active'); });
                 document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('active'); });
@@ -3340,6 +3358,9 @@ async def web_ui(request: Request):
 
             function detailMovieId(m) { return (m.files && m.files.length && m.files[0] && m.files[0].id) ? m.files[0].id : m._id; }
             function detailTitle(m) { return m.title || 'Unknown Movie'; }
+            // 👁 ভিউ কাউন্ট রিকোয়েস্ট — সার্ভার নিজেই ২৪ ঘণ্টার ডুপ্লিকেট আটকায় (১ ইউজার × ১ পোস্ট × ১ দিন = ১ ভিউ)।
+            // ফায়ার-অ্যান্ড-ফরগেট: ব্যর্থ হলেও UI আটকাবে না। সফল হলে ডিটেইলস-পেজের ভিউ নাম্বারটা লাইভ আপডেট হয়।
+            async function countView(m) { try { let mid = detailMovieId(m); if (!mid || mid === 'undefined' || mid === 'null') return; const res = await fetch('/api/web/view', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({movie_id: mid, initData: INIT_DATA})}); const d = await res.json(); if (d && d.ok && typeof d.views === 'number') { let el = document.getElementById('detailViewsNum'); if (el) el.innerText = d.views; } } catch(e) {} }
             function closeDetails() {
                 // 🔙 আগের ট্যাবে (হোম/সার্চ/ফেভ...) ফেরা + স্ক্রল হুবহু আগের জায়গায় — ফিড আর রিলোড হয় না
                 let navMap = {home:0, search:1, fav:2, favorites:2, surprise:3, profile:4};
@@ -3367,7 +3388,7 @@ async def web_ui(request: Request):
                 let quals = filesArr.map(function(f) { return (f.quality && f.quality !== 'Main') ? f.quality : 'HD'; });
                 quals = quals.filter(function(v, i) { return quals.indexOf(v) === i; });
                 if (!quals.length) quals = [(m.quality && m.quality !== 'Main') ? m.quality : 'HD'];
-                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span> • <span><i class="fa-solid fa-clapperboard"></i> ${quals.join(' • ')}</span> • <span><i class="fa-solid fa-eye"></i> ${m.clicks || 0} বার দেখা হয়েছে</span>`;
+                document.getElementById('detailMeta').innerHTML = `<span>${m.year || 'N/A'}</span> • <span><i class="fa-solid fa-clapperboard"></i> ${quals.join(' • ')}</span> • <span><i class="fa-solid fa-eye"></i> <b id="detailViewsNum">${m.views || 0}</b> বার দেখা হয়েছে</span>`;
                 document.getElementById('detailCats').innerHTML = (m.categories || []).map(function(c) { return `<span class="movie-cat-tag">${c}</span>`; }).join(' ');
 
                 let isAdult = (m.categories && m.categories.indexOf("Adult Content") !== -1) || (m.title && m.title.toUpperCase().indexOf('18+') !== -1);
@@ -3428,6 +3449,8 @@ async def web_ui(request: Request):
                     setSaveUI(!!d.saved);
                     detailStats = {likes: d.likes || 0, downloads: d.downloads || 0, votes: d.votes_count || 0, shares: d.shares || 0};
                     document.getElementById('statDownloads').innerText = fmtCount(detailStats.downloads);
+                    // 👁 ডিটেইলস API-র আসল ভিউ কাউন্ট দিয়ে মেটা-লাইন আপডেট (ডাউনলোড আর ভিউ এখন আলাদা)
+                    if (typeof d.views === 'number') { let vEl = document.getElementById('detailViewsNum'); if (vEl) vEl.innerText = d.views; }
                     document.getElementById('statVotes').innerText = fmtCount(detailStats.votes);
                     document.getElementById('statShares').innerText = fmtCount(detailStats.shares);
                 } catch(e) {}
@@ -4082,7 +4105,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0, cat: str = "Home
     
     pipeline = [
         {"$match": match_stage}, 
-        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
+        {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}, 
         {"$sort": {"created_at": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit},
         {"$addFields": {"title": "$_id"}}  # <--- এই লাইনটি যোগ করা হয়েছে
     ]
@@ -4126,7 +4149,7 @@ async def get_single_movie(movie_id: str, uid: int = 0):
         # একই টাইটেলের সব ফাইল একত্র করা (লিস্ট API-এর গ্রুপ ফরম্যাটেই)
         pipeline = [
             {"$match": {"title": movie["title"]}},
-            {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
+            {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
         ]
         movies = await db.movies.aggregate(pipeline).to_list(1)
         if not movies: return {"movie": None}
@@ -4677,7 +4700,7 @@ async def get_favs(uid: int):
     if not user: return []
     fav_titles = user.get("favorites", [])
     if not fav_titles: return []
-    pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
+    pipeline = [{"$match": {"title": {"$in": fav_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
     movies = await db.movies.aggregate(pipeline).to_list(len(fav_titles))
     for m in movies: m["is_adult"] = is_adult_movie(m)
     return movies
@@ -4738,7 +4761,7 @@ async def web_details(movie_id: str, uid: int = 0):
         if not movie: return {"movie": None}
         pipeline = [
             {"$match": {"title": movie["title"]}},
-            {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
+            {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "created_at": {"$max": "$created_at"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}
         ]
         rows = await db.movies.aggregate(pipeline).to_list(1)
         if not rows: return {"movie": None}
@@ -4761,13 +4784,44 @@ async def web_details(movie_id: str, uid: int = 0):
         if uid != 0:
             u = await db.users.find_one({"user_id": uid}, {"saved": 1})
             saved = bool(u and title in u.get("saved", []))
-        return {"movie": m, "likes": likes, "liked": liked, "downloads": m.get("clicks", 0), "shares": shares, "votes_count": votes_count, "saved": saved}
+        return {"movie": m, "likes": likes, "liked": liked, "downloads": m.get("clicks", 0), "views": m.get("views", 0), "shares": shares, "votes_count": votes_count, "saved": saved}
     except Exception as e:
         print(f"web details error: {e}")
         return {"movie": None}
 
 class MovieActionModel(BaseModel):
     movie_id: str; initData: str
+
+# 👁 ভিউ কাউন্টার (রিপোর্ট ফিক্স #1): ইউজার পোস্টটা খুললেই ভিউ কাউন্ট হয় — ডাউনলোড (clicks) থেকে সম্পূর্ণ আলাদা।
+# নিয়ম: ১ ইউজার × ১ পোস্ট × ২৪ ঘণ্টা = সর্বোচ্চ ১ ভিউ — বারবার রিফ্রেশ/খুললে ডাবল-কাউন্ট হবে না,
+# কিন্তু পরের দিন আবার খুললে নতুন ভিউ বসবে (টেলিগ্রাম-পোস্ট-ভিউয়ের মতোই স্বাভাবিক আচরণ)।
+@app.post("/api/web/view")
+async def web_view(d: MovieActionModel):
+    wuid, _ = tg_user_from_init(d.initData)
+    if not wuid or not validate_tg_data(d.initData): return {"ok": False, "counted": False}
+    try:
+        movie = await db.movies.find_one({"_id": ObjectId(d.movie_id)}, {"title": 1})
+        if not movie: return {"ok": False, "counted": False}
+        now = datetime.datetime.utcnow()
+        day = now.strftime("%Y-%m-%d")
+        counted = False
+        try:
+            res = await db.movie_views.update_one(
+                {"uid": wuid, "movie_id": d.movie_id, "day": day},
+                {"$setOnInsert": {"uid": wuid, "movie_id": d.movie_id, "day": day, "created_at": now}},
+                upsert=True)
+            counted = res.upserted_id is not None  # নতুন ইনসার্ট হলেই কেবল ১ ভিউ বসবে
+        except Exception:
+            counted = False  # আজকের ভিউ আগেই নেওয়া হয়েছে (ডুপ্লিকেট/রেস) → কাউন্ট হবে না
+        if counted:
+            try: await db.movies.update_one({"_id": ObjectId(d.movie_id)}, {"$inc": {"views": 1}})
+            except Exception: pass
+        # এই পোস্টের (একই টাইটেলের সব পার্ট মিলিয়ে) সর্বশেষ ভিউ কাউন্ট রিটার্ন
+        agg = await db.movies.aggregate([{"$match": {"title": movie["title"]}}, {"$group": {"_id": None, "views": {"$sum": "$views"}}}]).to_list(1)
+        return {"ok": True, "counted": counted, "views": (agg[0]["views"] if agg else 0)}
+    except Exception as e:
+        print(f"web view error: {e}")
+        return {"ok": False, "counted": False}
 
 @app.post("/api/web/like/toggle")
 async def web_like_toggle(d: MovieActionModel):
@@ -4864,7 +4918,7 @@ async def web_get_saved(uid: int):
     if not user: return []
     saved_titles = user.get("saved", [])
     if not saved_titles: return []
-    pipeline = [{"$match": {"title": {"$in": saved_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
+    pipeline = [{"$match": {"title": {"$in": saved_titles}}}, {"$group": {"_id": "$title", "photo_id": {"$first": "$photo_id"}, "clicks": {"$sum": "$clicks"}, "views": {"$sum": "$views"}, "year": {"$first": "$year"}, "categories": {"$first": "$categories"}, "files": {"$push": {"id": {"$toString": "$_id"}, "quality": {"$ifNull": ["$quality", "Main"]}}}}}]
     movies = await db.movies.aggregate(pipeline).to_list(len(saved_titles))
     for m in movies: m["is_adult"] = is_adult_movie(m)
     return movies
